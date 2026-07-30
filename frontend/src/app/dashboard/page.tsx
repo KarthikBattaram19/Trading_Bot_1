@@ -9,6 +9,7 @@ import {
 import { SituationalBar } from "@/components/dashboard/situational-bar";
 import { FeedStatusPanel } from "@/components/recommendations/feed-status";
 import { Badge, Card } from "@/components/ui/primitives";
+import type { FeedSource } from "@/types/recommendations";
 import { formatCurrency, formatPct } from "@/lib/utils";
 
 /**
@@ -22,6 +23,7 @@ export default async function DashboardPage() {
     getPaperSimHealth(),
     getFeedStatus(),
   ]);
+  const feedSources: FeedSource[] = feeds;
 
   return (
     <>
@@ -103,7 +105,7 @@ export default async function DashboardPage() {
               ICICI Direct marks + Market_News (MCP registry retired)
             </p>
           </div>
-          <FeedStatusPanel sources={feeds} />
+          <FeedStatusPanel sources={feedSources} />
         </Card>
 
         <Card className="flex flex-wrap items-center justify-between gap-4 p-4">

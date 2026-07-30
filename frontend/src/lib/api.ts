@@ -9,7 +9,10 @@ import { mockRecommendations } from "@/lib/recommendations-mock";
 import { mockLearningDashboard } from "@/lib/learning-mock";
 import type { BotStatus, PendingDecision } from "@/types/decisions";
 import type { AutonomousExecutionResult } from "@/types/trades";
-import type { RecommendationResponse } from "@/types/recommendations";
+import type {
+  FeedSource,
+  RecommendationResponse,
+} from "@/types/recommendations";
 import type {
   CloseTradeRequest,
   LearningDashboard,
@@ -141,7 +144,14 @@ export async function getApiHealth(): Promise<{
       remote_builder: "nixpacks",
     };
   }
-  return fetchJson("/health");
+  return fetchJson<{
+    status: string;
+    execution_mode: string;
+    phase?: string;
+    place_order_enabled?: boolean;
+    local_containers_required?: boolean;
+    remote_builder?: string;
+  }>("/health");
 }
 
 export async function getPaperSimHealth(): Promise<Record<string, unknown>> {
@@ -154,12 +164,12 @@ export async function getPaperSimHealth(): Promise<Record<string, unknown>> {
       broker_place_order: false,
     };
   }
-  return fetchJson("/api/v1/paper-sim/health");
+  return fetchJson<Record<string, unknown>>("/api/v1/paper-sim/health");
 }
 
-export async function getFeedStatus() {
+export async function getFeedStatus(): Promise<FeedSource[]> {
   if (useMockData()) return mockRecommendations.feed_sources;
-  return fetchJson("/api/v1/feeds/status");
+  return fetchJson<FeedSource[]>("/api/v1/feeds/status");
 }
 
 export async function getRecommendations(): Promise<RecommendationResponse> {
