@@ -16,7 +16,6 @@ from backend.paper_sim.automation import PaperAutomation
 from backend.paper_sim.chain import build_option_chain
 from backend.paper_sim.config import DEFAULT_CONFIG, PaperSimConfig
 from backend.paper_sim.freshness import (
-    StaleMarksError,
     assert_marks_fresh,
     evaluate_marks,
     instrument_master_age_sec,

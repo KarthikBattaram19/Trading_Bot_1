@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
-from typing import Any
 
 from backend.models.recommendations import InstrumentRecommendation, StrategyType
 from backend.models.trades import AutonomousExecutionResult, TradeAttemptResult

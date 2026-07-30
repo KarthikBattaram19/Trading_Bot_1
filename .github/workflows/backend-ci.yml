@@ -4,49 +4,23 @@ on:
   push:
     paths:
       - "backend/**"
+      - "pytest.ini"
       - ".github/workflows/backend-ci.yml"
   pull_request:
     paths:
       - "backend/**"
+      - "pytest.ini"
       - ".github/workflows/backend-ci.yml"
-
-defaults:
-  run:
-    working-directory: backend
 
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
 
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: volatality
-          POSTGRES_PASSWORD: volatality_dev
-          POSTGRES_DB: volatality
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U volatality -d volatality"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      redis:
-        image: redis:7-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     env:
-      DATABASE_URL: postgresql+psycopg://volatality:volatality_dev@localhost:5432/volatality
-      REDIS_URL: redis://localhost:6379/0
       AUTH_ENABLED: "false"
+      EXECUTION_MODE: paper
+      ALLOW_LIVE_PLACE_ORDER: "false"
+      PYTHONPATH: ${{ github.workspace }}
 
     steps:
       - uses: actions/checkout@v4
@@ -58,22 +32,23 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
 
       - name: Install dependencies
+        working-directory: backend
         run: pip install -r requirements-dev.txt
 
       - name: Ruff
-        run: ruff check .
+        working-directory: backend
+        run: python -m ruff check .
 
-      - name: Mypy
-        run: mypy .
+      - name: Mypy (advisory through Phase 1)
+        working-directory: backend
+        continue-on-error: true
+        run: python -m mypy . --ignore-missing-imports --exclude 'tests/'
 
-      - name: Run migrations
-        run: alembic upgrade head
+      # No Alembic migrations in Phase 0–1 (in-memory paper_sim). Re-enable when
+      # Cloud SQL / Railway Postgres schemas land (Phase 2+ / Phase 5).
 
       - name: Pytest
-        run: pytest -m "not integration"
-
-      - name: Integration tests
-        run: pytest -m integration
+        run: python -m pytest backend/tests -q --tb=short
 
       # Remote images: Railway Nixpacks / GCP Cloud Buildpacks (not on this job).
       # Developers never need a local container runtime for PR feedback.

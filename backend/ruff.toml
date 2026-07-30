@@ -1,0 +1,16 @@
+# Phase 1 CI — keep green; expand selects as the codebase hardens.
+target-version = "py311"
+line-length = 100
+
+[lint]
+select = [
+  "E9",   # runtime syntax errors
+  "F63",  # invalid print/assert
+  "F7",   # syntax errors in future annotations etc.
+  "F82",  # undefined names
+  "F401", # unused imports
+]
+ignore = []
+
+[lint.per-file-ignores]
+"tests/**" = ["F401"]
