@@ -1,23 +1,153 @@
-.env
-.env.local
-*.pyc
-__pycache__/
-.pytest_cache/
-.venv/
-venv/
-node_modules/
-frontend/.next/
-*.log
+# =============================================================================
+# Volatility Trading Bot — .gitignore
+# Stack: Python/FastAPI (backend) · Next.js (frontend) · Railway/Vercel/GCP
+# =============================================================================
 
-# Secrets & local env (never commit)
+# -----------------------------------------------------------------------------
+# Secrets & environment (never commit real credentials)
+# -----------------------------------------------------------------------------
+.env
 .env.*
 !.env.example
 !**/.env.example
-frontend/.env.local
+!.env*.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets/
+credentials.json
+**/service-account*.json
+**/gcp-key*.json
 
-# Local / IDE / caches
-.cursor/projects/
+# -----------------------------------------------------------------------------
+# Python — backend/, tools/
+# -----------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+env/
+*.egg
 *.egg-info/
-backend/data/
+.eggs/
 dist/
 build/
+pip-wheel-metadata/
+*.whl
+.mypy_cache/
+.ruff_cache/
+.pytype/
+.pyre/
+.dmypy.json
+dmypy.json
+.pyright/
+.tox/
+.nox/
+hypothesis/
+
+# -----------------------------------------------------------------------------
+# Tests & coverage
+# -----------------------------------------------------------------------------
+.pytest_cache/
+.coverage
+.coverage.*
+coverage/
+htmlcov/
+.cache/
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+
+# -----------------------------------------------------------------------------
+# Local runtime data (Chroma RAG, caches, downloads)
+# -----------------------------------------------------------------------------
+backend/data/
+**/data/chroma/
+*.sqlite
+*.sqlite3
+*.db
+SecurityMaster.zip
+**/SecurityMaster/
+**/instrument_master_cache/
+**/instruments_cache/
+tmp/
+temp/
+.tmp/
+*.tmp
+
+# -----------------------------------------------------------------------------
+# Node / Next.js — frontend/
+# -----------------------------------------------------------------------------
+node_modules/
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/.turbo/
+frontend/.vercel/
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+.pnpm-store/
+
+# -----------------------------------------------------------------------------
+# Logs & OS junk
+# -----------------------------------------------------------------------------
+*.log
+logs/
+.DS_Store
+Thumbs.db
+Desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# -----------------------------------------------------------------------------
+# Editors / IDEs
+# -----------------------------------------------------------------------------
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# -----------------------------------------------------------------------------
+# Cursor — keep shared project rules; ignore local/session noise
+# -----------------------------------------------------------------------------
+.cursor/projects/
+.cursor/*.log
+.cursor/mcp.json
+.cursor/agents/
+!.cursor/rules/
+
+# -----------------------------------------------------------------------------
+# Cloud / deploy local artifacts (Railway, Vercel, GCP, Nixpacks)
+# -----------------------------------------------------------------------------
+.railway/
+.vercel/
+.gcloud/
+.gcp/
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# -----------------------------------------------------------------------------
+# Misc project noise
+# -----------------------------------------------------------------------------
+Docs/Untitled
+*.bak
+*.orig
+*.rej
+.ipynb_checkpoints/
