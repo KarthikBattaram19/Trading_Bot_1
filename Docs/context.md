@@ -1186,7 +1186,7 @@ No Compose. See **`Docs/LOCAL_DEV.md`**.
 - [ ] Railway: Postgres + Redis + `backend/` deploy; `GET /health` and `/api/v1/paper-sim/health` pass
 - [ ] Vercel: `frontend/` deploy; `NEXT_PUBLIC_*` point at Railway URL
 - [ ] Railway `CORS_ORIGINS` set to Vercel URL(s)
-- [ ] `EXECUTION_MODE=paper`; no ICICI Direct `place_order` on Railway
+- [x] `EXECUTION_MODE=paper`; no ICICI Direct `place_order` on Railway
 
 **Live (after paper soak):**
 - [ ] GCP project in `asia-south1`: Cloud SQL, Memorystore, VPC connector, backend + frontend Cloud Run

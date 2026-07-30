@@ -2287,8 +2287,8 @@ ICICI Direct Breeze API is the **sole live feed provider** for NSE / BSE / NFO m
 
 | Feed purpose | Source | Freshness |
 | ------------ | ------ | --------- |
-| Underlying LTP | WS mode `LTP` or REST `getLtpData` | Sub-second (WS) / poll interval (REST) |
-| Option marks | WS `QUOTE` / `SNAP_QUOTE` on NFO tokens | Same |
+| Underlying LTP | WS quotes (`4.1!token`) or REST `quotes` | Sub-second (WS) / poll interval (REST) |
+| Option marks | WS quotes on NFO tokens (same connection) | Same |
 | Historical HV | Historical candle API | Batch / nightly |
 | Instrument metadata | Scrip master cache | Daily refresh |
 
@@ -2310,12 +2310,12 @@ Normalized tick schema (internal) — must not leak ICICI Direct fields into qua
 
 #### 8.9.2 WebSocket Streaming 2.0 rules
 
-- Prefer **one mode per token** (LTP *or* Quote) to conserve the 1000-subscription quota.
-- Share a single WS connection for market data across strategies where possible (follow Breeze streaming limits).
+- Prefer **one mode per token** (quotes `.{1}!` only — not market-depth `.{2}!`) to conserve the subscription quota.
+- Share a single Socket.IO connection for market data across strategies (`https://livestream.icicidirect.com`).
 - On disconnect: exponential backoff reconnect; mark feeds stale; risk gate blocks discretionary entries (§11.4).
-- Binary tick decode lives only inside `backend/integrations/icici_direct/market_data.py`.
-- WS headers: `x-api-key`, `x-client-code`, `x-feed-token`; endpoint `Breeze WebSocket (see Breeze docs)`.
-- Market WS heartbeat ~**30s**; order-status WS ping/pong ~**10s** (when enabled).
+- Tick decode (list → `NormalizedTick`) lives only inside `backend/integrations/icici_direct/market_data.py`; connection lifecycle in `ws_stream.py`.
+- Auth: decode `session_token` from `customerdetails` as `base64(user_id:feed_token)` → Socket.IO `auth={"user","token"}` + `User-Agent` (see [Breeze docs](https://api.icicidirect.com/breezeapi/documents/index.html)).
+- Market WS heartbeat ~**30s**; order-status WS on `livefeeds` ping/pong ~**10s** (when enabled — not required for A2 marks).
 
 #### 8.9.3 Data ownership (no MCP registry)
 
@@ -3123,7 +3123,7 @@ SDK: https://github.com/Idirect-Tech/Breeze-Python-SDK
 | **Portfolio** | Sync | `portfolioholdings`, `portfoliopositions`, `funds` |
 | **Market Data API** | REST quotes | `quotes`, `optionchain` |
 | **Historical API** | Research / HV | `historicalcharts` |
-| **WebSocket** | Live ticks | Breeze streaming APIs (see Breeze docs) |
+| **WebSocket** | Live ticks | `livestream.icicidirect.com` Socket.IO rate-refresh (A2); auth via decoded `session_token` |
 
 **Out of scope:** GTT (`gttorder` place / order book / cancel / modify) — not used in this project.
 
@@ -4816,7 +4816,7 @@ RAG powers explanations and LLM validation. It **must not delay** Phase 0–1 pa
 
 ### Phase 1: Paper Simulator Playbook (Weeks 3–5)
 
-Authoritative API/behavior: `Docs/Paper_Simulator.md`. ICICI Direct phases **A0–A2** only (data); adapter dry-run (**A3**) optional for payload logging.
+Authoritative API/behavior: `Docs/Paper_Simulator.md`. ICICI Direct phases **A0–A2** (data) + **A3** shadow dry-run payloads (mandatory; no live `place_order`).
 
 - [ ] `backend/paper_sim/`: account, positions, fills, multi-leg `POST /orders`, close, marks refresh
 - [ ] Conservative slippage default; capital caps (₹10L / ₹1L / leg) per playbook
@@ -4827,10 +4827,11 @@ Authoritative API/behavior: `Docs/Paper_Simulator.md`. ICICI Direct phases **A0�
 - [ ] BSM pricing + Greeks minimal + OSS parity smoke tests (§8.5.12)
 - [ ] Transaction cost model (§9.4); pre-trade risk gate thresholds (§11.4)
 - [ ] Volatility module (HV, IV) enough for cheap-vol / vega frames; gamma re-hedge path
-- [ ] `EXECUTION_MODE=paper` on Railway — **never** `live` on this stack
-- [ ] Optional: ICICI Direct WS Streaming 2.0 freshness (**A2**) for better marks
+- [x] `EXECUTION_MODE=paper` on Railway — **never** `live` on this stack
+- [ ] ICICI Direct WS Streaming 2.0 freshness (**A2**) for sub-second marks (mandatory Phase 1.8)
+- [ ] ICICI Direct **A3** shadow dry-run: place/cancel/status payloads logged via `IciciDirectBrokerAdapter` + `/broker/shadow-order*` (mandatory Phase 1.9)
 
-**Exit:** Manual + automated paper trades produce local P&L; playbook + news gates honored; zero `place_order`.
+**Exit:** Manual + automated paper trades produce local P&L; playbook + news gates honored; A3 shadow payloads logged; zero `place_order`.
 
 ### Phase 2: Supervised Paper Bot (Weeks 6–9)
 

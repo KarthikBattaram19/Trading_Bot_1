@@ -42,26 +42,18 @@ class PaperLedger:
     def _touch(self) -> None:
         self._updated_at = datetime.now(timezone.utc)
 
-    def open_position(
+    def _fill_legs(
         self,
         *,
-        strategy_tag: str | None,
-        underlying: str | None,
-        note: str | None,
         legs: list[dict],
         slippage_bps: float,
-        order_id: str | None = None,
-    ) -> tuple[PaperPosition, list[PaperFill]]:
-        """
-        Open a multi-leg paper position.
-
-        Each item in ``legs`` must include:
-        symbol, exchange, symbol_token, side (PaperSide), quantity, mark_ltp, lotsize
-        """
+        order_id: str,
+        enforce_trade_cap: bool,
+    ) -> tuple[list[PaperFill], list[PaperLegPosition], float, float]:
+        """Price legs, enforce per-leg / cash caps; optionally trade investment cap."""
         if not legs:
             raise PaperLedgerError("order has no legs")
 
-        order_id = order_id or f"paper_{uuid4().hex[:12]}"
         fills: list[PaperFill] = []
         leg_positions: list[PaperLegPosition] = []
         total_debit = 0.0
@@ -83,7 +75,6 @@ class PaperLedger:
             if side == PaperSide.buy:
                 total_debit += notional
             else:
-                # Credit premium; reserve a fraction of notional as simple margin proxy
                 total_credit += notional
 
             fill = PaperFill(
@@ -115,13 +106,16 @@ class PaperLedger:
                 )
             )
 
-        # Net capital deployed at entry ≈ debit − credit (premium structures)
-        net_investment = max(total_debit - total_credit, total_debit * 0.1 if total_debit else abs(total_credit) * 0.2)
-        if net_investment > self.config.max_trade_investment_inr:
-            raise PaperLedgerError(
-                f"trade investment {net_investment:.2f} exceeds "
-                f"max_trade_investment {self.config.max_trade_investment_inr:.2f}"
+        if enforce_trade_cap:
+            net_investment = max(
+                total_debit - total_credit,
+                total_debit * 0.1 if total_debit else abs(total_credit) * 0.2,
             )
+            if net_investment > self.config.max_trade_investment_inr:
+                raise PaperLedgerError(
+                    f"trade investment {net_investment:.2f} exceeds "
+                    f"max_trade_investment {self.config.max_trade_investment_inr:.2f}"
+                )
 
         cash_impact = total_credit - total_debit
         if self.cash + cash_impact < 0:
@@ -129,10 +123,41 @@ class PaperLedger:
                 f"insufficient paper cash: have {self.cash:.2f}, need {-cash_impact:.2f}"
             )
 
-        self.cash += cash_impact
+        return fills, leg_positions, total_debit, total_credit
+
+    def open_position(
+        self,
+        *,
+        strategy_tag: str | None,
+        underlying: str | None,
+        note: str | None,
+        legs: list[dict],
+        slippage_bps: float,
+        order_id: str | None = None,
+        hedge_point_price: float | None = None,
+        rehedge_method: str | None = None,
+    ) -> tuple[PaperPosition, list[PaperFill]]:
+        """
+        Open a multi-leg paper position.
+
+        Each item in ``legs`` must include:
+        symbol, exchange, symbol_token, side (PaperSide), quantity, mark_ltp, lotsize
+        """
+        order_id = order_id or f"paper_{uuid4().hex[:12]}"
+        fills, leg_positions, _debit, _credit = self._fill_legs(
+            legs=legs,
+            slippage_bps=slippage_bps,
+            order_id=order_id,
+            enforce_trade_cap=True,
+        )
+
+        total_debit = sum(f.notional_inr for f in fills if f.side == PaperSide.buy)
+        total_credit = sum(f.notional_inr for f in fills if f.side == PaperSide.sell)
+        self.cash += total_credit - total_debit
         for fill in fills:
             self.fills.append(fill)
 
+        method = rehedge_method or getattr(self.config, "rehedge_method", "increase_hedge")
         position = PaperPosition(
             position_id=f"pos_{uuid4().hex[:12]}",
             strategy_tag=strategy_tag,
@@ -143,8 +168,226 @@ class PaperLedger:
             realized_pnl=0.0,
             unrealized_pnl=0.0,
             note=note,
+            hedge_point_price=float(hedge_point_price) if hedge_point_price else None,
+            breakeven_paid_count=0,
+            rehedge_method=method,  # type: ignore[arg-type]
         )
         self.positions[position.position_id] = position
+        self._touch()
+        return position, fills
+
+    def apply_rehedge_legs(
+        self,
+        position_id: str,
+        *,
+        legs: list[dict],
+        slippage_bps: float,
+        hedge_point_price: float,
+        gamma_theta_breakeven_pct: float | None = None,
+        total_delta: float | None = None,
+        total_gamma: float | None = None,
+        total_theta: float | None = None,
+        total_vega: float | None = None,
+        rehedge_method: str | None = None,
+        order_id: str | None = None,
+    ) -> tuple[PaperPosition, list[PaperFill]]:
+        """Append hedge legs to an open position and roll Part J hedge state (PS-05 caps)."""
+        position = self.positions.get(position_id)
+        if position is None:
+            raise PaperLedgerError(f"unknown position_id={position_id}")
+        if position.status != "open":
+            raise PaperLedgerError(f"position {position_id} is already closed")
+
+        order_id = order_id or f"paper_hedge_{uuid4().hex[:10]}"
+        fills, new_legs, _d, _c = self._fill_legs(
+            legs=legs,
+            slippage_bps=slippage_bps,
+            order_id=order_id,
+            enforce_trade_cap=True,
+        )
+
+        total_debit = sum(f.notional_inr for f in fills if f.side == PaperSide.buy)
+        total_credit = sum(f.notional_inr for f in fills if f.side == PaperSide.sell)
+        self.cash += total_credit - total_debit
+        for fill in fills:
+            self.fills.append(fill)
+
+        # Merge same-symbol same-side legs; otherwise append.
+        for new_leg in new_legs:
+            merged = False
+            for existing in position.legs:
+                if (
+                    existing.symbol_token == new_leg.symbol_token
+                    and existing.side == new_leg.side
+                ):
+                    total_qty = existing.quantity + new_leg.quantity
+                    existing.avg_price = (
+                        existing.avg_price * existing.quantity
+                        + new_leg.avg_price * new_leg.quantity
+                    ) / total_qty
+                    existing.quantity = total_qty
+                    existing.mark_ltp = new_leg.mark_ltp
+                    merged = True
+                    break
+            if not merged:
+                position.legs.append(new_leg)
+
+        position.hedge_point_price = float(hedge_point_price)
+        position.breakeven_paid_count = int(position.breakeven_paid_count or 0) + 1
+        position.last_rehedge_at = datetime.now(timezone.utc)
+        if gamma_theta_breakeven_pct is not None:
+            position.gamma_theta_breakeven_pct = float(gamma_theta_breakeven_pct)
+        if total_delta is not None:
+            position.total_delta = float(total_delta)
+        if total_gamma is not None:
+            position.total_gamma = float(total_gamma)
+        if total_theta is not None:
+            position.total_theta = float(total_theta)
+        if total_vega is not None:
+            position.total_vega = float(total_vega)
+        if rehedge_method:
+            position.rehedge_method = rehedge_method  # type: ignore[assignment]
+        self._touch()
+        return position, fills
+
+    def update_hedge_state(
+        self,
+        position_id: str,
+        *,
+        hedge_point_price: float | None = None,
+        gamma_theta_breakeven_pct: float | None = None,
+        total_delta: float | None = None,
+        total_gamma: float | None = None,
+        total_theta: float | None = None,
+        total_vega: float | None = None,
+        rehedge_method: str | None = None,
+    ) -> PaperPosition:
+        position = self.positions.get(position_id)
+        if position is None:
+            raise PaperLedgerError(f"unknown position_id={position_id}")
+        if hedge_point_price is not None:
+            position.hedge_point_price = float(hedge_point_price)
+        if gamma_theta_breakeven_pct is not None:
+            position.gamma_theta_breakeven_pct = float(gamma_theta_breakeven_pct)
+        if total_delta is not None:
+            position.total_delta = float(total_delta)
+        if total_gamma is not None:
+            position.total_gamma = float(total_gamma)
+        if total_theta is not None:
+            position.total_theta = float(total_theta)
+        if total_vega is not None:
+            position.total_vega = float(total_vega)
+        if rehedge_method:
+            position.rehedge_method = rehedge_method  # type: ignore[assignment]
+        self._touch()
+        return position
+
+    def reduce_option_legs(
+        self,
+        position_id: str,
+        *,
+        reduce_by_lots: int,
+        marks: dict[str, float],
+        slippage_bps: float,
+        hedge_point_price: float,
+        gamma_theta_breakeven_pct: float | None = None,
+        total_delta: float | None = None,
+        total_gamma: float | None = None,
+        total_theta: float | None = None,
+        order_id: str | None = None,
+    ) -> tuple[PaperPosition, list[PaperFill]]:
+        """Partial close of option legs (``reduce_options`` method / PS-05 fallback)."""
+        position = self.positions.get(position_id)
+        if position is None:
+            raise PaperLedgerError(f"unknown position_id={position_id}")
+        if position.status != "open":
+            raise PaperLedgerError(f"position {position_id} is already closed")
+        if reduce_by_lots < 1:
+            raise PaperLedgerError("reduce_by_lots must be >= 1")
+
+        order_id = order_id or f"paper_reduce_{uuid4().hex[:10]}"
+        fills: list[PaperFill] = []
+        cash_delta = 0.0
+        realized = 0.0
+        remaining_legs: list[PaperLegPosition] = []
+
+        for leg in position.legs:
+            is_option = leg.exchange.upper() == "NFO" or leg.symbol.upper().endswith(
+                ("CE", "PE")
+            )
+            if not is_option:
+                remaining_legs.append(leg)
+                continue
+
+            lot = max(int(leg.lotsize or 1), 1)
+            cut = min(leg.quantity, reduce_by_lots * lot)
+            if cut <= 0:
+                remaining_legs.append(leg)
+                continue
+
+            mark = marks.get(leg.symbol_token) or marks.get(leg.symbol)
+            if mark is None or mark <= 0:
+                raise PaperLedgerError(f"missing mark for {leg.symbol}")
+
+            close_side = PaperSide.sell if leg.side == PaperSide.buy else PaperSide.buy
+            fill_price = compute_fill_price(float(mark), close_side, slippage_bps)
+            notional = leg_notional(fill_price, cut)
+
+            if leg.side == PaperSide.buy:
+                leg_pnl = (fill_price - leg.avg_price) * cut
+                cash_delta += fill_price * cut
+            else:
+                leg_pnl = (leg.avg_price - fill_price) * cut
+                cash_delta -= fill_price * cut
+
+            realized += leg_pnl
+            fill = PaperFill(
+                fill_id=f"fill_{uuid4().hex[:10]}",
+                order_id=order_id,
+                symbol=leg.symbol,
+                exchange=leg.exchange,
+                symbol_token=leg.symbol_token,
+                side=close_side,
+                quantity=cut,
+                mark_ltp=float(mark),
+                fill_price=fill_price,
+                slippage_bps=slippage_bps,
+                notional_inr=notional,
+                filled_at=datetime.now(timezone.utc),
+            )
+            fills.append(fill)
+            self.fills.append(fill)
+
+            left = leg.quantity - cut
+            if left > 0:
+                leg.quantity = left
+                remaining_legs.append(leg)
+
+        if not fills:
+            raise PaperLedgerError("no option legs available to reduce")
+
+        self.cash += cash_delta
+        self.realized_pnl += realized
+        position.realized_pnl = float(position.realized_pnl or 0.0) + realized
+        position.legs = remaining_legs
+        position.hedge_point_price = float(hedge_point_price)
+        position.breakeven_paid_count = int(position.breakeven_paid_count or 0) + 1
+        position.last_rehedge_at = datetime.now(timezone.utc)
+        position.rehedge_method = "reduce_options"
+        if gamma_theta_breakeven_pct is not None:
+            position.gamma_theta_breakeven_pct = float(gamma_theta_breakeven_pct)
+        if total_delta is not None:
+            position.total_delta = float(total_delta)
+        if total_gamma is not None:
+            position.total_gamma = float(total_gamma)
+        if total_theta is not None:
+            position.total_theta = float(total_theta)
+
+        if not position.legs:
+            position.status = "closed"
+            position.closed_at = datetime.now(timezone.utc)
+            position.unrealized_pnl = 0.0
+
         self._touch()
         return position, fills
 

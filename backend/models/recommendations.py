@@ -145,10 +145,22 @@ class InstrumentRecommendation(BaseModel):
 
 
 class MarketNewsSummary(BaseModel):
+    """Normalized Market_News packet (Architecture §8.8 / Trading_Parameters Part U)."""
+
     headline_count: int
     dominant_sentiment: str
+    dominant_tone: str = "neutral"  # U1: bullish | neutral | bearish
     earnings_mentions: int
     macro_risk_flags: list[str]
+    topics: list[str] = Field(default_factory=list)  # U2
+    symbol_tags: list[str] = Field(default_factory=list)  # U3
+    news_not_blocking: bool = True  # U4
+    news_event_imminent: bool = False  # U5
+    news_post_shock: bool = False  # U6
+    news_impact: str = "none"  # U7
+    source_freshness: dict[str, datetime | None] = Field(default_factory=dict)  # U8
+    workflow_window: str = "session"  # U9: pre_open | session | after_close
+    kill_event: bool = False  # U10
     interpretation: str
     items: list[NewsItem]
 

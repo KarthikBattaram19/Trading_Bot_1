@@ -84,7 +84,7 @@ class IciciDirectConnectionConfig(BaseModel):
     exchanges_enabled: list[str] = Field(default_factory=lambda: ["NSE", "BSE", "NFO"])
     product_default: str = "margin"  # F&O default; cash for equity
     order_rate_limit_per_sec: float = 9.0  # Breeze hard cap ~10 combined ops/sec
-    ws_modes: list[str] = Field(default_factory=lambda: ["LTP", "OHLC"])
+    ws_modes: list[str] = Field(default_factory=lambda: ["quotes"])  # A2: quotes (.1!) only
     market_session: str = "NSE_EQ_FO"
     customer_login_url: str = "https://secure.icicidirect.com/customer/login"
     breeze_login_url: str = "https://api.icicidirect.com/apiuser/login"

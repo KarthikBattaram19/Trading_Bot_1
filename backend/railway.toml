@@ -1,4 +1,10 @@
-# Railway paper backend (architecture.md §17.0).
+# Railway paper backend (architecture.md §17.0 / Phase 1.10).
+#
+# Required service variables (see infra/env/railway.paper.env.example):
+#   DEPLOY_STACK=paper
+#   EXECUTION_MODE=paper
+#   ALLOW_LIVE_PLACE_ORDER=false
+# Never set EXECUTION_MODE=live on this stack (M-01 coerces + blocks place_order).
 #
 # Recommended service settings (isolated monorepo):
 #   Root Directory:     backend

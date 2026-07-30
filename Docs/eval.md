@@ -117,7 +117,7 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 **Goal:** End-to-end paper P&L with playbook + news gates.  
 **Authority:** `Docs/Paper_Simulator.md`.  
 **Modes:** `EXECUTION_MODE=paper` on Railway — **never** `live`.  
-**ICICI Direct:** A0–A2 (+ optional A3 dry-run payloads only).
+**ICICI Direct:** A0–A2 + **A3** shadow dry-run payloads (mandatory; no live submit).
 
 ### 3.1 Work-item checklist
 
@@ -130,9 +130,9 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 | 1.5 | GARCH / IV z-score + `POST /signals/evaluate` | Integration | Yes |
 | 1.6 | γ–θ re-hedge automation (no LLM) | Integration + Manual | Yes |
 | 1.7 | BSM + OSS parity smoke; cost model; pre-trade thresholds | Automated (Q-19) | Yes |
-| 1.8 | Optional ICICI Direct A2 WS | Manual freshness | No |
-| 1.9 | Optional A3 shadow order payloads logged only | Manual | No |
-| 1.10 | Railway config confirms `paper` not `live` | Doc / config review | Yes |
+| 1.8 | ICICI Direct A2 WS (mandatory) | Manual freshness + unit tests | No |
+| 1.9 | A3 shadow order payloads logged only (place/cancel/status) | Unit + API (`test_icici_a3_shadow`) | Yes |
+| 1.10 | Railway config confirms `paper` not `live` | Config (`infra/env/railway.paper.env.example`) + M-01 guard tests (`test_phase1_10_paper_stack`) | Yes |
 
 ### 3.2 Exit gates
 

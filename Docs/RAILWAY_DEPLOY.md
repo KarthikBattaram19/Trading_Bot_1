@@ -1,4 +1,4 @@
-# Deploy backend to Railway (paper / Phase 0)
+# Deploy backend to Railway (paper / Phase 1.10)
 
 **GitHub repo:** [KarthikBattaram19/Trading_Bot_1](https://github.com/KarthikBattaram19/Trading_Bot_1)  
 **Railway project:** [Trading Bot project](https://railway.com/project/69b6e84b-a5e7-41c4-8206-e44bace54e40?environmentId=c8d802bb-ce4f-4098-b041-ec332b0442f6)
@@ -57,7 +57,8 @@ This happens when **Root Directory** is `backend` but **Config-as-code** still p
 In the service → **Variables**, set at least (see `infra/env/railway.paper.env.example`):
 
 ```env
-EXECUTION_MODE=shadow
+DEPLOY_STACK=paper
+EXECUTION_MODE=paper
 SUPERVISION_MODE=supervised
 DEFAULT_BROKER=icici_direct
 USE_ICICI_DIRECT_SHADOW=true
@@ -77,7 +78,8 @@ ICICI_DIRECT_SESSION_TOKEN=...
 Optional until Phase 1+: `DATABASE_URL`, `REDIS_URL` from Railway Postgres/Redis plugins.  
 After Vercel: `CORS_ORIGINS=https://your-app.vercel.app`
 
-**Never** set `EXECUTION_MODE=live` on Railway.
+**Never** set `EXECUTION_MODE=live` on Railway. If mis-set, the API coerces to
+`paper`, keeps `place_order_enabled: false`, and sets `live_blocked: true` (M-01).
 
 ---
 
@@ -86,8 +88,8 @@ After Vercel: `CORS_ORIGINS=https://your-app.vercel.app`
 1. **Deploy** → **Redeploy** (or push to `main` for auto-deploy).
 2. **Settings** → **Networking** → **Generate domain**.
 3. Smoke checks:
-   - `GET https://<your-service>.up.railway.app/health` → `status: ok`, `phase: "0"`, `place_order_enabled: false`
-   - `GET .../api/v1/paper-sim/health`
+   - `GET https://<your-service>.up.railway.app/health` → `status: ok`, `phase: "1"`, `execution_mode: "paper"`, `deploy_stack: "paper"`, `place_order_enabled: false`, `live_blocked: false`
+   - `GET .../api/v1/paper-sim/health` → `phase: "1.10"`, `broker_place_order: false`
    - `POST .../api/v1/config/integrations/broker/test` (with ICICI secrets)
 
 ---

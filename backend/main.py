@@ -1,4 +1,4 @@
-"""Phase 0 FastAPI scaffold — ICICI Direct data-only, zero place_order."""
+"""FastAPI app — paper_sim + ICICI Direct data/A3; Railway never live (Phase 1.10)."""
 
 from __future__ import annotations
 
@@ -8,7 +8,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.config_env import load_project_env
-from backend.integrations.registry import get_execution_mode, get_integration_health, place_order_enabled
+from backend.integrations.registry import (
+    get_integration_health,
+    paper_stack_guard_status,
+    place_order_enabled,
+)
 from backend.routers import (
     bot,
     chat,
@@ -25,7 +29,11 @@ load_project_env()
 app = FastAPI(
     title="Bhale Bullodu 1.0 - Volatility Trading Bot",
     version="1.0.0",
-    description="Phase 0: ICICI Direct marks + feed health; paper_sim stub; no place_order",
+    description=(
+        "Phase 1.10: paper_sim + ICICI Direct marks (REST + WS) + A3 shadow "
+        "dry-run + Market_News + SH-4 + GARCH/IV z + γ–θ re-hedge + BSM/OSS "
+        "parity + cost/risk gates; EXECUTION_MODE=paper on Railway — never live"
+    ),
 )
 
 
@@ -55,13 +63,16 @@ app.include_router(paper_sim.router)
 
 @app.get("/health")
 async def health():
-    """Phase 0 health — native local toolchain; Nixpacks remote builder."""
+    """Phase 1 health — paper stack guard; Nixpacks / Railpack remote builder."""
     local_infra = os.getenv("LOCAL_INFRA", "none").strip().lower() or "none"
-    mode = get_execution_mode()
+    guard = paper_stack_guard_status()
     return {
         "status": "ok",
-        "execution_mode": mode.value,
-        "phase": "0",
+        "execution_mode": guard["execution_mode"],
+        "requested_execution_mode": guard["requested_execution_mode"],
+        "deploy_stack": guard["deploy_stack"],
+        "live_blocked": guard["live_blocked"],
+        "phase": "1",
         "place_order_enabled": place_order_enabled(),
         "local_infra": local_infra,
         "database_configured": bool(os.getenv("DATABASE_URL", "").strip()),

@@ -26,9 +26,15 @@ from backend.models.recommendations import (
     StrategyType,
     TradeEconomicsInsight,
 )
+from backend.quant.signals.garch import forecast_garch_11, log_returns_from_prices
+from backend.quant.signals.iv_zscore import compute_iv_zscore
 from backend.services.feed_health import get_feed_sources
-from backend.services.market_news import mock_market_news
 from backend.services.learning_service import get_learning_service
+from backend.services.market_news import get_market_news
+from backend.services.strategy_selection import (
+    QuantRegimeInputs,
+    select_strategy_sh4,
+)
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "trading_parameters.defaults.json"
 
@@ -56,22 +62,45 @@ def _load_config() -> dict[str, Any]:
         return json.load(f)
 
 
-def _garch_forecast(log_returns: list[float], cfg: dict[str, Any]) -> float:
-    """GARCH(1,1) annualized vol per Trading_Parameters Part H."""
+def _garch_forecast(log_returns: list[float], cfg: dict[str, Any]) -> tuple[float, bool]:
+    """GARCH(1,1) annualized vol per Trading_Parameters Part H (Phase 1.5 module)."""
     g = cfg["garch_forecast"]
-    gamma, alpha, beta = g["gamma_weight"], g["alpha_weight"], g["beta_weight"]
-    annual_factor = g["annualization_factor"]
+    result = forecast_garch_11(
+        log_returns,
+        gamma=float(g["gamma_weight"]),
+        alpha=float(g["alpha_weight"]),
+        beta=float(g["beta_weight"]),
+        annualization_factor=int(g["annualization_factor"]),
+        min_observations=int(g.get("min_observations", 20)),
+    )
+    if result.usable and result.sigma_annual is not None:
+        return result.sigma_annual, result.garch_distorted
+    # Fallback for demo universe when series too short — still mark distorted (Q-14)
+    return 0.28, True
 
-    if len(log_returns) < 5:
-        return 0.28
 
-    variance = sum(r * r for r in log_returns) / len(log_returns)
-    vl = variance
-    sigma2 = variance
-    u2 = log_returns[-1] ** 2
-    sigma2 = gamma * vl + alpha * u2 + beta * sigma2
-    daily_vol = math.sqrt(max(sigma2, 1e-12))
-    return daily_vol * math.sqrt(annual_factor)
+def _iv_z_for_demo(iv: float, target_z: float | None, cfg: dict[str, Any]) -> float | None:
+    """Build a synthetic intraday IV series so packet z-scores come from Part N4 math."""
+    if target_z is None:
+        return None
+    zcfg = cfg.get("iv_zscore") or {}
+    min_obs = int(zcfg.get("min_observations", 5))
+    std = 0.02
+    mean = iv - target_z * std
+    # Alternating mean±std → sample std ≈ std; current_iv=iv ⇒ z ≈ target_z
+    series = [mean - std, mean + std] * max(min_obs, 15)
+    result = compute_iv_zscore(
+        series,
+        current_iv=iv,
+        min_observations=min_obs,
+        entry_z_threshold=float(
+            zcfg.get(
+                "entry_z_threshold",
+                cfg["strategies"]["vega_scalping"]["iv_signal"]["entry_z_threshold"],
+            )
+        ),
+    )
+    return result.iv_z_score if result.usable else None
 
 
 def _build_universe() -> list[InstrumentCandidate]:
@@ -87,17 +116,16 @@ def _build_universe() -> list[InstrumentCandidate]:
         ("BANKBARODA", 245.6, 0.35, None, None, 55, 9800, 8000, 2.3, 12, 0.028, False),
     ]
 
+    cfg = _load_config()
     candidates: list[InstrumentCandidate] = []
     for row in specs:
         symbol, price, iv, z, de, prem, vol, oi, spread, dte, rv, distorted = row
         history = [price * (1 + 0.01 * math.sin(i / 3)) for i in range(60)]
-        log_returns = [
-            math.log(history[i] / history[i - 1]) for i in range(1, len(history))
-        ]
-        cfg = _load_config()
-        garch = _garch_forecast(log_returns, cfg)
+        log_returns = log_returns_from_prices(history)
+        garch, garch_dist = _garch_forecast(log_returns, cfg)
         if iv == 0:
             iv = garch * 0.92
+        iv_z = _iv_z_for_demo(iv, z, cfg)
 
         candidates.append(
             InstrumentCandidate(
@@ -105,7 +133,7 @@ def _build_universe() -> list[InstrumentCandidate]:
                 und_price=price,
                 iv_annualized=iv,
                 garch_forecast=garch,
-                iv_z_score=z,
+                iv_z_score=iv_z,
                 days_to_earnings=de,
                 atm_premium_inr=prem,
                 volume=vol,
@@ -113,7 +141,7 @@ def _build_universe() -> list[InstrumentCandidate]:
                 spread_pct=spread,
                 dte=dte,
                 realized_vol_intraday=rv,
-                garch_distorted=distorted,
+                garch_distorted=distorted or garch_dist,
                 price_history=history,
             )
         )
@@ -262,94 +290,20 @@ def _select_strategy(
     news: MarketNewsSummary,
     cfg: dict[str, Any],
 ) -> StrategySelectionLogic:
-    """Cross-strategy decision matrix — Trading_Strategies.md Table SH-4."""
-    rejected: list[str] = []
-    news_impact: str | None = None
-
-    if c.garch_distorted or (
-        news.dominant_sentiment == "Somewhat-Bearish" and "post-shock" in " ".join(news.macro_risk_flags).lower()
-    ):
-        return StrategySelectionLogic(
-            selected_strategy=StrategyType.blocked,
-            scenario_tag="Post-shock — models distorted",
-            cross_strategy_matrix_ref="Table SH-4: reduce/block all vol strategies",
-            primary_signal="garch_distorted=true",
-            rejected_strategies=["simple_volatility", "gamma_scalping", "vega_scalping"],
-            news_impact="Bearish macro tone + distorted GARCH — block model trades (H11, K4)",
-        )
-
-    vega_cfg = cfg["strategies"]["vega_scalping"]["iv_signal"]
-    if c.iv_z_score is not None and c.iv_z_score <= vega_cfg["entry_z_threshold"]:
-        rejected.append("simple_volatility — intraday IV flush favors vega scalp (SH-4)")
-        rejected.append("gamma_scalping — no earnings/high-RV override")
-        return StrategySelectionLogic(
-            selected_strategy=StrategyType.vega_scalping,
-            entry_mode="standard",
-            scenario_tag="Scenario A: Clean Intraday IV Flush",
-            cross_strategy_matrix_ref="Table SH-4: Intraday IV −2σ → Vega scalping",
-            primary_signal=f"iv_z_score={c.iv_z_score:.2f} ≤ {vega_cfg['entry_z_threshold']}",
-            rejected_strategies=rejected,
-            news_impact=_news_for_symbol(c.symbol, news),
-        )
-
-    if c.days_to_earnings is not None and c.days_to_earnings <= 1:
-        rejected.append("simple_volatility — plain long-vega through event (SH-4 Avoid)")
-        news_impact = f"Earnings in {c.days_to_earnings}d — news confirms event risk"
-        return StrategySelectionLogic(
-            selected_strategy=StrategyType.gamma_scalping,
-            entry_mode="earnings_gap_mode",
-            scenario_tag="Scenario A: Earnings Gap",
-            cross_strategy_matrix_ref="Table SH-4: Earnings gap → Gamma scalping",
-            primary_signal=f"days_to_earnings={c.days_to_earnings}",
-            rejected_strategies=rejected,
-            news_impact=news_impact,
-        )
-
-    cheap_vol = c.iv_annualized < c.garch_forecast
-    high_rv = c.realized_vol_intraday is not None and c.realized_vol_intraday > 0.015
-    iv_elevated = c.iv_annualized > c.garch_forecast * 1.05
-
-    if iv_elevated and high_rv:
-        rejected.append("simple_volatility — IV already rich vs GARCH")
-        return StrategySelectionLogic(
-            selected_strategy=StrategyType.gamma_scalping,
-            entry_mode="high_realized_vol_mode",
-            scenario_tag="Scenario B: High Volatility, Big Intraday Swings",
-            cross_strategy_matrix_ref="Table SH-4: IV high + large realized moves → Gamma",
-            primary_signal=f"IV={c.iv_annualized:.1%} > GARCH; RV={c.realized_vol_intraday:.1%}",
-            rejected_strategies=rejected,
-            news_impact=_news_for_symbol(c.symbol, news),
-        )
-
-    if cheap_vol:
-        rejected.append("vega_scalping — no intraday −2σ IV signal")
-        return StrategySelectionLogic(
-            selected_strategy=StrategyType.simple_volatility,
-            entry_mode="cheap_vol_mode",
-            scenario_tag="Scenario A: Normal Cheap-Vol Setup",
-            cross_strategy_matrix_ref="Table SH-4: IV < GARCH → Simple vol (1st choice)",
-            primary_signal=f"IV={c.iv_annualized:.1%} < GARCH={c.garch_forecast:.1%}",
-            rejected_strategies=rejected,
-            news_impact=_news_for_symbol(c.symbol, news),
-        )
-
-    rejected.append("vega_scalping — IV not 2σ below intraday mean")
-    return StrategySelectionLogic(
-        selected_strategy=StrategyType.gamma_scalping,
-        entry_mode="cheap_vol_mode",
-        scenario_tag="IV path uncertain — gamma preferred over plain long-vega",
-        cross_strategy_matrix_ref="Table SH-4: Simple vol 2nd → Gamma if IV path uncertain",
-        primary_signal="No clean cheap-vol or vega-scalp signal; gamma as hedge to IV direction",
-        rejected_strategies=rejected,
-        news_impact=_news_for_symbol(c.symbol, news),
+    """Cross-strategy decision matrix — Trading_Strategies.md Table SH-4 + news overlay."""
+    return select_strategy_sh4(
+        QuantRegimeInputs(
+            symbol=c.symbol,
+            iv_annualized=c.iv_annualized,
+            garch_forecast=c.garch_forecast,
+            iv_z_score=c.iv_z_score,
+            days_to_earnings=c.days_to_earnings,
+            realized_vol_intraday=c.realized_vol_intraday,
+            garch_distorted=c.garch_distorted,
+        ),
+        news,
+        cfg,
     )
-
-
-def _news_for_symbol(symbol: str, news: MarketNewsSummary) -> str | None:
-    for item in news.items:
-        if symbol in item.tickers or symbol in item.title.upper():
-            return f"{item.sentiment_label}: {item.title[:80]}"
-    return None
 
 
 def _score_candidate(
@@ -659,7 +613,7 @@ async def generate_recommendations(
     learning = get_learning_service()
 
     if news is None:
-        news = mock_market_news()
+        news = get_market_news()
 
     universe = _build_universe()
     ranked: list[InstrumentRecommendation] = []
@@ -765,8 +719,8 @@ async def generate_recommendations(
         f"Scanned {len(universe)} instruments from feed-bound universe (G11–G12).",
         f"{passing} passed all retail gates (T1–T16, I21).",
         f"Confidence floor: only candidates with confidence ≥ {min_confidence:.0%} are recommended.",
-        "Strategy selection follows Trading_Strategies.md Table SH-4.",
-        "Parameter gates sourced from Trading_Parameters.md Parts G, H, I, T.",
+        "Strategy selection follows Trading_Strategies.md Table SH-4 with Market_News overlay.",
+        "Parameter gates sourced from Trading_Parameters.md Parts G, H, I, T, U.",
         "Each recommendation includes a complete P1 insight packet for operator review.",
         "Continual learning: failure memory + module weights applied (§12).",
     ]
@@ -783,6 +737,12 @@ async def generate_recommendations(
         )
     if news.macro_risk_flags:
         notes.append(f"News flags: {'; '.join(news.macro_risk_flags)}")
+    if not news.news_not_blocking or news.kill_event or news.news_post_shock:
+        notes.append(
+            "News overlay gating SH-4 rows "
+            f"(news_not_blocking={news.news_not_blocking}, "
+            f"post_shock={news.news_post_shock}, kill_event={news.kill_event})."
+        )
     if not top3:
         notes.append(
             f"No instruments met the ≥{min_confidence:.0%} confidence bar this cycle — "
@@ -809,8 +769,14 @@ def _event_risks(
     risks: list[str] = []
     if c.days_to_earnings is not None and c.days_to_earnings <= 2:
         risks.append(f"Earnings in {c.days_to_earnings} day(s)")
+    if news.news_event_imminent:
+        risks.append("Market_News: earnings/company event imminent (U5)")
     if news.earnings_mentions > 2:
         risks.append("Broad earnings season — IV crush risk for long-vega")
+    if news.news_post_shock or news.kill_event:
+        risks.append("Post-shock / kill_event — model trades blocked (U6/U10)")
+    if not news.news_not_blocking:
+        risks.append("news_not_blocking=false — SH-4 rows gated (U4)")
     if c.spread_pct > 1.5:
         risks.append("Spread near cap — execution cost sensitivity")
     if strategy.selected_strategy == StrategyType.vega_scalping:

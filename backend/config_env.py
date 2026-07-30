@@ -20,7 +20,8 @@ def load_project_env() -> Path | None:
     except ImportError:
         return env_path if env_path.exists() else None
     if env_path.exists():
-        load_dotenv(env_path, override=True)
+        # Existing process/Railway env wins over .env (Phase 1.10 paper stack vars).
+        load_dotenv(env_path, override=False)
         return env_path
-    load_dotenv(override=True)
+    load_dotenv(override=False)
     return None

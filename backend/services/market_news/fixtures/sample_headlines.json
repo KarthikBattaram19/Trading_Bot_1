@@ -1,0 +1,44 @@
+[
+  {
+    "title": "Nifty opens steady as traders await RBI commentary",
+    "summary": "Benchmark index holds near prior close; options IV muted ahead of policy remarks.",
+    "source": "Reuters India",
+    "time_published": "20260730T083015",
+    "tickers_hint": ["NIFTY"]
+  },
+  {
+    "title": "Infosys quarterly earnings due tomorrow; Street eyes guidance",
+    "summary": "IT major set to report results; implied move elevated in near-week options.",
+    "source": "Moneycontrol",
+    "time_published": "20260730T084500",
+    "tickers_hint": ["INFY"]
+  },
+  {
+    "title": "FII selling cools; domestic institutions remain net buyers",
+    "summary": "After session flows show FIIs lighten risk while DIIs cushion cash equities.",
+    "source": "Economic Times Markets",
+    "time_published": "20260730T091200",
+    "tickers_hint": ["NIFTY"]
+  },
+  {
+    "title": "NSE announces corporate action calendar update for banking names",
+    "summary": "Exchange filing lists upcoming dividend and bonus record dates across large banks.",
+    "source": "NSE India",
+    "time_published": "20260730T100500",
+    "tickers_hint": ["HDFCBANK", "SBIN"]
+  },
+  {
+    "title": "SEBI issues circular on options position limit disclosures",
+    "summary": "Regulator tightens reporting norms for proprietary desks in equity derivatives.",
+    "source": "SEBI",
+    "time_published": "20260730T113000",
+    "tickers_hint": []
+  },
+  {
+    "title": "Pulse: Midcap IT weak after guidance cut chatter",
+    "summary": "Consolidated headline desk flags sector underperformance versus Nifty IT.",
+    "source": "Pulse by Zerodha",
+    "time_published": "20260730T124500",
+    "tickers_hint": ["INFY", "TCS"]
+  }
+]

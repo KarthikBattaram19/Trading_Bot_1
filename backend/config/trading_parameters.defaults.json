@@ -79,7 +79,14 @@
     "alpha_weight": 0.05,
     "beta_weight": 0.9,
     "annualization_factor": 252,
-    "block_when_distorted": true
+    "block_when_distorted": true,
+    "min_observations": 20,
+    "max_log_return_gap": 0.25
+  },
+  "iv_zscore": {
+    "min_observations": 5,
+    "entry_z_threshold": -2.0,
+    "short_vol_z_threshold": 2.0
   },
   "execution_constraints": {
     "min_contract_size": 1,
@@ -91,7 +98,13 @@
   "gamma_theta_breakeven": {
     "use_half_breakeven": false,
     "rehedge_method": "increase_hedge",
-    "breakeven_paid_count": 1
+    "breakeven_paid_count": 1,
+    "delta_threshold": 0.1,
+    "min_edge_threshold": 0.0,
+    "rehedge_cooldown_sec": 60,
+    "max_breakeven_paid_count": 20,
+    "automation_tick_sec": 30,
+    "llm_in_path": false
   },
   "strategies": {
     "simple_volatility": {

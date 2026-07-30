@@ -1,4 +1,8 @@
-"""ICICI Direct BrokerAdapter implementation (architecture.md §11.2 / §11.8–11.15)."""
+"""ICICI Direct BrokerAdapter implementation (architecture.md §11.2 / §11.8–11.15).
+
+Phase 1.9 / A3: place / cancel / status in EXECUTION_MODE=shadow|paper log
+would-be Breeze payloads only — never call live place_order / cancel_order.
+"""
 
 from __future__ import annotations
 
@@ -16,6 +20,8 @@ from backend.integrations.icici_direct.order_mapper import OrderMapper
 from backend.integrations.icici_direct.session_manager import SessionManager, get_session_manager
 
 logger = logging.getLogger(__name__)
+
+_SHADOW_LOG_MAX = 500
 
 
 class RateLimiter:
@@ -52,12 +58,35 @@ class IciciDirectBrokerAdapter(BrokerAdapter):
         self.mapper = OrderMapper(product_default=self.config.product_default)
         self.execution_mode = execution_mode or ExecutionMode.shadow
         self._rate_limiter = RateLimiter(self.config.order_rate_limit_per_sec)
-        self._shadow_orders: list[dict[str, Any]] = []
+        self._shadow_log: deque[dict[str, Any]] = deque(maxlen=_SHADOW_LOG_MAX)
+        self._shadow_order_index: dict[str, dict[str, Any]] = {}
         self.last_reject_reason: str | None = None
         self._order_latencies_ms: deque[float] = deque(maxlen=50)
 
     def set_execution_mode(self, mode: ExecutionMode) -> None:
         self.execution_mode = mode
+
+    def _is_dry_run(self) -> bool:
+        return self.execution_mode in {ExecutionMode.shadow, ExecutionMode.paper}
+
+    def _append_shadow(self, entry: dict[str, Any]) -> dict[str, Any]:
+        """Record a dry-run op. Never includes secrets."""
+        record = {
+            "phase": "A3",
+            "provider": self.provider,
+            "mode": self.execution_mode.value,
+            "dry_run": True,
+            "logged_at": datetime.now(timezone.utc).isoformat(),
+            **entry,
+        }
+        self._shadow_log.append(record)
+        logger.info(
+            "ICICI Direct A3 shadow op=%s internal_order_id=%s order_id=%s",
+            record.get("op"),
+            record.get("internal_order_id"),
+            record.get("order_id"),
+        )
+        return record
 
     async def authenticate(self) -> dict[str, Any]:
         session = await self.session_manager.authenticate(force=True)
@@ -116,6 +145,10 @@ class IciciDirectBrokerAdapter(BrokerAdapter):
                         "exchange": exchange,
                         "lotsize": 1,
                         "tick_size": 0.05,
+                        "expiry": leg.expiration,
+                        "strike": leg.strike,
+                        "right": leg.type if leg.type in {"call", "put"} else None,
+                        "instrumenttype": None,
                     }
                 )
                 continue
@@ -123,9 +156,9 @@ class IciciDirectBrokerAdapter(BrokerAdapter):
                 raise ValueError(f"Cannot resolve instrument {exchange}:{symbol}")
             right = None
             upper = record.tradingsymbol.upper()
-            if upper.endswith("CE"):
+            if upper.endswith("CE") or (leg.type or "").lower() == "call":
                 right = "call"
-            elif upper.endswith("PE"):
+            elif upper.endswith("PE") or (leg.type or "").lower() == "put":
                 right = "put"
             resolved.append(
                 {
@@ -135,8 +168,8 @@ class IciciDirectBrokerAdapter(BrokerAdapter):
                     "exchange": record.exchange,
                     "lotsize": record.lotsize,
                     "tick_size": record.tick_size,
-                    "expiry": record.expiry,
-                    "strike": record.strike,
+                    "expiry": record.expiry or leg.expiration,
+                    "strike": record.strike if record.strike is not None else leg.strike,
                     "right": right,
                     "instrumenttype": record.instrumenttype,
                 }
@@ -150,28 +183,38 @@ class IciciDirectBrokerAdapter(BrokerAdapter):
         resolved = await self._resolve_leg_meta(order)
         payloads = self.mapper.map_order_legs(order, resolved)
 
-        if self.execution_mode in {ExecutionMode.shadow, ExecutionMode.paper}:
-            dry = {
-                "provider": self.provider,
-                "mode": self.execution_mode.value,
-                "dry_run": True,
-                "internal_order_id": order.internal_order_id,
-                "legs": [p.to_api_dict() for p in payloads],
-                "submitted_at": datetime.now(timezone.utc).isoformat(),
-            }
-            self._shadow_orders.append(dry)
-            logger.info(
-                "ICICI Direct shadow submit internal_order_id=%s legs=%s",
-                order.internal_order_id,
-                len(payloads),
+        if self._is_dry_run():
+            order_ids = [
+                f"shadow_{order.internal_order_id}_{i + 1}" for i in range(len(payloads))
+            ]
+            leg_payloads = [p.to_api_dict() for p in payloads]
+            dry = self._append_shadow(
+                {
+                    "op": "place_order",
+                    "internal_order_id": order.internal_order_id,
+                    "strategy_id": order.strategy_id,
+                    "signal_id": order.signal_id,
+                    "underlying_symbol": order.underlying_symbol,
+                    "order_ids": order_ids,
+                    "legs": leg_payloads,
+                }
             )
+            for oid, leg_payload in zip(order_ids, leg_payloads, strict=True):
+                self._shadow_order_index[oid] = {
+                    "order_id": oid,
+                    "status": "complete",
+                    "dry_run": True,
+                    "internal_order_id": order.internal_order_id,
+                    "payload": leg_payload,
+                    "logged_at": dry["logged_at"],
+                }
             return {
                 "success": True,
+                "phase": "A3",
                 "dry_run": True,
-                "order_ids": [
-                    f"shadow_{order.internal_order_id}_{i+1}" for i in range(len(payloads))
-                ],
-                "payloads": dry["legs"],
+                "order_ids": order_ids,
+                "payloads": leg_payloads,
+                "shadow_logged": True,
             }
 
         from backend.integrations.registry import place_order_enabled
@@ -197,7 +240,9 @@ class IciciDirectBrokerAdapter(BrokerAdapter):
                 self.last_reject_reason = str(exc)
                 for placed_id in reversed(order_ids):
                     try:
-                        await client.cancel_order({"order_id": placed_id, "exchange_code": payload.exchange_code})
+                        await client.cancel_order(
+                            {"order_id": placed_id, "exchange_code": payload.exchange_code}
+                        )
                     except IciciDirectAPIError:
                         logger.exception("Rollback cancel failed for %s", placed_id)
                 raise IciciDirectAPIError(
@@ -221,13 +266,40 @@ class IciciDirectBrokerAdapter(BrokerAdapter):
             "responses": responses,
         }
 
-    async def cancel_order(self, order_id: str, *, exchange_code: str = "NSE") -> dict[str, Any]:
-        if self.execution_mode in {ExecutionMode.shadow, ExecutionMode.paper}:
-            return {"success": True, "dry_run": True, "order_id": order_id}
+    async def cancel_order(
+        self,
+        order_id: str,
+        *,
+        variety: str = "NORMAL",
+        exchange_code: str = "NSE",
+    ) -> dict[str, Any]:
+        del variety  # Breeze cancel uses exchange_code; variety kept for BrokerAdapter parity
+        if self._is_dry_run():
+            prior = self._shadow_order_index.get(order_id)
+            if prior is not None:
+                prior = {**prior, "status": "cancelled"}
+                self._shadow_order_index[order_id] = prior
+            self._append_shadow(
+                {
+                    "op": "cancel_order",
+                    "order_id": order_id,
+                    "exchange_code": exchange_code,
+                    "payload": {"order_id": order_id, "exchange_code": exchange_code},
+                    "prior_status": prior,
+                }
+            )
+            return {
+                "success": True,
+                "phase": "A3",
+                "dry_run": True,
+                "order_id": order_id,
+                "shadow_logged": True,
+            }
         client = await self.session_manager.ensure_session()
         return await client.cancel_order({"order_id": order_id, "exchange_code": exchange_code})
 
     async def get_positions(self) -> list[dict[str, Any]]:
+        # Portfolio read is data-only (not A3 order path); allowed with session.
         client = await self.session_manager.ensure_session()
         payload = await client.get_positions()
         data = payload.get("Success") or []
@@ -238,8 +310,39 @@ class IciciDirectBrokerAdapter(BrokerAdapter):
         return await client.get_funds()
 
     async def get_order_status(self, order_id: str) -> dict[str, Any]:
-        if order_id.startswith("shadow_"):
-            return {"order_id": order_id, "status": "complete", "dry_run": True}
+        if order_id.startswith("shadow_") or order_id in self._shadow_order_index:
+            indexed = self._shadow_order_index.get(order_id)
+            status = indexed or {
+                "order_id": order_id,
+                "status": "complete",
+                "dry_run": True,
+            }
+            self._append_shadow(
+                {
+                    "op": "get_order_status",
+                    "order_id": order_id,
+                    "status": status.get("status"),
+                }
+            )
+            return {**status, "phase": "A3", "dry_run": True}
+
+        if self._is_dry_run():
+            record = self._append_shadow(
+                {
+                    "op": "get_order_status",
+                    "order_id": order_id,
+                    "status": "unknown",
+                    "note": "not_in_shadow_index",
+                }
+            )
+            return {
+                "order_id": order_id,
+                "status": "unknown",
+                "dry_run": True,
+                "phase": "A3",
+                "logged_at": record["logged_at"],
+            }
+
         client = await self.session_manager.ensure_session()
         book = await client.get_order_list({})
         rows = book.get("Success") or []
@@ -260,20 +363,29 @@ class IciciDirectBrokerAdapter(BrokerAdapter):
         )
         return {
             "provider": self.provider,
+            "phase": "A3",
             "enabled": self.config.enabled,
             "execution_mode": self.execution_mode.value,
             "place_order_enabled": place_order_enabled(),
             "default_for_execution": self.config.default_for_execution,
             "session": session_health,
             "instrument_count": self.instruments.count,
-            "shadow_orders_logged": len(self._shadow_orders),
+            "shadow_orders_logged": len(self._shadow_log),
+            "shadow_order_index_size": len(self._shadow_order_index),
             "avg_order_latency_ms": avg_latency,
             "last_reject_reason": self.last_reject_reason,
         }
 
     @property
     def shadow_orders(self) -> list[dict[str, Any]]:
-        return list(self._shadow_orders)
+        """All A3 dry-run log entries (place / cancel / status / …)."""
+        return list(self._shadow_log)
+
+    def clear_shadow_log(self) -> int:
+        cleared = len(self._shadow_log)
+        self._shadow_log.clear()
+        self._shadow_order_index.clear()
+        return cleared
 
 
 _adapter: IciciDirectBrokerAdapter | None = None
@@ -284,3 +396,8 @@ def get_icici_direct_adapter() -> IciciDirectBrokerAdapter:
     if _adapter is None:
         _adapter = IciciDirectBrokerAdapter()
     return _adapter
+
+
+def reset_icici_direct_adapter_for_tests() -> None:
+    global _adapter
+    _adapter = None

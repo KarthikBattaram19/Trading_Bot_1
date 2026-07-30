@@ -1,4 +1,6 @@
-# Railway paper backend — monorepo root config.
+# Railway paper backend — monorepo root config (Phase 1.10: EXECUTION_MODE=paper).
+#
+# Required vars: infra/env/railway.paper.env.example — never EXECUTION_MODE=live.
 #
 # Recommended: Root Directory = `backend`, Config-as-code = `/backend/railway.toml`.
 #

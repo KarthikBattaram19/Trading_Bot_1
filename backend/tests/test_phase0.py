@@ -23,7 +23,7 @@ def test_health_and_feeds(monkeypatch):
     body = health.json()
     assert body["status"] == "ok"
     assert body["execution_mode"] == "shadow"
-    assert body["phase"] == "0"
+    assert body["phase"] == "1"
     assert body["place_order_enabled"] is False
     assert body.get("local_containers_required") is False
     assert body.get("remote_builder") == "nixpacks"

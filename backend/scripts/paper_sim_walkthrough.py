@@ -1,4 +1,4 @@
-"""Concrete paper-sim rehearsal: NIFTY + BANKNIFTY ATM straddles via ICICI Direct marks.
+"""Concrete paper-sim rehearsal: NIFTY + BANKNIFTY ATM long-vol (CE+PE) via ICICI Direct marks.
 
 Usage (from repo root):
   python -m backend.scripts.paper_sim_walkthrough
@@ -54,8 +54,8 @@ def _nearest_expiry(records: list) -> str | None:
     return candidates[0][1]
 
 
-def _atm_straddle(records: list, spot: float) -> tuple[Any, Any] | None:
-    """Pick CE+PE at strike closest to spot for a single expiry set."""
+def _atm_ce_pe_pair(records: list, spot: float) -> tuple[Any, Any] | None:
+    """Pick CE+PE at strike closest to spot for a single expiry set (simple_vol shape)."""
     by_strike: dict[float, dict[str, Any]] = {}
     for r in records:
         if r.strike is None:
@@ -99,7 +99,7 @@ async def _rehearse_underlying(engine, underlying: str) -> dict[str, Any]:
         strikes = sorted({float(r.strike) for r in expiry_opts if r.strike})
         spot = strikes[len(strikes) // 2] if strikes else 0.0
 
-    pair = _atm_straddle(expiry_opts, spot)
+    pair = _atm_ce_pe_pair(expiry_opts, spot)
     if pair is None:
         raise RuntimeError(f"no CE/PE pair near spot for {underlying} {expiry}")
     ce, pe = pair
@@ -108,7 +108,7 @@ async def _rehearse_underlying(engine, underlying: str) -> dict[str, Any]:
     from backend.paper_sim.models import PaperLegRequest, PaperOrderRequest, PaperSide
 
     order = PaperOrderRequest(
-        strategy_tag="walkthrough_atm_straddle",
+        strategy_tag="walkthrough_simple_vol",
         underlying=underlying,
         note=f"paper walkthrough expiry={expiry} spot≈{spot:.2f}",
         legs=[

@@ -146,8 +146,10 @@ async def test_shadow_submit_logs_payload():
     result = await adapter.submit_order(order)
     assert result["success"] is True
     assert result["dry_run"] is True
+    assert result["phase"] == "A3"
     assert result["payloads"][0]["stock_code"] == "SBIN-EQ"
     assert result["payloads"][0]["exchange_code"] == "NSE"
     assert result["payloads"][0]["action"] == "buy"
     assert result["payloads"][0]["order_type"] == "limit"
     assert len(adapter.shadow_orders) == 1
+    assert adapter.shadow_orders[0]["op"] == "place_order"

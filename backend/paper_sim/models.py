@@ -73,6 +73,18 @@ class PaperPosition(BaseModel):
     realized_pnl: float = 0.0
     unrealized_pnl: float = 0.0
     note: str | None = None
+    # Part J — γ–θ re-hedge state (mechanical; set on entry / each re-hedge)
+    hedge_point_price: float | None = None
+    gamma_theta_breakeven_pct: float | None = None
+    breakeven_paid_count: int = 0
+    rehedge_method: Literal[
+        "increase_hedge", "reduce_options", "adjust_call_put_mix"
+    ] = "increase_hedge"
+    last_rehedge_at: datetime | None = None
+    total_delta: float | None = None
+    total_gamma: float | None = None
+    total_theta: float | None = None
+    total_vega: float | None = None
 
 
 class PaperAccountSnapshot(BaseModel):
@@ -109,3 +121,7 @@ class OptionChainSnapshot(BaseModel):
     contracts: list[OptionChainContract]
     as_of: datetime
     source: str = "icici_direct_data_only"
+    marks_fresh: bool | None = None
+    stale_contracts: list[str] = Field(default_factory=list)
+    spot_age_sec: float | None = None
+    instrument_master_age_sec: float | None = None

@@ -76,7 +76,7 @@ Base: `/api/v1/paper-sim`
 | POST | `/automation/stop` | Stop the automation loop |
 | GET | `/automation/status` | Loop state, hedge points, last signal, news impact, last actions |
 
-Example open (long straddle). **`quantity` must be a multiple of that contract’s ICICI Direct NFO `lotsize`** (never assume OSS US 100). Example uses a mock lot of 25; live lots come from instrument master (see `nfo_lot_sizing` in `trading_parameters.defaults.json`). `SBIN` is illustrative. If the structure adds a **stock** hedge, the underlying must pass the ≤ ₹1000 Part T gate; **options-only** has no underlying price cap.
+Example open (simple_vol — long ATM CE + PE). **`quantity` must be a multiple of that contract’s ICICI Direct NFO `lotsize`** (never assume OSS US 100). Example uses a mock lot of 25; live lots come from instrument master (see `nfo_lot_sizing` in `trading_parameters.defaults.json`). `SBIN` is illustrative. If the structure adds a **stock** hedge, the underlying must pass the ≤ ₹1000 Part T gate; **options-only** has no underlying price cap.
 
 ```json
 POST /api/v1/paper-sim/orders
@@ -206,5 +206,5 @@ Canonical detail and phase boundary vs GCP live: Architecture **§17.0** (paper)
 When ready for ICICI Direct live (`architecture.md` §21 Phase 5):
 
 1. Keep practicing on hosted `/api/v1/paper-sim` (Railway + Vercel) through supervised → semi → full autonomy (Phases 2–4) until SH-4 + news + re-hedge behavior is stable and soak metrics pass.  
-2. Use ICICI Direct adapter `shadow` only to validate order payload mapping (A3).  
+2. Use ICICI Direct adapter **A3 shadow** (`POST /api/v1/config/integrations/broker/shadow-order`, cancel/status + `GET .../shadow-orders`) to validate order payload mapping — logged only; never `place_order`.  
 3. Promote to `EXECUTION_MODE=live` on the **GCP** stack (Cloud Run + Cloud SQL + Memorystore, §17.8) with micro-size + risk gates — a **separate** code path and deploy target, not a flip of the paper ledger or Railway service.

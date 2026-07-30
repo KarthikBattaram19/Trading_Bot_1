@@ -158,10 +158,19 @@ export async function getPaperSimHealth(): Promise<Record<string, unknown>> {
   if (useMockData()) {
     return {
       module: "paper_sim",
-      phase: "0",
-      status: "stub",
-      separate_from_angel_live: true,
+      phase: "1.1",
+      status: "ready",
+      separate_from_icici_live: true,
       broker_place_order: false,
+      capabilities: {
+        account: true,
+        positions: true,
+        fills: true,
+        multi_leg_orders: true,
+        close: true,
+        reset: true,
+        marks_refresh: true,
+      },
     };
   }
   return fetchJson<Record<string, unknown>>("/api/v1/paper-sim/health");

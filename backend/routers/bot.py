@@ -9,6 +9,7 @@ from fastapi import APIRouter
 from backend.integrations.registry import (
     get_default_broker_provider,
     get_execution_mode,
+    paper_stack_guard_status,
     place_order_enabled,
 )
 from backend.models.recommendations import FeedSource
@@ -21,11 +22,20 @@ _kill_switch_armed = False
 _scheduler_mode = "active"
 
 
+def is_kill_switch_armed() -> bool:
+    """PS-08 / Phase 1.6 automation gate."""
+    return bool(_kill_switch_armed)
+
+
 @router.get("/bot/status")
 async def bot_status():
     supervision = os.getenv("SUPERVISION_MODE", "supervised").strip().lower()
+    guard = paper_stack_guard_status()
     return {
         "execution_mode": get_execution_mode().value,
+        "requested_execution_mode": guard["requested_execution_mode"],
+        "deploy_stack": guard["deploy_stack"],
+        "live_blocked": guard["live_blocked"],
         "supervision_mode": supervision,
         "default_broker": get_default_broker_provider(),
         "autonomy": "supervised" if supervision == "supervised" else supervision,
@@ -47,7 +57,7 @@ async def bot_status():
         "kill_switch_armed": _kill_switch_armed,
         "place_order_enabled": place_order_enabled(),
         "api_health": "ok",
-        "phase": "0",
+        "phase": "1",
     }
 
 
