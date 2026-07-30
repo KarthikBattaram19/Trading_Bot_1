@@ -1,0 +1,182 @@
+{
+  "$schema": "../schemas/trading_parameters.schema.json",
+  "version": "1.6",
+  "source_document": "Docs/Trading_Parameters.md",
+  "option_universe_filters": {
+    "max_option_premium": 300,
+    "premium_currency": "INR",
+    "premium_field": "mid",
+    "premium_field_long": "ask",
+    "premium_field_short": "bid",
+    "moneyness": "atm",
+    "atm_selection_rule": "closest_strike_to_spot",
+    "atm_strike_tolerance": 0,
+    "equidistant_strike_preference": "lower",
+    "max_underlying_price": 1000,
+    "max_underlying_price_applies_when": "options_and_underlying",
+    "underlying_price_currency": "INR",
+    "exclude_index_underlyings": true,
+    "require_cash_equity_underlying": true,
+    "max_underlying_price_rationale": "minimize_stock_hedge_capital",
+    "excluded_index_underlying_symbols": [
+      "NIFTY",
+      "BANKNIFTY",
+      "FINNIFTY",
+      "MIDCPNIFTY",
+      "NIFTYNXT50"
+    ],
+    "min_volume": 1000,
+    "min_open_interest": 10000,
+    "max_spread_pct": 2.0,
+    "high_liquidity_required": true,
+    "applies_to_strategies": [
+      "simple_volatility",
+      "gamma_scalping",
+      "vega_scalping"
+    ]
+  },
+  "oss_global_params": {
+    "display_mode": "total",
+    "default_stock_multiplier": 1,
+    "flat_volatility": true,
+    "contract_multiplier_source": "nfo_instrument_lotsize"
+  },
+  "nfo_lot_sizing": {
+    "enabled": true,
+    "resolve_from": "icici_direct_instrument_master",
+    "per_contract": true,
+    "do_not_copy_oss_us_default": true,
+    "oss_us_workbook_default": 100,
+    "stock_leg_multiplier": 1,
+    "quantity_must_be_multiple_of_lotsize": true,
+    "min_lots": 1,
+    "reference_equity_lots": {}
+  },
+  "oss_leg_params": {
+    "type": "call"
+  },
+  "market_data": {
+    "price_history_required": true,
+    "option_chain_required": true,
+    "iv_required": true,
+    "feed_stale_kill_seconds": 60,
+    "option_chain_fields": [
+      "strike",
+      "expiry",
+      "expiration_datetime",
+      "bid",
+      "ask",
+      "mid",
+      "premium",
+      "volume",
+      "open_interest",
+      "implied_volatility",
+      "moneyness"
+    ]
+  },
+  "garch_forecast": {
+    "gamma_weight": 0.05,
+    "alpha_weight": 0.05,
+    "beta_weight": 0.9,
+    "annualization_factor": 252,
+    "block_when_distorted": true
+  },
+  "execution_constraints": {
+    "min_contract_size": 1,
+    "supervised_approval_required": true,
+    "automation_allowed_post_fill": true,
+    "multi_leg_sync_submit": true,
+    "min_recommendation_confidence": 0.85
+  },
+  "gamma_theta_breakeven": {
+    "use_half_breakeven": false,
+    "rehedge_method": "increase_hedge",
+    "breakeven_paid_count": 1
+  },
+  "strategies": {
+    "simple_volatility": {
+      "enabled": true,
+      "greek_targets": {
+        "delta": 0,
+        "gamma": "positive",
+        "vega": "positive",
+        "theta": "negative"
+      },
+      "option_selection": {
+        "moneyness": "atm",
+        "max_option_premium": 300,
+        "premium_currency": "INR",
+        "min_dte": 10,
+        "max_dte": 30,
+        "min_volume": 1000,
+        "min_open_interest": 10000,
+        "max_spread_pct": 2.0
+      },
+      "entry_signal": {
+        "iv_below_garch_forecast": true
+      },
+      "hedge_method": "stock",
+      "hold_horizon": "D+0",
+      "max_hold_days": 1
+    },
+    "gamma_scalping": {
+      "enabled": true,
+      "gamma_entry_mode": "cheap_vol_mode",
+      "construction": "calls_stock",
+      "option_selection": {
+        "moneyness": "atm",
+        "max_option_premium": 300,
+        "premium_currency": "INR",
+        "same_strike_near_far": true,
+        "min_volume": 1000,
+        "min_open_interest": 10000,
+        "max_spread_pct": 2.0
+      }
+    },
+    "vega_scalping": {
+      "enabled": true,
+      "hold_horizon": "intraday",
+      "vol_direction": "long",
+      "option_selection": {
+        "moneyness": "atm",
+        "max_option_premium": 300,
+        "premium_currency": "INR",
+        "block_ultra_near_expiry": true,
+        "min_volume": 1000,
+        "min_open_interest": 10000,
+        "max_spread_pct": 2.0
+      },
+      "iv_signal": {
+        "entry_z_threshold": -2.0,
+        "short_vol_z_threshold": 2.0,
+        "stop_z_threshold": -3.0,
+        "stop_z_threshold_alt": -4.0
+      },
+      "flatten_at_session_close": true
+    }
+  },
+  "portfolio": {
+    "post_shock_reduce": true
+  },
+  "pre_trade_gates": {
+    "signal_reproducible": false,
+    "liquidity_ok": false,
+    "size_rebalance_ok": false,
+    "event_risk_reviewed": false,
+    "regime_match": false,
+    "cost_assumptions_valid": false,
+    "exit_plan_defined": false,
+    "option_premium_within_cap": false,
+    "option_moneyness_atm": false,
+    "underlying_price_within_cap": false
+  },
+  "kill_conditions": {
+    "kill_liquidity": false,
+    "kill_hedge_unavailable": false,
+    "kill_stale_data": false,
+    "kill_event": false,
+    "kill_neutrality": false,
+    "kill_greek_limit": false,
+    "kill_thesis": false
+  }
+}

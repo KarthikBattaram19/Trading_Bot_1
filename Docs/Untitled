@@ -1,0 +1,18 @@
+What you need to do
+Fill .env (copied from .env.example) with ICICI Direct Breeze values:
+
+ICICI_DIRECT_API_KEY=...
+ICICI_DIRECT_API_SECRET=...
+ICICI_DIRECT_SESSION_TOKEN=...   # daily API_Session from Breeze login
+
+1. Customer login: https://secure.icicidirect.com/customer/login
+2. Breeze API login: https://api.icicidirect.com/apiuser/login?api_key=<API_KEY>
+3. Copy API_Session into ICICI_DIRECT_SESSION_TOKEN
+
+Then run:
+
+python -m backend.scripts.connect_icici_direct
+
+You should get JSON with ok: true and has_session_token — no tokens printed.
+
+Keep EXECUTION_MODE=shadow until you intentionally go live.

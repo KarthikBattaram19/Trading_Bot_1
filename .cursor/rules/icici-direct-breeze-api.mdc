@@ -1,0 +1,35 @@
+---
+description: ICICI Direct Breeze API vendor knowledge base; prefer official docs over guesses
+alwaysApply: true
+---
+
+# ICICI Direct Breeze API — vendor knowledge base
+
+**Authoritative vendor docs:** [Breeze API Reference](https://api.icicidirect.com/breezeapi/documents/index.html)
+
+When implementing or debugging ICICI Direct / Breeze (auth, orders, quotes, WS, margins), **use that documentation as the source of truth** for endpoints, params, headers, checksum, and sample payloads. Do not invent request shapes. Project mapping lives in `Docs/architecture.md` §8.9 / §11.8–11.15.
+
+## Out of scope
+
+- **Do not implement GTT** (`gttorder`, GTT order book, place/cancel/modify GTT). This project does not use Good Till Triggered orders.
+
+## Canonical anchors
+
+| Topic | Doc section |
+| ----- | ----------- |
+| Checksum / login | `#checksum-computation--login` |
+| Request headers | `#request-headers` |
+| Orders | `#order` |
+| Quotes / option chain | `#quotes` / `#optionchain` |
+
+## Hard constraints (from vendor regulatory notes)
+
+- Order APIs only from **registered static IP**; static IP change ≤ once/week.
+- Unregistered algo: **single API key** for order routing.
+- ≤ **10 combined order ops/sec** (place / modify / cancel / square-off).
+- **No market orders** — limit only.
+- No Margin / Option Plus place-modify-cancel via Breeze.
+- Rate envelope: ~100 calls/min, ~5000/day (non-order APIs also count).
+- NSE equity / futures / options only in docs; treat BSE/MCX as unavailable unless docs change.
+
+Always resolve `session_token` via `customerdetails` before signed calls (`X-Checksum` = `token ` + SHA256(`timestamp`+payload+`secret_key`)).

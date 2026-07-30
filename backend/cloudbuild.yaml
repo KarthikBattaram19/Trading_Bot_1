@@ -1,0 +1,52 @@
+# Live deploy — Google Cloud Buildpacks (no Dockerfile).
+# Region: asia-south1. Trigger on backend/** (architecture.md §17.5).
+#
+# Substitutions (set on the trigger):
+#   _SERVICE      = volatality-trading
+#   _REGION       = asia-south1
+#   _AR_REPO      = asia-south1-docker.pkg.dev/$PROJECT_ID/volatality/backend
+#   _PROCESS_ROLE = all
+
+substitutions:
+  _SERVICE: volatality-trading
+  _REGION: asia-south1
+  _AR_REPO: asia-south1-docker.pkg.dev/${PROJECT_ID}/volatality/backend
+  _PROCESS_ROLE: all
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+steps:
+  - name: gcr.io/k8s-skaffold/pack
+    id: buildpacks-build
+    entrypoint: pack
+    args:
+      - build
+      - ${_AR_REPO}:$SHORT_SHA
+      - --builder=gcr.io/buildpacks/builder:v1
+      - --path=.
+      - --env=GOOGLE_ENTRYPOINT=bash scripts/start_remote.sh
+      - --publish
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: deploy-cloud-run
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - ${_SERVICE}
+      - --image=${_AR_REPO}:$SHORT_SHA
+      - --region=${_REGION}
+      - --platform=managed
+      - --allow-unauthenticated
+      - --cpu=2
+      - --memory=4Gi
+      - --min-instances=1
+      - --no-cpu-throttling
+      - --set-env-vars=PROCESS_ROLE=${_PROCESS_ROLE}
+      - --port=8080
+
+images:
+  - ${_AR_REPO}:$SHORT_SHA
+
+timeout: 1800s

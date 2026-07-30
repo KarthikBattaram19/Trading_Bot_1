@@ -1,0 +1,55 @@
+Connecting with ICICI Direct (Breeze API)
+What you're solving
+ICICI Direct Breeze will not let the bot call APIs with only a long-lived password. You log in once per day via the Breeze API login page, capture a temporary API_Session, then exchange it for a session_token used on REST calls until it expires.
+
+Think of it like: API key + API secret + daily API_Session = today's session keys.
+
+Step 1 — Obtain a daily API_Session
+Your bot already has (from .env / secrets):
+
+ICICI_DIRECT_API_KEY — Breeze app key
+ICICI_DIRECT_API_SECRET — Breeze app secret
+ICICI_DIRECT_SESSION_TOKEN — today's API_Session from the login redirect
+
+You personally (or an operator):
+1. Log into ICICI Direct customer portal if needed: https://secure.icicidirect.com/customer/login
+2. Open Breeze API login: https://api.icicidirect.com/apiuser/login?api_key=<API_KEY>
+3. Complete login; copy the API_Session value from the redirect / response into ICICI_DIRECT_SESSION_TOKEN
+
+Docs: https://api.icicidirect.com/breezeapi/documents/index.html
+SDK: https://github.com/Idirect-Tech/Breeze-Python-SDK
+
+Step 2 — Bot exchanges API_Session for session_token
+On startup / authenticate, the bot calls customerdetails (checksum-signed with api_secret) using the API_Session.
+Breeze replies with a session_token (and customer id). That token is what later REST calls use (X-SessionToken).
+
+Your bot stores these in memory / vault (not in the frontend, not logged).
+
+Step 3 — Every later API call uses the session
+After exchange, you don't re-open the browser login for each quote or order.
+
+Instead each request looks like:
+X-AppKey / checksum headers + X-SessionToken
+(+ public IP where required)
+
+Meaning: "I'm the app that already completed today's Breeze login."
+
+For WebSocket ticks, use the Breeze streaming APIs from the same session (see architecture.md §8.9 / §11.8).
+
+Step 4 — Keep the session alive / renew it
+API_Session is a same-day login artifact. Overnight reuse fails.
+Next morning (or after expiry), the operator must obtain a fresh API_Session via the Breeze login URL and update ICICI_DIRECT_SESSION_TOKEN; then the bot re-runs customerdetails.
+
+Tiny timeline
+08:45  Operator refreshes API_Session → bot customerdetails → save session_token
+09:15  Quotes / paper marks / (Phase 5) place_order using session_token
+anytime  If session dies → refresh API_Session via login URL, then re-authenticate
+00:00  Treat session as expired → next day login again
+
+What you personally do vs what the bot does
+You (daily / as needed)	Bot (every session)
+Put API key, API secret, and today's API_Session in secrets
+Call customerdetails, store session_token, attach checksum headers, re-auth on failure
+You do manually paste API_Session into .env / Secret Manager when it rotates — that is the operator step Breeze requires.
+
+Live place_order stays gated by EXECUTION_MODE=live + ALLOW_LIVE_PLACE_ORDER (Phase 5 / GCP only). Paper stack uses marks only.

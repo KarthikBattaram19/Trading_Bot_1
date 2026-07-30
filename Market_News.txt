@@ -1,0 +1,51 @@
+# Market News — India curation contract
+
+> **Used by:** Architecture §8.8, `Docs/Trading_Strategies.md` (Table SH-4 news overlay), `Docs/Paper_Simulator.md`, `Docs/Trading_Parameters.md` Part U
+
+Ops-editable list of preferred India news sources and pull windows for **sentiment / event flags**. Quant signals (GARCH, IV z-score) stay primary; this file defines **what to read and when** so the bot can gate strategy selection and paper-sim automation.
+
+## Monitor
+
+- Moneycontrol — company-specific developments
+- NSE India — official announcements and filings
+- The Economic Times – Markets — macroeconomic news
+- Reuters India — fast, factual coverage with minimal speculation
+- Pulse by Zerodha — consolidated headlines
+
+## Recommended daily workflow
+
+### Before market open (8:00–9:00 AM IST)
+
+- Reuters India
+- Economic Times Markets
+- CNBC TV18
+
+### During market hours
+
+- Moneycontrol Live
+- Pulse by Zerodha
+- NSE announcements
+
+### After market close
+
+- Economic Times analysis
+- Company earnings
+- FII/DII activity
+- Sector performance
+
+## For the AI trading bot / paper-sim
+
+Build the news ingestion pipeline (`backend/services/market_news/` or equivalent) around this priority order:
+
+1. Reuters (high-quality, low-noise)
+2. Moneycontrol
+3. Economic Times
+4. NSE corporate announcements
+5. SEBI circulars
+
+This mix feeds sentiment and event-driven gates for:
+
+- Live recommendations (`GET /api/v1/recommendations` → `market_news`)
+- Paper simulator (`GET /api/v1/paper-sim/news` + `/signals`) acting per `Trading_Strategies.md`
+
+Map classified tone / topics / symbol tags through Table SH-4 (Architecture §8.8.4). Unplanned earnings or news the setup was not designed to absorb → Shared Kill (`kill_event`).

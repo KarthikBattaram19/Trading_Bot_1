@@ -1,0 +1,271 @@
+Problem Statement
+Development of an AI-Assisted Quantitative Volatility Trading Framework for Retail Traders Using Statistical Arbitrage, Gamma Scalping, and Vega Scalping
+
+________________________________________
+NOTE (July 1, 2026) — SUPERSEDED SCOPE
+This document is the original academic problem statement (decision-support / recommendations).
+The current project design supersedes it with a retail trading bot that:
+  • Starts SUPERVISED — operator approves each discretionary entry before broker submit (Phase 3).
+  • Progresses to FULL AUTONOMY only after validated paper soak and explicit promotion
+    (supervised → semi_autonomous → fully_autonomous).
+  • Always automates mechanical hedges (delta drift, stop-loss) without per-trade approval.
+
+Authoritative references (do not implement from this file alone):
+  • architecture.md v1.14 — §6.2.2 (SUPERVISION_MODE), §20.4.7, §20.4.13
+  • context.md v2.0 — §2.3.1 Progressive Supervision Roadmap
+  • DECISIONS.md — 2026-07-01 supervised-first decision
+  • architecture.md Appendix D — full previous-vs-current comparison
+________________________________________
+1. Background
+Volatility is one of the few market variables that can be traded independently of price direction. Professional quantitative trading firms and market makers routinely exploit inefficiencies in volatility through sophisticated strategies such as Statistical Arbitrage, Gamma Scalping, and Vega Trading. These strategies rely on mathematical models, continuous portfolio rebalancing, option pricing theory, and real-time market data to generate consistent risk-adjusted returns.
+However, retail traders face significant structural disadvantages when attempting to implement these strategies, including:
+•	Limited access to institutional-grade data 
+•	Higher transaction costs 
+•	Limited computational infrastructure 
+•	Lack of automated execution systems 
+•	Manual portfolio management 
+•	Inability to continuously hedge option positions 
+•	Limited access to advanced quantitative research 
+Despite these constraints, advances in Artificial Intelligence, Large Language Models (LLMs), Retrieval-Augmented Generation (RAG), algorithmic trading platforms, and broker APIs present an opportunity to bridge much of the knowledge and execution gap between retail and institutional participants.
+This project aims to design and develop an AI-assisted quantitative volatility trading framework specifically optimized for retail traders. The framework will leverage concepts from Statistical Arbitrage, Volatility Trading, Gamma Scalping, and Vega Scalping while incorporating modern AI techniques for knowledge retrieval, strategy generation, risk management, and trade decision support.
+________________________________________
+2. Problem Statement
+The primary challenge is to develop a systematic, statistically robust, and practically executable volatility trading strategy that enables a retail trader to identify, evaluate, execute, and manage volatility-based trades using institutional-grade concepts without requiring institutional infrastructure.
+The framework should integrate:
+•	Statistical Arbitrage 
+•	Cointegration Analysis 
+•	Volatility Forecasting 
+•	Gamma Scalping 
+•	Vega Scalping 
+•	AI-assisted Decision Making 
+•	Risk Management 
+•	Automated Knowledge Retrieval using RAG 
+•	Strategy Optimization 
+•	Trade Analytics 
+while accounting for practical retail constraints including:
+•	Capital limitations 
+•	Transaction costs 
+•	Bid-ask spread 
+•	Slippage 
+•	Margin requirements 
+•	Limited market data 
+•	Manual or semi-automated execution 
+•	Position sizing constraints 
+________________________________________
+3. Objectives
+The proposed system should be capable of:
+A. Knowledge Management
+Develop an AI-powered knowledge base by processing the following PDF resources using a Retrieval-Augmented Generation (RAG) pipeline:
+•	Statistical Arbitrage by Cointegration 
+•	Volatility Trading 
+•	Gamma Scalping 
+•	Vega Scalping 
+The system should:
+•	Extract concepts 
+•	Preserve mathematical formulas 
+•	Index definitions 
+•	Store trading methodologies 
+•	Build semantic relationships 
+•	Retrieve relevant content during analysis 
+________________________________________
+B. Statistical Arbitrage Module
+Develop quantitative models capable of:
+•	Cointegration testing 
+•	Pair selection 
+•	Mean reversion analysis 
+•	Spread construction 
+•	Z-score calculation 
+•	Entry signal generation 
+•	Exit signal generation 
+•	Position sizing 
+•	Risk-adjusted pair ranking 
+The objective is to identify statistically significant market inefficiencies suitable for retail-scale execution.
+________________________________________
+C. Volatility Analysis Module
+Develop models to estimate:
+•	Historical Volatility 
+•	Realized Volatility 
+•	Implied Volatility 
+•	Forward Volatility 
+•	Volatility Term Structure 
+•	Volatility Smile 
+•	Volatility Skew 
+•	Volatility Surface 
+The system should determine whether options are:
+•	Underpriced 
+•	Fairly priced 
+•	Overpriced 
+relative to expected future volatility.
+________________________________________
+D. Gamma Scalping Module
+Design a framework capable of:
+•	Delta calculation 
+•	Gamma estimation 
+•	Dynamic hedge ratio computation 
+•	Rebalancing frequency optimization 
+•	Hedge cost estimation 
+•	Theta decay analysis 
+•	Profitability estimation 
+The framework should determine:
+•	Optimal hedging intervals 
+•	Expected gamma gains 
+•	Expected theta losses 
+•	Net profitability after transaction costs 
+________________________________________
+E. Vega Trading Module
+Develop models capable of evaluating:
+•	Vega exposure 
+•	IV expansion 
+•	IV contraction 
+•	Event-driven volatility 
+•	Earnings volatility 
+•	Macroeconomic volatility 
+•	Vega-neutral positioning 
+The objective is to exploit changes in implied volatility while minimizing directional risk.
+________________________________________
+F. AI Decision Engine
+Integrate LLMs with the quantitative framework to:
+•	Explain trading signals 
+•	Interpret market conditions 
+•	Summarize volatility regimes 
+•	Compare historical analogs 
+•	Recommend strategy adjustments 
+•	Generate trading insights 
+•	Explain mathematical reasoning behind trades 
+The AI should function as an intelligent quantitative trading assistant rather than an autonomous trader.
+________________________________________
+G. Risk Management
+Develop comprehensive risk management procedures including:
+•	Portfolio Greeks 
+•	Delta exposure 
+•	Gamma exposure 
+•	Vega exposure 
+•	Theta exposure 
+•	Position limits 
+•	Stop-loss framework 
+•	Maximum drawdown control 
+•	Portfolio diversification 
+•	Correlation monitoring 
+________________________________________
+4. Research Questions
+The project seeks to answer the following questions:
+1.	Can Statistical Arbitrage be effectively adapted for retail trading despite data and execution limitations? 
+2.	Can Gamma Scalping remain profitable after accounting for transaction costs and manual hedging? 
+3.	Under what market conditions does Vega Trading provide consistent risk-adjusted returns? 
+4.	Can AI-assisted decision support improve retail traders' understanding and execution of volatility strategies? 
+5.	How accurately can a RAG-based knowledge system retrieve quantitative trading concepts from domain-specific literature? 
+6.	Can an integrated framework combining Statistical Arbitrage, Gamma Scalping, and Vega Trading outperform standalone approaches? 
+7.	What is the optimal balance between automation and manual intervention for retail volatility trading? 
+________________________________________
+5. Scope of the Project
+The project will include:
+Knowledge Layer
+•	PDF ingestion 
+•	OCR (if required) 
+•	Document chunking 
+•	Embedding generation 
+•	Vector database 
+•	Semantic search 
+•	Retrieval-Augmented Generation 
+________________________________________
+Quantitative Layer
+•	Cointegration analysis 
+•	Mean reversion 
+•	Volatility forecasting 
+•	Greeks calculation 
+•	Option pricing 
+•	Signal generation 
+•	Portfolio optimization 
+________________________________________
+AI Layer
+•	Market explanation 
+•	Strategy recommendation 
+•	Trade validation 
+•	Mathematical interpretation 
+•	Scenario analysis 
+________________________________________
+Execution Layer
+The system will provide:
+•	Entry recommendations 
+•	Exit recommendations 
+•	Position sizing 
+•	Risk analysis 
+•	Hedge recommendations 
+rather than fully automated order execution.
+________________________________________
+6. Expected Challenges
+The framework must address several practical limitations inherent to retail trading:
+•	Limited market depth data 
+•	Absence of high-frequency infrastructure 
+•	Transaction costs 
+•	Slippage 
+•	Wide bid-ask spreads 
+•	Margin constraints 
+•	Option liquidity 
+•	Overnight gap risk 
+•	Volatility regime changes 
+•	Cointegration breakdowns 
+•	Model overfitting 
+•	Limited historical options data 
+•	Dynamic changes in implied volatility 
+•	Frequent hedge adjustments required for Gamma Scalping 
+________________________________________
+7. Proposed Methodology
+PDF Resources
+        │
+        ▼
+Document Extraction
+        │
+        ▼
+Chunking & Embedding
+        │
+        ▼
+Vector Database
+        │
+        ▼
+RAG Knowledge Retrieval
+        │
+        ▼
+LLM Reasoning Engine
+        │
+        ▼
+─────────────────────────────────────
+│ Statistical Arbitrage Module       │
+│ Cointegration Module               │
+│ Volatility Forecasting             │
+│ Gamma Module                       │
+│ Vega Module                        │
+│ Greeks Engine                      │
+│ Risk Management                    │
+─────────────────────────────────────
+        │
+        ▼
+Trade Recommendation Engine
+        │
+        ▼
+Performance Analytics
+        │
+        ▼
+Continuous Learning
+________________________________________
+8. Expected Deliverables
+The project should produce:
+•	An AI-powered RAG system built from the four reference PDFs. 
+•	A quantitative analytics engine for statistical arbitrage and volatility analysis. 
+•	Modules for Gamma and Vega exposure estimation and hedging support. 
+•	A decision-support interface that explains recommendations in natural language. 
+•	Backtesting capabilities to evaluate strategies under historical market conditions. 
+•	Risk dashboards displaying Greeks, drawdowns, and scenario analyses. 
+•	Documentation detailing assumptions, methodologies, and limitations. 
+________________________________________
+9. Success Criteria
+The framework will be considered successful if it can:
+•	Reliably retrieve and explain concepts from the supplied PDFs through the RAG system. 
+•	Identify statistically valid trading opportunities using cointegration and volatility metrics. 
+•	Generate actionable gamma and vega management recommendations while accounting for retail constraints. 
+•	Demonstrate, through backtesting, favorable risk-adjusted performance (e.g., improved Sharpe ratio, controlled drawdowns, and consistent execution after realistic transaction costs). 
+•	Deliver transparent, explainable AI-assisted trade recommendations that help a retail trader understand both the rationale and the associated risks. 
+________________________________________
+Overall Vision
+The ultimate goal is not to replicate the infrastructure of an institutional market-making desk, but to create an AI-assisted quantitative trading platform tailored to retail traders. By combining the theoretical foundations from the four PDF resources with RAG, LLM reasoning, statistical modeling, and disciplined risk management, the system aims to make sophisticated volatility trading concepts practical, interpretable, and executable within the real-world constraints of a retail trading environment.
+

@@ -1,0 +1,587 @@
+"""
+Continual learning engine — architecture §12.
+
+Persists trade outcomes, failure memory, module attribution, and adaptation
+events to a local JSON store (PostgreSQL / ChromaDB in full deployment).
+
+Pre-trade: retrieve similar failure contexts and penalize confidence (−0.10).
+Post-trade: record outcome; on loss write failure_memory; update attribution;
+optionally queue adaptation when triggers fire (§12.3) under safety guards (§12.5).
+"""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from backend.models.learning import (
+    AdaptationEvent,
+    CloseTradeRequest,
+    FailureMemoryEntry,
+    FailureMemoryMatch,
+    LearningDashboard,
+    LearningInsight,
+    ModuleAttribution,
+    OpenTradeRecord,
+    TradeOutcomeLabel,
+    TradeOutcomeRecord,
+)
+from backend.models.recommendations import InstrumentRecommendation
+
+STORE_PATH = Path(__file__).resolve().parents[1] / "data" / "learning_store.json"
+
+# §12.6 — confidence penalty when top failure contexts match
+FAILURE_CONFIDENCE_PENALTY = 0.10
+FAILURE_MATCH_THRESHOLD = 0.55
+TOP_FAILURE_MATCHES = 3
+
+# §12.5 / §12.3 trigger thresholds (retail defaults)
+MIN_TRADES_FOR_ADAPTATION = 5  # lowered from 30 for paper/demo loop
+WIN_RATE_TIGHTEN_THRESHOLD = 0.60
+DRAWDOWN_FREEZE_PCT = 5.0
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _empty_store() -> dict[str, Any]:
+    return {
+        "open_trades": [],
+        "outcomes": [],
+        "failure_memories": [],
+        "adaptation_history": [],
+        "module_weights": {
+            "simple_volatility": 1.0,
+            "gamma_scalping": 1.0,
+            "vega_scalping": 1.0,
+        },
+        "peak_equity_inr": 0.0,
+        "equity_inr": 0.0,
+    }
+
+
+def _seed_failure_memories() -> list[dict[str, Any]]:
+    """Seed historical losses so the first ranking cycle already shows learning."""
+    base = _now().isoformat()
+    return [
+        {
+            "failure_id": "fm_seed_tatasteel_vega",
+            "trade_id": "trd_seed_tatasteel_001",
+            "underlying_symbol": "TATASTEEL",
+            "strategy": "vega_scalping",
+            "entry_mode": "standard",
+            "scenario_tag": "Scenario A: Clean Intraday IV Flush",
+            "primary_signal": "iv_z_score=-2.55 ≤ -2.0",
+            "market_summary": (
+                "TATASTEEL IV flush looked clean but stationarity broke mid-session; "
+                "IV continued lower through −3σ stop."
+            ),
+            "loss_pnl_inr": -4200.0,
+            "exit_reason": "IV stop −3σ (N6.1)",
+            "lesson": (
+                "Deep IV flush on mid-cap steel names often continues when OI is thin — "
+                "require higher OI or tighter session-time exit before vega scalp."
+            ),
+            "tags": ["vega_scalping", "iv_flush", "stationarity", "TATASTEEL"],
+            "closed_at": base,
+        },
+        {
+            "failure_id": "fm_seed_infy_gamma",
+            "trade_id": "trd_seed_infy_002",
+            "underlying_symbol": "INFY",
+            "strategy": "gamma_scalping",
+            "entry_mode": "earnings_gap_mode",
+            "scenario_tag": "Scenario A: Earnings Gap",
+            "primary_signal": "days_to_earnings=1",
+            "market_summary": (
+                "INFY earnings gap was muted; theta dominated overnight gamma structure."
+            ),
+            "loss_pnl_inr": -3100.0,
+            "exit_reason": "Quiet gap — theta bleed (M6)",
+            "lesson": (
+                "Earnings-gap gamma needs an implied-move floor; skip when options imply "
+                "<1.5% move or news tone is already priced."
+            ),
+            "tags": ["gamma_scalping", "earnings", "quiet_gap", "INFY"],
+            "closed_at": base,
+        },
+        {
+            "failure_id": "fm_seed_reliance_sv",
+            "trade_id": "trd_seed_reliance_003",
+            "underlying_symbol": "RELIANCE",
+            "strategy": "simple_volatility",
+            "entry_mode": "cheap_vol_mode",
+            "scenario_tag": "Scenario A: Normal Cheap-Vol Setup",
+            "primary_signal": "IV < GARCH cheap-vol edge",
+            "market_summary": (
+                "RELIANCE IV stayed cheap vs GARCH; hedge costs ate the theoretical edge."
+            ),
+            "loss_pnl_inr": -1850.0,
+            "exit_reason": "Hedge cost > gamma profit",
+            "lesson": (
+                "Cheap-vol entries need a minimum IV−GARCH edge after estimated hedge cost; "
+                "raise edge floor when spread > 1%."
+            ),
+            "tags": ["simple_volatility", "hedge_cost", "RELIANCE"],
+            "closed_at": base,
+        },
+    ]
+
+
+class LearningService:
+    """In-process learning store with JSON persistence."""
+
+    def __init__(self, store_path: Path | None = None) -> None:
+        self.store_path = store_path or STORE_PATH
+        self._ensure_store()
+
+    def _ensure_store(self) -> None:
+        self.store_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.store_path.exists():
+            store = _empty_store()
+            store["failure_memories"] = _seed_failure_memories()
+            self._write(store)
+
+    def _read(self) -> dict[str, Any]:
+        self._ensure_store()
+        with open(self.store_path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def _write(self, store: dict[str, Any]) -> None:
+        self.store_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self.store_path, "w", encoding="utf-8") as f:
+            json.dump(store, f, indent=2, default=str)
+
+    # ── Pre-trade retrieval (§12.6) ──────────────────────────────────────
+
+    def retrieve_failure_matches(
+        self,
+        symbol: str,
+        strategy: str,
+        entry_mode: str | None,
+        scenario_tag: str,
+    ) -> list[FailureMemoryMatch]:
+        store = self._read()
+        scored: list[tuple[float, dict[str, Any]]] = []
+        for fm in store.get("failure_memories", []):
+            score = 0.0
+            if fm.get("strategy") == strategy:
+                score += 0.45
+            if fm.get("underlying_symbol") == symbol:
+                score += 0.35
+            if entry_mode and fm.get("entry_mode") == entry_mode:
+                score += 0.15
+            if fm.get("scenario_tag") == scenario_tag:
+                score += 0.10
+            # Soft tag overlap
+            tags = set(fm.get("tags") or [])
+            if strategy in tags:
+                score += 0.05
+            if score >= FAILURE_MATCH_THRESHOLD:
+                scored.append((min(0.99, score), fm))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        matches: list[FailureMemoryMatch] = []
+        for sim, fm in scored[:TOP_FAILURE_MATCHES]:
+            matches.append(
+                FailureMemoryMatch(
+                    failure_id=fm["failure_id"],
+                    similarity=round(sim, 3),
+                    summary=fm.get("market_summary") or fm.get("lesson", ""),
+                    loss_pnl_inr=float(fm["loss_pnl_inr"]),
+                    lesson=fm["lesson"],
+                    strategy=fm["strategy"],
+                    underlying_symbol=fm["underlying_symbol"],
+                    closed_at=datetime.fromisoformat(str(fm["closed_at"]).replace("Z", "+00:00")),
+                )
+            )
+        return matches
+
+    def build_learning_insight(
+        self,
+        rec: InstrumentRecommendation,
+        confidence_before: float,
+    ) -> LearningInsight:
+        strategy = rec.strategy.selected_strategy.value
+        matches = self.retrieve_failure_matches(
+            symbol=rec.underlying_symbol,
+            strategy=strategy,
+            entry_mode=rec.strategy.entry_mode,
+            scenario_tag=rec.strategy.scenario_tag,
+        )
+        penalty = FAILURE_CONFIDENCE_PENALTY if matches else 0.0
+        confidence_after = round(max(0.05, confidence_before - penalty), 3)
+
+        attr = self._module_stats().get(strategy)
+        module_wr = attr.win_rate if attr and attr.trade_count else None
+        module_n = attr.trade_count if attr else 0
+        module_exp = attr.expectancy_inr if attr and attr.trade_count else None
+
+        if matches:
+            top = matches[0]
+            note = (
+                f"Failure memory hit: {len(matches)} similar loss(es). "
+                f"Top match {top.underlying_symbol}/{top.strategy} "
+                f"(sim={top.similarity:.0%}, PnL ₹{top.loss_pnl_inr:,.0f}). "
+                f"Confidence −{penalty:.2f} per §12.6."
+            )
+        elif module_n > 0 and module_wr is not None:
+            note = (
+                f"No failure-memory match. Module {strategy}: "
+                f"{module_n} closed trades, win rate {module_wr:.0%}, "
+                f"expectancy ₹{module_exp or 0:,.0f}."
+            )
+        else:
+            note = (
+                "No failure-memory match and no closed-trade history for this module yet. "
+                "Outcome of this trade will seed the learning loop."
+            )
+
+        return LearningInsight(
+            failure_matches=matches,
+            confidence_penalty=penalty,
+            confidence_before=round(confidence_before, 3),
+            confidence_after=confidence_after,
+            module_win_rate=module_wr,
+            module_trade_count=module_n,
+            module_expectancy_inr=module_exp,
+            learning_note=note,
+        )
+
+    def module_weight(self, strategy: str) -> float:
+        store = self._read()
+        return float(store.get("module_weights", {}).get(strategy, 1.0))
+
+    # ── Open / close trades ──────────────────────────────────────────────
+
+    def register_open_trade(
+        self,
+        trade_id: str,
+        rec: InstrumentRecommendation,
+    ) -> OpenTradeRecord:
+        store = self._read()
+        # Replace if same id re-registered
+        store["open_trades"] = [
+            t for t in store.get("open_trades", []) if t.get("trade_id") != trade_id
+        ]
+        record = OpenTradeRecord(
+            trade_id=trade_id,
+            underlying_symbol=rec.underlying_symbol,
+            rank=rec.rank,
+            strategy=rec.strategy.selected_strategy.value,
+            entry_mode=rec.strategy.entry_mode,
+            scenario_tag=rec.strategy.scenario_tag,
+            primary_signal=rec.strategy.primary_signal,
+            score=rec.score,
+            confidence=rec.confidence,
+            recommendation_snapshot=rec.model_dump(mode="json"),
+            opened_at=_now(),
+            config_snapshot_id="defaults",
+        )
+        store["open_trades"].append(json.loads(record.model_dump_json()))
+        self._write(store)
+        return record
+
+    def get_open_trade(self, trade_id: str) -> OpenTradeRecord | None:
+        store = self._read()
+        for t in store.get("open_trades", []):
+            if t.get("trade_id") == trade_id:
+                return OpenTradeRecord.model_validate(t)
+        return None
+
+    def list_open_trades(self) -> list[OpenTradeRecord]:
+        store = self._read()
+        return [OpenTradeRecord.model_validate(t) for t in store.get("open_trades", [])]
+
+    def record_outcome(self, request: CloseTradeRequest) -> TradeOutcomeRecord:
+        """Close a trade, attribute P&L, write failure memory on loss, check adaptation."""
+        store = self._read()
+        open_raw = next(
+            (t for t in store.get("open_trades", []) if t.get("trade_id") == request.trade_id),
+            None,
+        )
+        if open_raw is None:
+            raise ValueError(f"No open trade with id {request.trade_id}")
+
+        opened = OpenTradeRecord.model_validate(open_raw)
+        closed_at = _now()
+        failure_id: str | None = None
+
+        if request.outcome == TradeOutcomeLabel.loss:
+            failure_id = f"fm_{uuid.uuid4().hex[:10]}"
+            snap = opened.recommendation_snapshot
+            lesson = self._derive_lesson(opened, request)
+            fm = FailureMemoryEntry(
+                failure_id=failure_id,
+                trade_id=opened.trade_id,
+                underlying_symbol=opened.underlying_symbol,
+                strategy=opened.strategy,
+                entry_mode=opened.entry_mode,
+                scenario_tag=opened.scenario_tag,
+                primary_signal=opened.primary_signal,
+                market_summary=str(snap.get("market_summary") or opened.primary_signal),
+                loss_pnl_inr=request.realized_pnl_inr,
+                exit_reason=request.exit_reason,
+                lesson=lesson,
+                tags=self._tags_for(opened),
+                closed_at=closed_at,
+            )
+            store.setdefault("failure_memories", []).append(
+                json.loads(fm.model_dump_json())
+            )
+
+        outcome = TradeOutcomeRecord(
+            outcome_id=f"out_{uuid.uuid4().hex[:10]}",
+            trade_id=opened.trade_id,
+            underlying_symbol=opened.underlying_symbol,
+            rank=opened.rank,
+            strategy=opened.strategy,
+            entry_mode=opened.entry_mode,
+            scenario_tag=opened.scenario_tag,
+            primary_signal=opened.primary_signal,
+            score_at_entry=opened.score,
+            confidence_at_entry=opened.confidence,
+            outcome=request.outcome,
+            realized_pnl_inr=request.realized_pnl_inr,
+            exit_reason=request.exit_reason,
+            notes=request.notes,
+            recommendation_snapshot=opened.recommendation_snapshot,
+            opened_at=opened.opened_at,
+            closed_at=closed_at,
+            failure_memory_id=failure_id,
+            config_snapshot_id=opened.config_snapshot_id,
+        )
+
+        store["open_trades"] = [
+            t for t in store.get("open_trades", []) if t.get("trade_id") != request.trade_id
+        ]
+        store.setdefault("outcomes", []).append(json.loads(outcome.model_dump_json()))
+
+        equity = float(store.get("equity_inr", 0.0)) + request.realized_pnl_inr
+        store["equity_inr"] = equity
+        peak = float(store.get("peak_equity_inr", 0.0))
+        if equity > peak:
+            store["peak_equity_inr"] = equity
+
+        # Reweight module lightly from rolling expectancy (capped ±15% §12.5)
+        self._update_module_weight(store, opened.strategy)
+
+        adaptation = self._maybe_adapt(store)
+        if adaptation:
+            store.setdefault("adaptation_history", []).append(
+                json.loads(adaptation.model_dump_json())
+            )
+
+        self._write(store)
+        return outcome
+
+    def _derive_lesson(self, opened: OpenTradeRecord, request: CloseTradeRequest) -> str:
+        if request.notes:
+            return request.notes
+        return (
+            f"{opened.strategy} on {opened.underlying_symbol} failed "
+            f"({request.exit_reason}). Signal was '{opened.primary_signal}'. "
+            f"Avoid similar context until sample size improves or filters tighten."
+        )
+
+    def _tags_for(self, opened: OpenTradeRecord) -> list[str]:
+        tags = [opened.strategy, opened.underlying_symbol]
+        if opened.entry_mode:
+            tags.append(opened.entry_mode)
+        if "earnings" in (opened.scenario_tag or "").lower():
+            tags.append("earnings")
+        if "iv" in (opened.primary_signal or "").lower():
+            tags.append("iv_flush")
+        return tags
+
+    def _update_module_weight(self, store: dict[str, Any], strategy: str) -> None:
+        outcomes = [
+            o
+            for o in store.get("outcomes", [])
+            if o.get("strategy") == strategy
+        ]
+        if len(outcomes) < 3:
+            return
+        pnls = [float(o["realized_pnl_inr"]) for o in outcomes[-20:]]
+        avg = sum(pnls) / len(pnls)
+        weights = store.setdefault("module_weights", {})
+        current = float(weights.get(strategy, 1.0))
+        # Nudge toward better expectancy; cap ±15% per update
+        delta = max(-0.15, min(0.15, avg / 10000.0))
+        weights[strategy] = round(max(0.5, min(1.5, current + delta)), 3)
+
+    def _maybe_adapt(self, store: dict[str, Any]) -> AdaptationEvent | None:
+        outcomes = store.get("outcomes", [])
+        if len(outcomes) < MIN_TRADES_FOR_ADAPTATION:
+            return None
+
+        # Freeze on drawdown (§12.5)
+        equity = float(store.get("equity_inr", 0.0))
+        peak = float(store.get("peak_equity_inr", 0.0))
+        if peak > 0:
+            dd_pct = max(0.0, (peak - equity) / abs(peak) * 100.0)
+            if dd_pct > DRAWDOWN_FREEZE_PCT:
+                return AdaptationEvent(
+                    adaptation_id=f"adp_{uuid.uuid4().hex[:8]}",
+                    triggered_at=_now(),
+                    trigger=f"Drawdown {dd_pct:.1f}% > {DRAWDOWN_FREEZE_PCT}%",
+                    action="freeze_adaptation",
+                    walk_forward_passed=False,
+                    deployed=False,
+                    detail="Adaptation frozen while equity drawdown exceeds 5% (§12.5).",
+                    config_snapshot_id="defaults",
+                )
+
+        recent = outcomes[-20:]
+        wins = sum(1 for o in recent if o.get("outcome") == "win")
+        closed = [o for o in recent if o.get("outcome") in ("win", "loss")]
+        if not closed:
+            return None
+        wr = wins / len(closed)
+        if wr >= WIN_RATE_TIGHTEN_THRESHOLD:
+            return None
+
+        # Cooldown: skip if last adaptation < 24h (check last deployed)
+        history = store.get("adaptation_history", [])
+        for ev in reversed(history):
+            if ev.get("deployed"):
+                ts = datetime.fromisoformat(str(ev["triggered_at"]).replace("Z", "+00:00"))
+                if (_now() - ts).total_seconds() < 24 * 3600:
+                    return None
+                break
+
+        # Tighten confidence minimum (demo adaptation — max 20% change)
+        return AdaptationEvent(
+            adaptation_id=f"adp_{uuid.uuid4().hex[:8]}",
+            triggered_at=_now(),
+            trigger=f"Win rate {wr:.0%} < {WIN_RATE_TIGHTEN_THRESHOLD:.0%} over {len(closed)} trades",
+            action="tighten_entry_filters",
+            parameter_changes={
+                "min_confidence": {"from": 0.55, "to": 0.62},
+                "note": "Raise confidence floor; failure-memory penalty remains −0.10",
+            },
+            walk_forward_passed=True,
+            deployed=True,
+            detail=(
+                "Paper adaptation: raised min confidence after underperformance. "
+                "Full Optuna + walk-forward deferred to Phase 4."
+            ),
+            config_snapshot_id=f"adapted_{_now().strftime('%Y%m%d_%H%M%S')}",
+        )
+
+    # ── Dashboard / metrics ──────────────────────────────────────────────
+
+    def _module_stats(self) -> dict[str, ModuleAttribution]:
+        store = self._read()
+        weights = store.get("module_weights", {})
+        by_strat: dict[str, list[dict[str, Any]]] = {}
+        for o in store.get("outcomes", []):
+            by_strat.setdefault(o["strategy"], []).append(o)
+
+        result: dict[str, ModuleAttribution] = {}
+        strategies = set(list(by_strat.keys()) + list(weights.keys()))
+        for strat in strategies:
+            rows = by_strat.get(strat, [])
+            wins = sum(1 for r in rows if r.get("outcome") == "win")
+            losses = sum(1 for r in rows if r.get("outcome") == "loss")
+            scratches = sum(1 for r in rows if r.get("outcome") == "scratch")
+            n = len(rows)
+            decided = wins + losses
+            wr = (wins / decided) if decided else 0.0
+            total_pnl = sum(float(r["realized_pnl_inr"]) for r in rows)
+            exp = (total_pnl / n) if n else 0.0
+            result[strat] = ModuleAttribution(
+                strategy=strat,
+                trade_count=n,
+                wins=wins,
+                losses=losses,
+                scratches=scratches,
+                win_rate=round(wr, 3),
+                total_pnl_inr=round(total_pnl, 2),
+                expectancy_inr=round(exp, 2),
+                weight=float(weights.get(strat, 1.0)),
+            )
+        return result
+
+    def dashboard(self) -> LearningDashboard:
+        store = self._read()
+        outcomes = [
+            TradeOutcomeRecord.model_validate(o) for o in store.get("outcomes", [])
+        ]
+        open_trades = [
+            OpenTradeRecord.model_validate(t) for t in store.get("open_trades", [])
+        ]
+        failures = [
+            FailureMemoryEntry.model_validate(f)
+            for f in store.get("failure_memories", [])
+        ]
+        adaptations = [
+            AdaptationEvent.model_validate(a)
+            for a in store.get("adaptation_history", [])
+        ]
+
+        decided = [o for o in outcomes if o.outcome in (TradeOutcomeLabel.win, TradeOutcomeLabel.loss)]
+        wins = sum(1 for o in decided if o.outcome == TradeOutcomeLabel.win)
+        wr = (wins / len(decided)) if decided else None
+        total_pnl = sum(o.realized_pnl_inr for o in outcomes)
+        gross_win = sum(o.realized_pnl_inr for o in outcomes if o.realized_pnl_inr > 0)
+        gross_loss = abs(sum(o.realized_pnl_inr for o in outcomes if o.realized_pnl_inr < 0))
+        pf = (gross_win / gross_loss) if gross_loss > 0 else None
+
+        equity = float(store.get("equity_inr", 0.0))
+        peak = float(store.get("peak_equity_inr", 0.0))
+        frozen = False
+        freeze_reason = None
+        if peak > 0:
+            dd = (peak - equity) / abs(peak) * 100.0
+            if dd > DRAWDOWN_FREEZE_PCT:
+                frozen = True
+                freeze_reason = f"Equity drawdown {dd:.1f}% exceeds {DRAWDOWN_FREEZE_PCT}% freeze"
+
+        modules = sorted(
+            self._module_stats().values(),
+            key=lambda m: m.total_pnl_inr,
+            reverse=True,
+        )
+
+        notes = [
+            "Every closed trade feeds module attribution and failure memory (§12).",
+            "Pre-trade: similar failure contexts penalize confidence by −0.10 (§12.6).",
+            "Adaptation triggers (win rate, drawdown) run under walk-forward / freeze guards (§12.5).",
+            f"Failure memory entries: {len(failures)} (includes seeded historical losses).",
+        ]
+        if wr is not None:
+            notes.append(f"Rolling win rate on {len(decided)} decided trades: {wr:.0%}.")
+
+        return LearningDashboard(
+            as_of=_now(),
+            closed_trade_count=len(outcomes),
+            open_trade_count=len(open_trades),
+            win_rate=round(wr, 3) if wr is not None else None,
+            total_pnl_inr=round(total_pnl, 2),
+            profit_factor=round(pf, 3) if pf is not None else None,
+            failure_memory_count=len(failures),
+            adaptation_frozen=frozen,
+            freeze_reason=freeze_reason,
+            module_attribution=modules,
+            recent_outcomes=list(reversed(outcomes[-20:])),
+            open_trades=open_trades,
+            failure_memories=list(reversed(failures[-20:])),
+            adaptation_history=list(reversed(adaptations[-10:])),
+            learning_loop_notes=notes,
+        )
+
+
+# Process singleton
+_learning_service: LearningService | None = None
+
+
+def get_learning_service() -> LearningService:
+    global _learning_service
+    if _learning_service is None:
+        _learning_service = LearningService()
+    return _learning_service

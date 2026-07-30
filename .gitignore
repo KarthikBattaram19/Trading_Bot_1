@@ -1,0 +1,23 @@
+.env
+.env.local
+*.pyc
+__pycache__/
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+frontend/.next/
+*.log
+
+# Secrets & local env (never commit)
+.env.*
+!.env.example
+!**/.env.example
+frontend/.env.local
+
+# Local / IDE / caches
+.cursor/projects/
+*.egg-info/
+backend/data/
+dist/
+build/

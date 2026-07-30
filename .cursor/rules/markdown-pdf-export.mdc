@@ -1,0 +1,30 @@
+---
+description: Regenerate architecture and implementation plan PDFs in Docs/
+globs: architecture.md,implementation_plan.md,scripts/md_to_pdf.py,Docs/*.pdf
+alwaysApply: false
+---
+
+# Markdown → PDF Export
+
+Project docs are authored as markdown at the repo root and exported to `Docs/` as PDF.
+
+## Regenerate PDFs
+
+From the project root:
+
+```powershell
+python scripts/md_to_pdf.py architecture.md implementation_plan.md -o Docs
+```
+
+## Outputs
+
+| Source | PDF |
+|---|---|
+| `architecture.md` | `Docs/architecture.pdf` |
+| `implementation_plan.md` | `Docs/implementation_plan.pdf` |
+
+## Script
+
+- Converter: `scripts/md_to_pdf.py` (markdown + xhtml2pdf)
+- Mermaid blocks render as text placeholders in PDF; full diagrams stay in `.md` sources
+- Re-run the command above after editing either markdown file

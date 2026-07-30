@@ -1,0 +1,11 @@
+---
+description: GCP primary region asia-south1; create infra/cloud-inventory.yaml on provision
+alwaysApply: true
+---
+
+# GCP region & cloud inventory
+
+- Primary GCP region is **`asia-south1` (Mumbai)** — Indian markets (NSE / BSE / NFO), ICICI Direct / Breeze, IST.
+- Do **not** use `us-west1` or other US regions for this project’s cloud inventory.
+- When provisioning cloud infrastructure, **create** `infra/cloud-inventory.yaml` with all services co-located in **`asia-south1`** (Cloud Run, Artifact Registry, Cloud SQL, Memorystore, Filestore, VPC connector).
+- Keep `Docs/architecture.md` §17.8 and `Docs/context.md` aligned with that inventory.

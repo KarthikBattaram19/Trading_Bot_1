@@ -1,0 +1,12 @@
+# Railway / Nixpacks remote build — replaces Dockerfile.
+# Root Directory on Railway must be `backend/`.
+# Developers never run Docker locally (Docs/LOCAL_DEV.md).
+
+providers = ["python"]
+
+[variables]
+NIXPACKS_PYTHON_VERSION = "3.12"
+# Package imports are `backend.*`; start script shims PYTHONPATH (see scripts/start_remote.sh).
+
+[start]
+cmd = "bash scripts/start_remote.sh"

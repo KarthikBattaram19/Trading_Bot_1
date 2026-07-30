@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "icici-direct-mcp"
+version = "0.1.0"
+description = "MCP server for ICICI Direct Breeze API via breeze-connect."
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "fastmcp",
+    "python-dotenv",
+    "breeze-connect",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/Idirect-Tech/Breeze-Python-SDK"
+"Docs" = "https://api.icicidirect.com/breezeapi/documents/index.html"
+
+[tool.setuptools.packages.find]
+where = ["src"]

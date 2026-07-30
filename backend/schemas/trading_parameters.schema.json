@@ -1,0 +1,571 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://volatility-trading.local/schemas/trading_parameters.schema.json",
+  "title": "TradingParameters",
+  "description": "Machine-readable trading parameter catalog derived from Docs/Trading_Parameters.md. Consumed by GET/POST /api/v1/config/strategy and option-chain pre-filters.",
+  "type": "object",
+  "required": [
+    "version",
+    "option_universe_filters"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "Optional JSON Schema pointer used by editors / validators."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$",
+      "description": "Schema catalog version; mirrors Docs/Trading_Parameters.md document version."
+    },
+    "source_document": {
+      "type": "string",
+      "const": "Docs/Trading_Parameters.md"
+    },
+    "option_universe_filters": {
+      "$ref": "#/$defs/OptionUniverseFilters"
+    },
+    "oss_global_params": {
+      "$ref": "#/$defs/OssGlobalParams"
+    },
+    "nfo_lot_sizing": {
+      "$ref": "#/$defs/NfoLotSizing"
+    },
+    "oss_leg_params": {
+      "$ref": "#/$defs/OssLegParams"
+    },
+    "market_data": {
+      "$ref": "#/$defs/MarketDataParams"
+    },
+    "garch_forecast": {
+      "$ref": "#/$defs/GarchForecastParams"
+    },
+    "execution_constraints": {
+      "$ref": "#/$defs/ExecutionConstraints"
+    },
+    "gamma_theta_breakeven": {
+      "$ref": "#/$defs/GammaThetaBreakeven"
+    },
+    "strategies": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "simple_volatility": {
+          "$ref": "#/$defs/SimpleVolatilityStrategy"
+        },
+        "gamma_scalping": {
+          "$ref": "#/$defs/GammaScalpingStrategy"
+        },
+        "vega_scalping": {
+          "$ref": "#/$defs/VegaScalpingStrategy"
+        }
+      }
+    },
+    "portfolio": {
+      "$ref": "#/$defs/PortfolioParams"
+    },
+    "pre_trade_gates": {
+      "$ref": "#/$defs/PreTradeGates"
+    },
+    "kill_conditions": {
+      "$ref": "#/$defs/KillConditions"
+    }
+  },
+  "$defs": {
+    "CurrencyCode": {
+      "type": "string",
+      "enum": ["INR", "USD"]
+    },
+    "Moneyness": {
+      "type": "string",
+      "enum": ["atm", "near_atm", "itm", "otm"]
+    },
+    "PremiumField": {
+      "type": "string",
+      "enum": ["mid", "ask", "bid"]
+    },
+    "AtmSelectionRule": {
+      "type": "string",
+      "enum": ["closest_strike_to_spot", "delta_closest_to_half"]
+    },
+    "OptionUniverseFilters": {
+      "type": "object",
+      "description": "Part T — hard filters applied before strategy signals.",
+      "required": [
+        "max_option_premium",
+        "premium_currency",
+        "premium_field",
+        "moneyness",
+        "atm_selection_rule",
+        "atm_strike_tolerance",
+        "max_underlying_price",
+        "max_underlying_price_applies_when",
+        "underlying_price_currency",
+        "exclude_index_underlyings",
+        "require_cash_equity_underlying",
+        "max_underlying_price_rationale",
+        "min_volume",
+        "min_open_interest",
+        "max_spread_pct",
+        "high_liquidity_required"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "max_option_premium": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 300,
+          "description": "T1 — reject options with premium >= this value (INR)."
+        },
+        "premium_currency": {
+          "$ref": "#/$defs/CurrencyCode",
+          "description": "T2 — currency for premium comparisons."
+        },
+        "premium_field": {
+          "$ref": "#/$defs/PremiumField",
+          "description": "T3 — chain field used for pre-trade premium screen."
+        },
+        "premium_field_long": {
+          "$ref": "#/$defs/PremiumField",
+          "description": "T9 — conservative field for long legs (typically ask)."
+        },
+        "premium_field_short": {
+          "$ref": "#/$defs/PremiumField",
+          "description": "T9 — field for short legs (typically bid or mid)."
+        },
+        "moneyness": {
+          "const": "atm",
+          "description": "T5 — At the Money only; OTM/ITM substitutes rejected."
+        },
+        "atm_selection_rule": {
+          "$ref": "#/$defs/AtmSelectionRule",
+          "description": "T6 — strike selection algorithm."
+        },
+        "atm_strike_tolerance": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 0,
+          "description": "T7 — zero tolerance; only the single closest strike qualifies."
+        },
+        "equidistant_strike_preference": {
+          "type": "string",
+          "enum": ["lower", "higher"],
+          "description": "T8 — when two strikes are equidistant from spot."
+        },
+        "max_underlying_price": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1000,
+          "description": "T11 — when options+underlying, reject if und_price > this value (INR). Not applied for options-only."
+        },
+        "max_underlying_price_applies_when": {
+          "type": "string",
+          "const": "options_and_underlying",
+          "description": "T11d — enforce T11/T11a/T11b only when the strategy includes stock/underlying legs or cash-share hedge; options-only has no underlying price cap."
+        },
+        "underlying_price_currency": {
+          "$ref": "#/$defs/CurrencyCode",
+          "description": "T12 — currency for underlying price comparisons."
+        },
+        "exclude_index_underlyings": {
+          "type": "boolean",
+          "const": true,
+          "description": "T11a — when options+underlying, block NIFTY / BANKNIFTY / other index underlyings before spot compare; skipped for options-only."
+        },
+        "require_cash_equity_underlying": {
+          "type": "boolean",
+          "const": true,
+          "description": "T11b — when options+underlying, underlying must be hedgeable with NSE/BSE cash shares; skipped for options-only."
+        },
+        "max_underlying_price_rationale": {
+          "type": "string",
+          "const": "minimize_stock_hedge_capital",
+          "description": "T11c — why the ₹1000 spot cap exists when trading the underlying alongside options."
+        },
+        "excluded_index_underlying_symbols": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "uniqueItems": true,
+          "description": "Explicit index names that must never be selected as strategy underlyings."
+        },
+        "min_volume": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "T13 — minimum daily contract volume on ATM leg."
+        },
+        "min_open_interest": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "T14 — minimum open interest on ATM leg."
+        },
+        "max_spread_pct": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "T15 — max bid-ask spread as percent of mid."
+        },
+        "high_liquidity_required": {
+          "type": "boolean",
+          "const": true,
+          "description": "T16 — enforce volume, OI, and spread gates."
+        },
+        "applies_to_strategies": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": ["simple_volatility", "gamma_scalping", "vega_scalping"]
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      }
+    },
+    "OssGlobalParams": {
+      "type": "object",
+      "description": "Part A — OSS global parameters (Area 1). India production must not copy the OSS US Y8 default of 100.",
+      "additionalProperties": false,
+      "properties": {
+        "eval_date": { "type": "string", "format": "date" },
+        "eval_time": { "type": "string", "pattern": "^\\d{2}:\\d{2}:\\d{2}$" },
+        "eval_datetime": { "type": "string", "format": "date-time" },
+        "und_price": { "type": "number", "exclusiveMinimum": 0 },
+        "underlying_symbol": { "type": "string", "minLength": 1 },
+        "div_yield": { "type": "number", "minimum": 0 },
+        "int_rate": { "type": "number", "minimum": 0 },
+        "flat_volatility": { "type": "boolean" },
+        "volatility": { "type": "number", "exclusiveMinimum": 0 },
+        "display_mode": { "type": "string", "enum": ["per_share", "total"] },
+        "default_contract_multiplier": {
+          "type": ["integer", "null"],
+          "minimum": 1,
+          "description": "OSS Y8 workbook / what-if only. India paper+live sizing sets null and uses nfo_lot_sizing."
+        },
+        "default_stock_multiplier": { "type": "integer", "minimum": 1 },
+        "contract_multiplier_source": {
+          "type": "string",
+          "enum": ["nfo_instrument_lotsize", "oss_workbook_default"],
+          "description": "A11 India rule: use ICICI Direct NFO lotsize per contract; never blindly apply OSS US 100."
+        }
+      }
+    },
+    "NfoLotSizing": {
+      "type": "object",
+      "description": "India NFO lot sizing — Part A11 / I10. Effective option multiplier = instrument-master lotsize for that contract.",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "resolve_from",
+        "per_contract",
+        "do_not_copy_oss_us_default"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "When true, bot sizes F&O with each symbol's real NFO lot."
+        },
+        "resolve_from": {
+          "type": "string",
+          "enum": ["icici_direct_instrument_master"],
+          "description": "Authoritative lotsize source for paper and live."
+        },
+        "per_contract": {
+          "type": "boolean",
+          "description": "Resolve lotsize per resolved NFO contract (not a single global constant)."
+        },
+        "do_not_copy_oss_us_default": {
+          "type": "boolean",
+          "const": true,
+          "description": "Hard rule: never apply OSS workbook Y8=100 to India NFO sizing."
+        },
+        "oss_us_workbook_default": {
+          "type": "integer",
+          "const": 100,
+          "description": "Documented OSS US equity/ETF default — parity fixtures only."
+        },
+        "stock_leg_multiplier": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cash/stock hedge legs use multiplier 1 (shares)."
+        },
+        "quantity_must_be_multiple_of_lotsize": {
+          "type": "boolean",
+          "description": "Reject orders whose quantity is not an integer multiple of lotsize."
+        },
+        "min_lots": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Minimum number of NFO lots (I10); share quantity = lots × lotsize."
+        },
+        "reference_equity_lots": {
+          "type": "object",
+          "description": "Offline/docs reference for equity NFO lots (spot ≤ ₹1000 when options+underlying). Live ICICI Direct lotsize always wins.",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        },
+        "reference_index_lots": {
+          "type": "object",
+          "description": "Reference index NFO lots for options-only mode (no underlying price cap). Live ICICI Direct lotsize always wins.",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 1
+          }
+        }
+      }
+    },
+    "OssLegParams": {
+      "type": "object",
+      "description": "Part B — OSS leg parameters.",
+      "additionalProperties": false,
+      "properties": {
+        "leg_id": { "type": "integer", "minimum": 1 },
+        "position": { "type": "integer" },
+        "expiration_id": { "type": ["string", "integer"] },
+        "days_to_expiry": { "type": "number", "minimum": 0 },
+        "strike": { "type": "number", "exclusiveMinimum": 0 },
+        "type": { "type": "string", "enum": ["none", "stock", "call", "put"] },
+        "initial_price": { "type": "number", "minimum": 0 },
+        "leg_volatility": { "type": "number", "exclusiveMinimum": 0 },
+        "contract_multiplier": { "type": "integer", "minimum": 1 },
+        "expiration_datetime": { "type": "string", "format": "date-time" }
+      }
+    },
+    "MarketDataParams": {
+      "type": "object",
+      "description": "Part G — shared market data requirements.",
+      "additionalProperties": false,
+      "properties": {
+        "price_history_required": { "type": "boolean" },
+        "option_chain_required": { "type": "boolean" },
+        "iv_required": { "type": "boolean" },
+        "feed_stale_kill_seconds": { "type": "integer", "minimum": 1 },
+        "option_chain_fields": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "strike",
+              "expiry",
+              "expiration_datetime",
+              "bid",
+              "ask",
+              "mid",
+              "premium",
+              "volume",
+              "open_interest",
+              "implied_volatility",
+              "moneyness"
+            ]
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "GarchForecastParams": {
+      "type": "object",
+      "description": "Part H — GARCH(1,1) forecast weights.",
+      "additionalProperties": false,
+      "properties": {
+        "gamma_weight": { "type": "number", "minimum": 0, "maximum": 1 },
+        "alpha_weight": { "type": "number", "minimum": 0, "maximum": 1 },
+        "beta_weight": { "type": "number", "minimum": 0, "maximum": 1 },
+        "annualization_factor": { "type": "integer", "const": 252 },
+        "block_when_distorted": { "type": "boolean" }
+      }
+    },
+    "ExecutionConstraints": {
+      "type": "object",
+      "description": "Part I — execution and retail constraints.",
+      "additionalProperties": false,
+      "properties": {
+        "spread_cap_pct": { "type": "number", "minimum": 0 },
+        "slippage_cap_pct": { "type": "number", "minimum": 0 },
+        "commission_per_leg": { "type": "number", "minimum": 0 },
+        "min_contract_size": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "I10 — minimum number of NFO lots (share qty = lots × instrument lotsize)."
+        },
+        "max_residual_delta": { "type": "number" },
+        "max_residual_vega": { "type": "number" },
+        "supervised_approval_required": { "type": "boolean" },
+        "automation_allowed_post_fill": { "type": "boolean" },
+        "multi_leg_sync_submit": { "type": "boolean" },
+        "min_recommendation_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Minimum post-learning confidence required to surface a recommendation (default 0.85)."
+        }
+      }
+    },
+    "GammaThetaBreakeven": {
+      "type": "object",
+      "description": "Part J — re-hedge parameters.",
+      "additionalProperties": false,
+      "properties": {
+        "hedge_point_price": { "type": "number", "exclusiveMinimum": 0 },
+        "gamma_theta_breakeven_pct": { "type": "number", "exclusiveMinimum": 0 },
+        "use_half_breakeven": { "type": "boolean" },
+        "rehedge_method": {
+          "type": "string",
+          "enum": ["increase_hedge", "reduce_options", "adjust_call_put_mix"]
+        },
+        "breakeven_paid_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "SimpleVolatilityStrategy": {
+      "type": "object",
+      "description": "Part L — Simple Volatility Trading.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "greek_targets": {
+          "type": "object",
+          "properties": {
+            "delta": { "const": 0 },
+            "gamma": { "type": "string", "const": "positive" },
+            "vega": { "type": "string", "const": "positive" },
+            "theta": { "type": "string", "const": "negative" }
+          }
+        },
+        "option_selection": {
+          "type": "object",
+          "required": ["moneyness", "max_option_premium", "min_dte", "max_dte"],
+          "properties": {
+            "moneyness": { "const": "atm" },
+            "max_option_premium": { "type": "number", "maximum": 300 },
+            "premium_currency": { "$ref": "#/$defs/CurrencyCode" },
+            "min_dte": { "type": "integer", "minimum": 0 },
+            "max_dte": { "type": "integer", "minimum": 1 },
+            "min_volume": { "type": "integer", "minimum": 0 },
+            "min_open_interest": { "type": "integer", "minimum": 0 },
+            "max_spread_pct": { "type": "number", "minimum": 0 }
+          }
+        },
+        "entry_signal": {
+          "type": "object",
+          "properties": {
+            "iv_below_garch_forecast": { "type": "boolean", "const": true }
+          }
+        },
+        "hedge_method": {
+          "type": "string",
+          "enum": ["stock", "options_only"]
+        },
+        "hold_horizon": {
+          "type": "string",
+          "enum": ["D+0", "D+1"]
+        },
+        "max_hold_days": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "GammaScalpingStrategy": {
+      "type": "object",
+      "description": "Part M — Gamma Scalping.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "gamma_entry_mode": {
+          "type": "string",
+          "enum": ["cheap_vol_mode", "earnings_gap_mode", "high_realized_vol_mode"]
+        },
+        "construction": {
+          "type": "string",
+          "enum": ["calls_stock", "four_leg_options"]
+        },
+        "option_selection": {
+          "type": "object",
+          "required": ["moneyness", "max_option_premium"],
+          "properties": {
+            "moneyness": { "const": "atm" },
+            "max_option_premium": { "type": "number", "maximum": 300 },
+            "premium_currency": { "$ref": "#/$defs/CurrencyCode" },
+            "same_strike_near_far": { "type": "boolean", "const": true },
+            "min_volume": { "type": "integer", "minimum": 1 },
+            "min_open_interest": { "type": "integer", "minimum": 1 },
+            "max_spread_pct": { "type": "number", "minimum": 0 }
+          }
+        },
+        "vega_neutral_tolerance": { "type": "number", "minimum": 0 },
+        "min_net_gamma": { "type": "number" }
+      }
+    },
+    "VegaScalpingStrategy": {
+      "type": "object",
+      "description": "Part N — Vega Scalping.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "hold_horizon": { "const": "intraday" },
+        "vol_direction": { "const": "long" },
+        "option_selection": {
+          "type": "object",
+          "required": ["moneyness", "max_option_premium"],
+          "properties": {
+            "moneyness": { "const": "atm" },
+            "max_option_premium": { "type": "number", "maximum": 300 },
+            "premium_currency": { "$ref": "#/$defs/CurrencyCode" },
+            "min_dte": { "type": "integer", "minimum": 0 },
+            "block_ultra_near_expiry": { "type": "boolean" },
+            "min_volume": { "type": "integer", "minimum": 1 },
+            "min_open_interest": { "type": "integer", "minimum": 1 },
+            "max_spread_pct": { "type": "number", "minimum": 0 }
+          }
+        },
+        "iv_signal": {
+          "type": "object",
+          "properties": {
+            "entry_z_threshold": { "type": "number", "maximum": -2 },
+            "short_vol_z_threshold": { "type": "number", "minimum": 2 },
+            "stop_z_threshold": { "type": "number" },
+            "stop_z_threshold_alt": { "type": "number" }
+          }
+        },
+        "flatten_at_session_close": { "type": "boolean", "const": true }
+      }
+    },
+    "PortfolioParams": {
+      "type": "object",
+      "description": "Part O — portfolio-level limits.",
+      "additionalProperties": false,
+      "properties": {
+        "hedge_reserve_pct": { "type": "number", "minimum": 0, "maximum": 1 },
+        "max_structure_pct": { "type": "number", "minimum": 0, "maximum": 1 },
+        "post_shock_reduce": { "type": "boolean" }
+      }
+    },
+    "PreTradeGates": {
+      "type": "object",
+      "description": "Part I21 — all must pass before submission.",
+      "additionalProperties": false,
+      "properties": {
+        "signal_reproducible": { "type": "boolean" },
+        "liquidity_ok": { "type": "boolean" },
+        "size_rebalance_ok": { "type": "boolean" },
+        "event_risk_reviewed": { "type": "boolean" },
+        "regime_match": { "type": "boolean" },
+        "cost_assumptions_valid": { "type": "boolean" },
+        "exit_plan_defined": { "type": "boolean" },
+        "option_premium_within_cap": { "type": "boolean" },
+        "option_moneyness_atm": { "type": "boolean" },
+        "underlying_price_within_cap": { "type": "boolean" }
+      }
+    },
+    "KillConditions": {
+      "type": "object",
+      "description": "Part I22 — abort or flatten triggers.",
+      "additionalProperties": false,
+      "properties": {
+        "kill_liquidity": { "type": "boolean" },
+        "kill_hedge_unavailable": { "type": "boolean" },
+        "kill_stale_data": { "type": "boolean" },
+        "kill_event": { "type": "boolean" },
+        "kill_neutrality": { "type": "boolean" },
+        "kill_greek_limit": { "type": "boolean" },
+        "kill_thesis": { "type": "boolean" }
+      }
+    }
+  }
+}

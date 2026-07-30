@@ -1,0 +1,120 @@
+{
+  "name": "iron_condor_oss_workbook",
+  "source": "Docs/OSS (1).xlsm",
+  "notes": [
+    "US-style OSS parity fixture (multiplier=100).",
+    "Valuation clock interpreted as IST for India project (+05:30).",
+    "Live NFO sizing must use ICICI Direct instrument-master lotsize, not this multiplier."
+  ],
+  "global_params": {
+    "eval_date": "2024-01-04",
+    "eval_time": "10:35:00",
+    "eval_datetime": "2024-01-04T10:35:00+05:30",
+    "und_price": 85.4,
+    "div_yield": 2.6,
+    "int_rate": 4.0,
+    "flat_volatility": true,
+    "volatility": 28.4,
+    "display_mode": "total",
+    "default_contract_multiplier": 100,
+    "day_count": 365
+  },
+  "expiration": {
+    "expiration_id": 6,
+    "effective_datetime": "2024-06-21T16:15:00",
+    "display_name_short": "Jun 2024"
+  },
+  "legs": [
+    {
+      "leg_id": 1,
+      "position": 5,
+      "expiration_id": 6,
+      "days_to_expiry": 169.23611111111353,
+      "strike": 75.0,
+      "type": "put",
+      "initial_price": 3.6,
+      "initial_cf": -1800.0,
+      "mark_price": 2.153365310014344,
+      "value": 1076.682655007172,
+      "pnl": -723.3173449928281,
+      "delta": -104.40599929503307,
+      "gamma": 8.653268817613265,
+      "theta": -6.512854286335289,
+      "vega": 83.1025689871001,
+      "rho": -46.333392926817446,
+      "contract_multiplier": 100
+    },
+    {
+      "leg_id": 2,
+      "position": -5,
+      "expiration_id": 6,
+      "days_to_expiry": 169.23611111111353,
+      "strike": 80.0,
+      "type": "put",
+      "initial_price": 5.65,
+      "initial_cf": 2825.0,
+      "mark_price": 3.7770065031570788,
+      "value": -1888.5032515785394,
+      "pnl": 936.4967484214606,
+      "delta": 158.02411296830272,
+      "gamma": -10.695511768557623,
+      "theta": 7.893903349739661,
+      "vega": -102.71546202167517,
+      "rho": 71.32844218081812,
+      "contract_multiplier": 100
+    },
+    {
+      "leg_id": 3,
+      "position": -5,
+      "expiration_id": 6,
+      "days_to_expiry": 169.23611111111353,
+      "strike": 90.0,
+      "type": "call",
+      "initial_price": 6.8,
+      "initial_cf": 3400.0,
+      "mark_price": 4.854005613682276,
+      "value": -2427.002806841138,
+      "pnl": 972.997193158862,
+      "delta": -219.30082523913705,
+      "gamma": -11.81541600881246,
+      "theta": 9.973285082479094,
+      "vega": -113.47057911630313,
+      "rho": -75.58264468860897,
+      "contract_multiplier": 100
+    },
+    {
+      "leg_id": 4,
+      "position": 5,
+      "expiration_id": 6,
+      "days_to_expiry": 169.23611111111353,
+      "strike": 95.0,
+      "type": "call",
+      "initial_price": 5.15,
+      "initial_cf": -2575.0,
+      "mark_price": 3.2943249446933223,
+      "value": 1647.1624723466612,
+      "pnl": -927.8375276533388,
+      "delta": 166.48870760877972,
+      "gamma": 10.923205086446611,
+      "theta": -9.166807430366744,
+      "vega": 104.90213853162672,
+      "rho": 58.28664685062659,
+      "contract_multiplier": 100
+    }
+  ],
+  "totals": {
+    "total_initial_cf": 1850.0,
+    "total_value": -1591.6609310658441,
+    "total_pnl": 258.33906893415565,
+    "total_delta": 0.8059960429123123,
+    "total_gamma": -2.934453873310206,
+    "total_theta": 2.1875267155167233,
+    "total_vega": -28.18133361925149,
+    "total_rho": 7.699051416018293
+  },
+  "tolerances": {
+    "price_abs": 0.01,
+    "greek_rel": 0.0001,
+    "pnl_rel": 0.0001
+  }
+}

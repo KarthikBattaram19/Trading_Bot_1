@@ -1,0 +1,13 @@
+# Railway paper backend (architecture.md §17.0).
+# Dashboard → Service → Settings → Root Directory: backend
+# Builder: Nixpacks (no Dockerfile / no Docker Desktop).
+
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "bash scripts/start_remote.sh"
+healthcheckPath = "/health"
+healthcheckTimeout = 30
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5
