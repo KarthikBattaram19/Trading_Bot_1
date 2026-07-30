@@ -101,10 +101,21 @@ Do **not** introduce Docker Compose, Podman Compose, or any local container stac
 
 | Stage | Frontend | Backend | Data | Image build |
 | ----- | -------- | ------- | ---- | ----------- |
-| Paper | Vercel | Railway | Railway Postgres + Redis | **Nixpacks** (`backend/nixpacks.toml`, `Procfile`) |
+| Paper | Vercel | Railway | Railway Postgres + Redis | **Railpack** (Python via `requirements.txt`; see `railway.toml`) |
 | Live | Cloud Run | Cloud Run | Cloud SQL + Memorystore | **Cloud Buildpacks** (`backend/cloudbuild.yaml`) |
 
 Env templates: `infra/env/railway.paper.env.example`, `infra/env/vercel.paper.env.example`.
+
+### Railway monorepo settings (required)
+
+This repo is an **isolated monorepo** (`backend/` + `frontend/`). In the Railway service:
+
+1. **Settings → Root Directory** = `backend` (preferred), **or** leave empty and use the repo-root `railway.toml` / `requirements.txt` / `start.sh` shims.
+2. **Settings → Config as Code** = `/backend/railway.toml` when Root Directory is `backend` ([Railway monorepo note](https://docs.railway.com/guides/monorepo): config path does **not** follow Root Directory).
+3. Watch paths: `backend/**` so frontend-only commits do not rebuild the API.
+4. Under Root Directory `backend`, start command is `bash scripts/start_remote.sh` (`backend/railway.toml`). From repo root, start is `bash start.sh`.
+
+Redeploy after pushing these config files. Railpack fails at repo root without `requirements.txt` (no language detected among `backend/` + `frontend/`).
 
 ---
 

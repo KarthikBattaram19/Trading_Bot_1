@@ -1,9 +1,16 @@
 # Railway paper backend (architecture.md §17.0).
-# Dashboard → Service → Settings → Root Directory: backend
-# Builder: Nixpacks (no Dockerfile / no Docker Desktop).
+#
+# Recommended service settings (isolated monorepo):
+#   Root Directory:     backend
+#   Config as Code:     /backend/railway.toml
+#   Builder:            RAILPACK (Railway default; no Dockerfile)
+#
+# If Root Directory is left empty, the repo-root railway.toml + start.sh
+# are used instead (Railpack needs requirements.txt at the analyzed root).
 
 [build]
-builder = "NIXPACKS"
+builder = "RAILPACK"
+watchPatterns = ["**"]
 
 [deploy]
 startCommand = "bash scripts/start_remote.sh"

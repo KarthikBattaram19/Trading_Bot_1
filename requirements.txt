@@ -1,0 +1,3 @@
+# Root shim so Railpack/Nixpacks detect Python at the monorepo root.
+# Prefer Railway Root Directory = backend/ (then this file is unused).
+-r backend/requirements.txt

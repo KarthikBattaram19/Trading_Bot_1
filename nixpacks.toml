@@ -1,0 +1,10 @@
+# Monorepo-root Nixpacks config (when Railway Root Directory is empty / `.`).
+# Prefer Root Directory = `backend/` + backend/nixpacks.toml when possible.
+
+providers = ["python"]
+
+[variables]
+NIXPACKS_PYTHON_VERSION = "3.12"
+
+[start]
+cmd = "bash start.sh"
