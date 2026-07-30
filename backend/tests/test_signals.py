@@ -141,6 +141,8 @@ def test_evaluate_q15_rejects_vega_on_zero_std():
     out = evaluate_candidate(inp, news=news)
     assert out["iv_z_reject_vega"] is True
     assert out["iv_zscore"] is None
+    assert out["iv_z_reason"] == "zero_iv_std"
+    assert out.get("iv_intraday_std") in (0, 0.0)
     # Without usable z, should not pick vega_scalping
     assert out["selected_strategy"] != "vega_scalping"
 

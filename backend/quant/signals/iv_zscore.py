@@ -77,11 +77,26 @@ def compute_iv_zscore(
         )
 
     mean = sum(cleaned) / n
+    # Q-15: constant / near-constant IV series → reject vega (before sqrt noise)
+    span = max(cleaned) - min(cleaned)
+    _zero_std_eps = 1e-12
+    if span <= _zero_std_eps:
+        return IvZScoreResult(
+            iv_z_score=None,
+            iv_intraday_mean=mean,
+            iv_intraday_std=0.0,
+            current_iv=iv,
+            reject_vega=True,
+            stationarity_ok=False,
+            reason="zero_iv_std",
+            observations=n,
+        )
+
     var = sum((x - mean) ** 2 for x in cleaned) / n
     std = math.sqrt(var)
 
-    # Q-15: σ=0 → reject vega
-    if std <= 0 or math.isnan(std):
+    # Q-15: σ≈0 → reject vega (epsilon covers float noise across Python builds)
+    if std <= _zero_std_eps or math.isnan(std):
         return IvZScoreResult(
             iv_z_score=None,
             iv_intraday_mean=mean,
