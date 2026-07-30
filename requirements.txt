@@ -1,3 +1,13 @@
-# Root shim so Railpack/Nixpacks detect Python at the monorepo root.
-# Prefer Railway Root Directory = backend/ (then this file is unused).
--r backend/requirements.txt
+# Monorepo root — Railpack Python deps (repo Root Directory empty).
+# Keep in sync with backend/requirements.txt.
+#
+# Do not use "-r backend/requirements.txt" here: when the service Root Directory
+# is backend/ but Config-as-code is still /railway.toml, Railpack installs from
+# this file at /app and backend/ is not a subfolder → pip fails on
+# /app/backend/requirements.txt.
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+pydantic>=2.10.0
+httpx>=0.28.0
+numpy>=2.0.0
+python-dotenv>=1.0.0

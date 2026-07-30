@@ -13,7 +13,7 @@ builder = "RAILPACK"
 watchPatterns = ["**"]
 
 [deploy]
-startCommand = "bash scripts/start_remote.sh"
+startCommand = "bash start.sh"
 healthcheckPath = "/health"
 healthcheckTimeout = 30
 restartPolicyType = "ON_FAILURE"

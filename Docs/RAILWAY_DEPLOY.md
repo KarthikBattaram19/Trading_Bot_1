@@ -39,7 +39,16 @@ Railpack detects Python via root `requirements.txt` and starts via `start.sh` �
 | -------- | ----- |
 | **Root Directory** | `backend` |
 | **Config-as-code path** | `/backend/railway.toml` (**required** — config path does not follow Root Directory) |
-| **Custom start command** | *(empty — uses `bash scripts/start_remote.sh`)* |
+| **Custom start command** | *(empty — uses `bash start.sh`)* |
+
+### Troubleshooting: `No such file ... /app/backend/requirements.txt`
+
+This happens when **Root Directory** is `backend` but **Config-as-code** still points at `/railway.toml` (repo root). Railpack then installs from the root `requirements.txt` shim that referenced `backend/requirements.txt`, which does not exist inside a backend-only build context.
+
+**Fix (pick one):**
+
+1. Set **Config-as-code path** to `/backend/railway.toml` (recommended with Option B), **or**
+2. Pull latest `main` — root `requirements.txt` now lists dependencies inline so this pip step succeeds even if the config path is wrong.
 
 ---
 

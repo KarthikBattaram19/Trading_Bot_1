@@ -1,7 +1,12 @@
 # Railway paper backend — monorepo root config.
-# Prefer Service Settings → Root Directory = `backend` and
-# Config as Code path = `/backend/railway.toml` (isolated monorepo).
-# This root file covers services that deploy from the repo root.
+#
+# Recommended: Root Directory = `backend`, Config-as-code = `/backend/railway.toml`.
+#
+# If Root Directory is `backend` but this file is still the config path, deploy
+# still works: root requirements.txt lists deps inline (not backend/requirements.txt),
+# and start.sh exists under backend/ as well as repo root.
+#
+# Repo root deploy (Root Directory empty): uses this file + root start.sh.
 # Builder: RAILPACK (Railway default; detects Python via ./requirements.txt).
 
 [build]
