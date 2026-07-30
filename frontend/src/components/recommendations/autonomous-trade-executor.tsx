@@ -1,13 +1,15 @@
 "use client";
 
 import type { AutonomousExecutionResult } from "@/types/trades";
-import { Badge, Card } from "@/components/ui/primitives";
+import { Icon, StatusPill } from "@/components/ui/primitives";
 
 interface AutonomousTradeExecutorProps {
   executionResult: AutonomousExecutionResult | null;
 }
 
-export function AutonomousTradeExecutor({ executionResult }: AutonomousTradeExecutorProps) {
+export function AutonomousTradeExecutor({
+  executionResult,
+}: AutonomousTradeExecutorProps) {
   if (!executionResult) return null;
 
   const isLocked =
@@ -16,33 +18,41 @@ export function AutonomousTradeExecutor({ executionResult }: AutonomousTradeExec
     executionResult.message.includes("One-trade scope locked");
 
   return (
-    <Card className="border-accent/40 bg-accent/5 p-4">
+    <div className="rounded-md border border-primary-container bg-primary-container/20 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="text-sm font-medium text-white">Autonomous trade execution</h2>
-            <Badge variant="pass">full autonomy</Badge>
+        <div className="flex items-start gap-3">
+          <Icon name="rocket_launch" className="text-[24px] text-primary" />
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-label-caps uppercase text-primary">
+                Autonomous Trade Execution
+              </span>
+              <StatusPill tone="success">full autonomy</StatusPill>
+            </div>
+            <p className="mt-1 text-data-sm text-on-surface-variant">
+              Trade opened in the same cycle as recommendations — rank #1,
+              fallback #2 → #3
+            </p>
           </div>
-          <p className="mt-1 text-xs text-gray-500">
-            Trade opened in the same cycle as recommendations — rank #1, fallback #2 → #3
-          </p>
         </div>
       </div>
 
       {isLocked && (
-        <p className="mt-3 text-sm text-status-fail">{executionResult.message}</p>
+        <p className="mt-3 text-data-md text-error">{executionResult.message}</p>
       )}
 
       {!isLocked && (
         <div className="mt-3 space-y-2">
           <p
             className={
-              executionResult.executed ? "text-sm text-status-pass" : "text-sm text-status-fail"
+              executionResult.executed
+                ? "text-data-md text-secondary"
+                : "text-data-md text-error"
             }
           >
             {executionResult.message}
             {executionResult.trade_id && (
-              <span className="ml-2 font-mono text-xs text-gray-500">
+              <span className="ml-2 font-mono text-data-sm text-on-surface-variant">
                 ({executionResult.trade_id})
               </span>
             )}
@@ -52,16 +62,18 @@ export function AutonomousTradeExecutor({ executionResult }: AutonomousTradeExec
               {executionResult.attempts.map((attempt) => (
                 <li
                   key={attempt.rank}
-                  className="flex flex-wrap items-center gap-2 font-mono text-xs"
+                  className="flex flex-wrap items-center gap-2 font-mono text-data-sm"
                 >
-                  <span className="text-gray-500">#{attempt.rank}</span>
-                  <span className="text-white">{attempt.underlying_symbol}</span>
+                  <span className="text-on-surface-variant">#{attempt.rank}</span>
+                  <span className="text-on-surface">
+                    {attempt.underlying_symbol}
+                  </span>
                   {attempt.success ? (
-                    <Badge variant="pass">opened</Badge>
+                    <StatusPill tone="success">opened</StatusPill>
                   ) : (
                     <>
-                      <Badge variant="fail">failed</Badge>
-                      <span className="text-status-fail">{attempt.error}</span>
+                      <StatusPill tone="danger">failed</StatusPill>
+                      <span className="text-error">{attempt.error}</span>
                     </>
                   )}
                 </li>
@@ -70,6 +82,6 @@ export function AutonomousTradeExecutor({ executionResult }: AutonomousTradeExec
           )}
         </div>
       )}
-    </Card>
+    </div>
   );
 }

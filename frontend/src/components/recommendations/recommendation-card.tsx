@@ -8,21 +8,27 @@ import {
   ENTRY_MODE_LABELS,
   STRATEGY_TYPE_LABELS,
 } from "@/types/recommendations";
-import { Badge, Button, Card } from "@/components/ui/primitives";
-import { formatPct } from "@/lib/utils";
+import { Button, Icon, StatusPill } from "@/components/ui/primitives";
+import { cn, formatPct } from "@/lib/utils";
 import { StrategyInsightPanel } from "@/components/recommendations/strategy-insight-panel";
 
-const RANK_STYLES = ["border-accent", "border-status-pass/60", "border-gray-600"];
+const RANK_ACCENT = [
+  "border-l-primary",
+  "border-l-secondary",
+  "border-l-outline",
+];
+
+type PillTone = "success" | "warning" | "danger" | "info" | "neutral";
 
 const EXECUTION_BADGE: Record<
   ReturnType<typeof rankStatusFromResult>,
-  { label: string; variant: "pass" | "fail" | "pending" | "default" | "warn" }
+  { label: string; tone: PillTone }
 > = {
-  pending: { label: "Not executed", variant: "default" },
-  attempting: { label: "Attempting…", variant: "pending" },
-  succeeded: { label: "Trade opened", variant: "pass" },
-  failed: { label: "Open failed — trying next rank", variant: "fail" },
-  skipped: { label: "Skipped (earlier rank succeeded)", variant: "default" },
+  pending: { label: "Not executed", tone: "neutral" },
+  attempting: { label: "Attempting…", tone: "warning" },
+  succeeded: { label: "Trade opened", tone: "success" },
+  failed: { label: "Open failed — trying next rank", tone: "danger" },
+  skipped: { label: "Skipped (earlier rank succeeded)", tone: "neutral" },
 };
 
 type InsightTab =
@@ -61,7 +67,7 @@ export function RecommendationCard({
   executionResult?: AutonomousExecutionResult | null;
 }) {
   const [tab, setTab] = useState<InsightTab>("overview");
-  const rankStyle = RANK_STYLES[rec.rank - 1] ?? "border-surface-border";
+  const rankAccent = RANK_ACCENT[rec.rank - 1] ?? "border-l-outline";
   const strategyLabel = STRATEGY_TYPE_LABELS[rec.strategy.selected_strategy];
   const entryLabel = rec.strategy.entry_mode
     ? ENTRY_MODE_LABELS[rec.strategy.entry_mode] ?? rec.strategy.entry_mode
@@ -74,57 +80,70 @@ export function RecommendationCard({
   const execBadge = EXECUTION_BADGE[execStatus];
   const attempt = executionResult?.attempts.find((a) => a.rank === rec.rank);
 
-  const cheap =
-    rec.parameters.iv_annualized < rec.parameters.garch_forecast;
+  const cheap = rec.parameters.iv_annualized < rec.parameters.garch_forecast;
 
   return (
-    <Card className={`border-l-4 ${rankStyle}`}>
+    <section
+      className={cn(
+        "relative overflow-hidden rounded-md border border-l-4 border-outline-variant bg-surface",
+        rankAccent
+      )}
+    >
+      <div className="pointer-events-none absolute right-0 top-0 -z-0 h-64 w-64 -translate-y-1/2 translate-x-1/4 rounded-full bg-primary/5 blur-3xl" />
+
       {/* Header */}
-      <div className="border-b border-surface-border px-5 py-4">
+      <div className="relative border-b border-outline-variant px-5 py-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="flex items-center gap-3">
-            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-accent/20 font-mono text-sm font-bold text-accent">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/20 font-mono text-sm font-bold text-primary">
               #{rec.rank}
             </span>
             <div>
-              <h3 className="text-lg font-semibold text-white">
+              <h3 className="text-lg font-semibold text-on-surface">
                 {rec.underlying_symbol}
               </h3>
               <div className="mt-1 flex flex-wrap gap-2">
-                <Badge variant="pass">{strategyLabel}</Badge>
-                {entryLabel && <Badge variant="pending">{entryLabel}</Badge>}
-                <Badge variant="default">{rec.strategy.scenario_tag}</Badge>
+                <StatusPill tone="info">{strategyLabel}</StatusPill>
+                {entryLabel && <StatusPill tone="warning">{entryLabel}</StatusPill>}
+                <StatusPill tone="neutral">{rec.strategy.scenario_tag}</StatusPill>
                 {executionResult && (
-                  <Badge variant={execBadge.variant}>{execBadge.label}</Badge>
+                  <StatusPill tone={execBadge.tone}>{execBadge.label}</StatusPill>
                 )}
               </div>
             </div>
           </div>
           <div className="text-right">
-            <div className="text-xs text-gray-500">Confidence</div>
-            <div className="font-mono text-lg text-status-pass">
+            <div className="text-[10px] uppercase tracking-wider text-on-surface-variant">
+              Confidence
+            </div>
+            <div className="font-mono text-lg font-bold text-secondary">
               {formatPct(rec.confidence, 0)}
             </div>
-            <div className="text-xs text-gray-600">
+            <div className="font-mono text-[11px] text-outline">
               score {rec.score.toFixed(2)} · gates {gatesPassed}/{gatesTotal}
             </div>
           </div>
         </div>
-        <p className="mt-3 text-sm text-gray-300">{rec.entry_rationale}</p>
-        <p className="mt-2 text-xs text-accent">{rec.why_this_rank}</p>
+        <p className="mt-3 text-data-md text-on-surface">{rec.entry_rationale}</p>
+        <p className="mt-2 text-data-sm text-primary">{rec.why_this_rank}</p>
       </div>
 
-      {/* Tab bar */}
-      <div className="flex flex-wrap gap-1 border-b border-surface-border px-3 py-2">
+      {/* Tab bar — underline style (Stitch) */}
+      <div className="flex overflow-x-auto border-b border-outline-variant px-2">
         {TABS.map((t) => (
-          <Button
+          <button
             key={t.id}
-            size="sm"
-            variant={tab === t.id ? "primary" : "ghost"}
+            type="button"
             onClick={() => setTab(t.id)}
+            className={cn(
+              "whitespace-nowrap border-b-2 px-4 py-3 text-[11px] font-bold uppercase tracking-wider transition-colors",
+              tab === t.id
+                ? "border-primary text-primary"
+                : "border-transparent text-on-surface-variant hover:text-on-surface"
+            )}
           >
             {t.label}
-          </Button>
+          </button>
         ))}
       </div>
 
@@ -133,7 +152,9 @@ export function RecommendationCard({
           <>
             <section>
               <SectionTitle>Market condition (P1.3)</SectionTitle>
-              <p className="mt-2 text-sm text-gray-300">{rec.market_summary}</p>
+              <p className="mt-2 text-data-md text-on-surface">
+                {rec.market_summary}
+              </p>
               <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <Metric
                   label="Spot (A4)"
@@ -165,10 +186,7 @@ export function RecommendationCard({
                   label="Volume / OI"
                   value={`${rec.parameters.volume.toLocaleString()} / ${rec.parameters.open_interest.toLocaleString()}`}
                 />
-                <Metric
-                  label="Spread"
-                  value={`${rec.parameters.spread_pct}%`}
-                />
+                <Metric label="Spread" value={`${rec.parameters.spread_pct}%`} />
               </div>
             </section>
 
@@ -177,11 +195,11 @@ export function RecommendationCard({
               <div className="mt-2">
                 <StrategyInsightPanel rec={rec} />
               </div>
-              <p className="mt-3 text-xs text-gray-500">
+              <p className="mt-3 text-data-sm text-on-surface-variant">
                 Matrix: {rec.strategy.cross_strategy_matrix_ref}
               </p>
               {rec.strategy.news_impact && (
-                <p className="mt-1 text-xs text-status-pending">
+                <p className="mt-1 text-data-sm text-tertiary">
                   News: {rec.strategy.news_impact}
                 </p>
               )}
@@ -190,7 +208,7 @@ export function RecommendationCard({
             <section className="grid gap-4 sm:grid-cols-2">
               <div>
                 <SectionTitle>Hedge construction (P1.5)</SectionTitle>
-                <dl className="mt-2 space-y-1 text-sm">
+                <dl className="mt-2 space-y-1 text-data-md">
                   <Row label="Method" value={rec.hedge.method} />
                   <Row label="Greek targets" value={rec.hedge.greek_targets} />
                   <Row label="Structure" value={rec.hedge.structure_note} />
@@ -198,7 +216,7 @@ export function RecommendationCard({
               </div>
               <div>
                 <SectionTitle>Economics (P1.6)</SectionTitle>
-                <dl className="mt-2 space-y-1 text-sm">
+                <dl className="mt-2 space-y-1 text-data-md">
                   <Row
                     label="Margin est."
                     value={formatInr(rec.economics.margin_estimate_inr)}
@@ -216,7 +234,7 @@ export function RecommendationCard({
                     value={`${rec.economics.estimated_slippage_pct}%`}
                   />
                 </dl>
-                <p className="mt-2 text-xs text-gray-500">
+                <p className="mt-2 text-data-sm text-on-surface-variant">
                   {rec.economics.net_edge_note}
                 </p>
               </div>
@@ -227,7 +245,7 @@ export function RecommendationCard({
                 <SectionTitle>Why not other strategies</SectionTitle>
                 <ul className="mt-2 space-y-1">
                   {rec.strategy.rejected_strategies.map((r) => (
-                    <li key={r} className="text-xs text-gray-400">
+                    <li key={r} className="text-data-sm text-on-surface-variant">
                       ✗ {r}
                     </li>
                   ))}
@@ -240,7 +258,7 @@ export function RecommendationCard({
         {tab === "score" && (
           <section>
             <SectionTitle>Score breakdown</SectionTitle>
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-1 text-data-sm text-on-surface-variant">
               Transparent ranking components used to place this trade in the top
               3
             </p>
@@ -269,16 +287,18 @@ export function RecommendationCard({
                 />
               )}
             </div>
-            <div className="mt-4 rounded border border-surface-border/60 px-4 py-3">
+            <div className="mt-4 rounded-md border border-outline-variant bg-surface-container-low px-4 py-3">
               <div className="flex items-baseline justify-between">
-                <span className="text-xs text-gray-500">Total score</span>
-                <span className="font-mono text-xl text-white">
+                <span className="text-[10px] uppercase tracking-wider text-on-surface-variant">
+                  Total score
+                </span>
+                <span className="font-mono text-xl text-on-surface">
                   {rec.score_breakdown.total.toFixed(3)}
                 </span>
               </div>
-              <div className="mt-2 h-2 overflow-hidden rounded bg-surface-border">
+              <div className="mt-2 h-2 overflow-hidden rounded-full bg-surface-container-high">
                 <div
-                  className="h-full rounded bg-accent"
+                  className="h-full rounded-full bg-secondary"
                   style={{
                     width: `${Math.min(100, rec.score_breakdown.total * 100)}%`,
                   }}
@@ -287,7 +307,7 @@ export function RecommendationCard({
             </div>
             <ul className="mt-4 space-y-1">
               {rec.score_breakdown.components.map((c) => (
-                <li key={c} className="font-mono text-xs text-gray-400">
+                <li key={c} className="font-mono text-data-sm text-on-surface-variant">
                   {c}
                 </li>
               ))}
@@ -304,12 +324,14 @@ export function RecommendationCard({
               {rec.parameter_gates.map((g) => (
                 <li
                   key={g.gate_id}
-                  className="flex flex-wrap items-center justify-between gap-2 rounded border border-surface-border/50 px-3 py-2 text-sm"
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2 text-data-md"
                 >
-                  <span className={g.passed ? "text-gray-300" : "text-status-fail"}>
+                  <span
+                    className={g.passed ? "text-on-surface" : "text-error"}
+                  >
                     {g.passed ? "✓" : "✗"} {g.gate_id}: {g.label}
                   </span>
-                  <span className="font-mono text-xs text-gray-500">
+                  <span className="font-mono text-data-sm text-on-surface-variant">
                     {g.detail}
                     {g.parameter_ref ? ` · ${g.parameter_ref}` : ""}
                   </span>
@@ -326,14 +348,14 @@ export function RecommendationCard({
               {rec.complete_logic.map((step, i) => (
                 <li
                   key={i}
-                  className="rounded border border-surface-border/40 px-3 py-2 font-mono text-xs text-gray-400"
+                  className="rounded-md border border-outline-variant bg-surface-container-low px-3 py-2 font-mono text-data-sm text-on-surface-variant"
                 >
                   {step}
                 </li>
               ))}
             </ol>
             {rec.alternative_considered && (
-              <p className="mt-3 text-xs text-gray-600">
+              <p className="mt-3 text-data-sm text-outline">
                 Top alternative rejected: {rec.alternative_considered}
               </p>
             )}
@@ -352,12 +374,12 @@ export function RecommendationCard({
           <section className="space-y-4">
             <SectionTitle>Continual learning (§12)</SectionTitle>
             {!rec.learning ? (
-              <p className="text-sm text-gray-500">
+              <p className="text-data-md text-on-surface-variant">
                 No learning overlay on this packet yet.
               </p>
             ) : (
               <>
-                <p className="text-sm text-gray-300">
+                <p className="text-data-md text-on-surface">
                   {rec.learning.learning_note}
                 </p>
                 <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -379,9 +401,7 @@ export function RecommendationCard({
                   <Metric
                     label="Confidence after"
                     value={formatPct(rec.learning.confidence_after, 0)}
-                    tone={
-                      rec.learning.confidence_penalty > 0 ? "warn" : "pass"
-                    }
+                    tone={rec.learning.confidence_penalty > 0 ? "warn" : "pass"}
                   />
                   <Metric
                     label="Module trades"
@@ -389,9 +409,8 @@ export function RecommendationCard({
                   />
                 </div>
                 {rec.learning.module_win_rate != null && (
-                  <p className="text-xs text-gray-500">
-                    Module win rate{" "}
-                    {formatPct(rec.learning.module_win_rate, 0)}
+                  <p className="text-data-sm text-on-surface-variant">
+                    Module win rate {formatPct(rec.learning.module_win_rate, 0)}
                     {rec.learning.module_expectancy_inr != null &&
                       ` · expectancy ${formatInr(rec.learning.module_expectancy_inr)}`}
                   </p>
@@ -399,37 +418,36 @@ export function RecommendationCard({
                 {rec.learning.failure_matches.length > 0 ? (
                   <div className="space-y-3">
                     <SectionTitle>
-                      Similar past losses (
-                      {rec.learning.failure_matches.length})
+                      Similar past losses ({rec.learning.failure_matches.length})
                     </SectionTitle>
                     {rec.learning.failure_matches.map((m) => (
                       <div
                         key={m.failure_id}
-                        className="rounded border border-status-fail/40 px-3 py-3"
+                        className="rounded-md border border-error/40 bg-error/5 px-3 py-3"
                       >
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-medium text-white">
+                          <span className="font-medium text-on-surface">
                             {m.underlying_symbol}
                           </span>
-                          <Badge variant="fail">{m.strategy}</Badge>
-                          <span className="font-mono text-xs text-gray-500">
+                          <StatusPill tone="danger">{m.strategy}</StatusPill>
+                          <span className="font-mono text-data-sm text-on-surface-variant">
                             sim {formatPct(m.similarity, 0)}
                           </span>
-                          <span className="font-mono text-xs text-status-fail">
+                          <span className="font-mono text-data-sm text-error">
                             {formatInr(m.loss_pnl_inr)}
                           </span>
                         </div>
-                        <p className="mt-2 text-xs text-gray-400">
+                        <p className="mt-2 text-data-sm text-on-surface-variant">
                           {m.summary}
                         </p>
-                        <p className="mt-2 text-xs text-status-warn">
+                        <p className="mt-2 text-data-sm text-tertiary">
                           Lesson: {m.lesson}
                         </p>
                       </div>
                     ))}
                   </div>
                 ) : (
-                  <p className="text-sm text-gray-500">
+                  <p className="text-data-md text-on-surface-variant">
                     No similar failure-memory contexts for this setup.
                   </p>
                 )}
@@ -441,14 +459,18 @@ export function RecommendationCard({
         {tab === "checklist" && (
           <section>
             <SectionTitle>Insight completeness (P1)</SectionTitle>
-            <p className="mt-1 text-xs text-gray-500">
+            <p className="mt-1 text-data-sm text-on-surface-variant">
               Confirms every Pre-Approval Packet field is present for this
               recommendation
             </p>
             <ul className="mt-3 space-y-1">
               {rec.insight_checklist.map((item) => (
-                <li key={item} className="text-sm text-gray-300">
-                  ✓ {item}
+                <li
+                  key={item}
+                  className="flex items-center gap-2 text-data-md text-on-surface"
+                >
+                  <Icon name="check_circle" className="text-[16px] text-secondary" filled />
+                  {item}
                 </li>
               ))}
             </ul>
@@ -457,16 +479,17 @@ export function RecommendationCard({
       </div>
 
       {/* Execution footer */}
-      <div className="border-t border-surface-border px-5 py-3 text-sm text-gray-400">
+      <div className="flex items-center gap-2 border-t border-outline-variant px-5 py-3 text-data-md text-on-surface-variant">
         {executionResult ? (
           <>
             {execStatus === "succeeded" && attempt?.trade_id && (
-              <span className="text-status-pass">
+              <span className="flex items-center gap-2 text-secondary">
+                <Icon name="check_circle" className="text-[16px]" filled />
                 Autonomous open: {attempt.trade_id} ({attempt.order_status})
               </span>
             )}
             {execStatus === "failed" && attempt?.error && (
-              <span className="text-status-fail">{attempt.error}</span>
+              <span className="text-error">{attempt.error}</span>
             )}
             {execStatus === "skipped" && (
               <span>Higher-ranked recommendation opened successfully</span>
@@ -474,19 +497,20 @@ export function RecommendationCard({
             {execStatus === "pending" && <span>Not opened in this cycle</span>}
           </>
         ) : (
-          <span>
+          <span className="flex items-center gap-2">
+            <Icon name="check_circle" className="text-[16px] text-secondary" filled />
             Insight packet ready — execution result attaches when{" "}
             <span className="font-mono">fully_autonomous</span>
           </span>
         )}
       </div>
-    </Card>
+    </section>
   );
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h4 className="text-xs font-medium uppercase tracking-wide text-gray-500">
+    <h4 className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
       {children}
     </h4>
   );
@@ -502,15 +526,17 @@ function Metric({
   tone?: "pass" | "warn";
 }) {
   return (
-    <div className="rounded border border-surface-border/50 px-3 py-2">
-      <div className="text-xs text-gray-500">{label}</div>
+    <div className="rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-on-surface-variant">
+        {label}
+      </div>
       <div
         className={
           tone === "pass"
-            ? "mt-0.5 font-mono text-sm text-status-pass"
+            ? "mt-0.5 font-mono text-sm text-secondary"
             : tone === "warn"
-              ? "mt-0.5 font-mono text-sm text-status-warn"
-              : "mt-0.5 font-mono text-sm text-white"
+              ? "mt-0.5 font-mono text-sm text-tertiary"
+              : "mt-0.5 font-mono text-sm text-on-surface"
         }
       >
         {value}
@@ -522,21 +548,21 @@ function Metric({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex flex-col gap-0.5 sm:flex-row sm:justify-between">
-      <dt className="text-gray-500">{label}</dt>
-      <dd className="text-gray-200 sm:max-w-[65%] sm:text-right">{value}</dd>
+      <dt className="text-on-surface-variant">{label}</dt>
+      <dd className="text-on-surface sm:max-w-[65%] sm:text-right">{value}</dd>
     </div>
   );
 }
 
 function MiniBlock({ title, items }: { title: string; items: string[] }) {
   return (
-    <div className="rounded border border-surface-border/50 px-3 py-3">
-      <h5 className="text-xs font-medium uppercase tracking-wide text-gray-500">
+    <div className="rounded-md border border-outline-variant bg-surface-container-low px-3 py-3">
+      <h5 className="text-[10px] font-bold uppercase tracking-wider text-on-surface-variant">
         {title}
       </h5>
       <ul className="mt-2 space-y-1">
         {items.map((item) => (
-          <li key={item} className="text-xs text-gray-400">
+          <li key={item} className="text-data-sm text-on-surface-variant">
             {item}
           </li>
         ))}

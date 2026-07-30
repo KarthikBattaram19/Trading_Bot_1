@@ -1,280 +1,315 @@
 import { getBotStatus } from "@/lib/api";
 import { SituationalBar } from "@/components/dashboard/situational-bar";
-import { Badge, Card } from "@/components/ui/primitives";
+import { Icon, StatCard, StatusPill } from "@/components/ui/primitives";
+import { formatCurrency } from "@/lib/utils";
 
 const MOCK_POSITIONS = [
   {
     id: "pos_001",
     symbol: "RELIANCE",
-    strategy: "Simple Volatility",
-    type: "discretionary",
+    strategy: "LONG_VEGA",
+    type: "mechanical_hedge",
     status: "open" as const,
-    entry: "cheap_vol_mode",
     delta: 0.02,
     gamma: 0.11,
     vega: 0.42,
     theta: -85,
-    pnl: 1840.0,
-    opened: "2026-07-15 09:48 IST",
-    note: "Rank #2 after TATASTEEL liquidity reject — calendar + stock hedge",
+    pnl: 4200.0,
+    opened: "09:48 IST",
+    note: "Gamma scaling active. Waiting for VIX confirmation > 15 to unhedge delta.",
+    noteTone: "primary" as const,
   },
   {
     id: "pos_002",
-    symbol: "SPY",
-    strategy: "Simple Volatility",
-    type: "mechanical_hedge",
+    symbol: "BANKNIFTY 28DEC 48000P",
+    strategy: "SHORT_STRANGLE",
+    type: "core_position",
     status: "open" as const,
-    entry: "delta_rehedge",
-    delta: 0.01,
-    gamma: 0.0,
-    vega: 0.0,
-    theta: 0,
-    pnl: 12.39,
-    opened: "2026-07-15 14:22 IST",
-    note: "Delta re-hedge at gamma-theta breakeven — auto-executed",
+    delta: -0.12,
+    gamma: -0.05,
+    vega: -22.1,
+    theta: 18.5,
+    pnl: 4250.0,
+    opened: "10:15 IST",
+    note: "Theta decay collection. Monitoring for tail risk break below 47800.",
+    noteTone: "tertiary" as const,
+  },
+];
+
+const CLOSED_POSITIONS = [
+  {
+    id: "cls_001",
+    symbol: "FINNIFTY 19DEC 21200C",
+    strategy: "INTRADAY_MOMENTUM",
+    pnl: -1200,
+    note: "Hit time exit (15:15)",
   },
   {
-    id: "pos_003",
-    symbol: "NIFTY",
-    strategy: "Gamma Scalping",
-    type: "mechanical_hedge",
-    status: "open" as const,
-    entry: "intraday_rehedge",
-    delta: -0.03,
-    gamma: 0.0,
-    vega: 0.0,
-    theta: 0,
-    pnl: -48.2,
-    opened: "2026-07-15 11:05 IST",
-    note: "Index futures overlay to keep book Δ within ±0.05",
-  },
-  {
-    id: "pos_004",
-    symbol: "INTC",
-    strategy: "Gamma Scalping",
-    type: "discretionary",
-    status: "closed" as const,
-    entry: "earnings_gap_mode",
-    delta: 0,
-    gamma: 0,
-    vega: 0,
-    theta: 0,
-    pnl: 625.4,
-    opened: "2026-07-14 15:40 IST",
-    note: "Closed D+0 after gap exceeded gamma-theta breakeven",
-  },
-  {
-    id: "pos_005",
-    symbol: "TATASTEEL",
-    strategy: "Vega Scalping",
-    type: "discretionary",
-    status: "closed" as const,
-    entry: "iv_flush",
-    delta: 0,
-    gamma: 0,
-    vega: 0,
-    theta: 0,
-    pnl: -4200.0,
-    opened: "2026-07-13 10:12 IST",
-    note: "IV stop −3σ (N6.1) — written to failure memory",
+    id: "cls_002",
+    symbol: "NIFTY 21DEC 21400P",
+    strategy: "SHORT_GAMMA",
+    pnl: 3400,
+    note: "Target profit reached",
   },
 ];
 
 const HEDGE_LOG = [
   {
-    time: "14:22:08",
-    symbol: "SPY",
-    action: "BUY 12 shares",
-    reason: "Δ drifted +0.06 → re-neutralize",
-    pnl: 12.39,
+    time: "11:02:45 IST",
+    action: "DELTA_NEUTRAL_HEDGE",
+    symbol: "NIFTY 21DEC 21500C",
+    reason: "Delta > 0.3",
+    reasonTone: "error" as const,
+    pnl: 0,
   },
   {
-    time: "11:05:41",
-    symbol: "NIFTY",
-    action: "SELL 1 Jul futur",
-    reason: "Portfolio Δ +0.08 after RELIANCE fill",
-    pnl: -48.2,
+    time: "10:45:12 IST",
+    action: "VEGA_EXPOSURE_REDUCE",
+    symbol: "BANKNIFTY 28DEC 48000P",
+    reason: "VIX Spike Detected",
+    reasonTone: "tertiary" as const,
+    pnl: -150,
   },
   {
-    time: "09:51:02",
-    symbol: "RELIANCE",
-    action: "SELL 40 shares",
-    reason: "Entry stock hedge for cheap-vol calendar",
+    time: "09:35:00 IST",
+    action: "INITIAL_HEDGE_ENTRY",
+    symbol: "NIFTY 21DEC 21500C",
+    reason: "Strategy Bootstrap",
+    reasonTone: "secondary" as const,
     pnl: 0,
   },
 ];
 
+function signedInr(v: number): string {
+  return v >= 0 ? `+${formatCurrency(v)}` : formatCurrency(v);
+}
+
+function greekColor(v: number, invert = false): string {
+  if (v === 0) return "text-on-surface";
+  const positive = invert ? v < 0 : v > 0;
+  return positive ? "text-secondary" : "text-error";
+}
+
 export default async function PositionsPage() {
   const status = await getBotStatus();
-  const open = MOCK_POSITIONS.filter((p) => p.status === "open");
-  const closed = MOCK_POSITIONS.filter((p) => p.status === "closed");
-  const openPnl = open.reduce((s, p) => s + p.pnl, 0);
+  const openPnl = MOCK_POSITIONS.reduce((s, p) => s + p.pnl, 0);
 
   return (
     <>
       <SituationalBar status={status} />
-      <div className="space-y-6 p-6">
-        <div>
-          <h1 className="text-xl font-semibold text-white">Positions</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Open trades and mechanical hedge activity (not in approval queue)
-          </p>
+      <main className="flex-1 overflow-y-auto p-margin-page">
+        <div className="mx-auto flex max-w-container-max flex-col gap-6">
+          <h1 className="text-headline-lg text-on-surface">Positions</h1>
+
+          {/* KPIs */}
+          <section className="grid grid-cols-1 gap-gutter md:grid-cols-3">
+            <StatCard label="Open Positions" value={String(MOCK_POSITIONS.length)} />
+            <StatCard
+              label="Open MTM P&L"
+              value={signedInr(openPnl)}
+              tone={openPnl >= 0 ? "success" : "danger"}
+            />
+            <StatCard label="Recently Closed (Today)" value="5" />
+          </section>
+
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+            {/* Main tables */}
+            <div className="flex flex-col gap-6 lg:col-span-8">
+              {/* Open Book */}
+              <section>
+                <h2 className="mb-4 flex items-center gap-2 text-[18px] font-semibold text-on-surface">
+                  <Icon name="book" className="text-primary" />
+                  Open Book
+                </h2>
+                <div className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container">
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-left">
+                      <thead>
+                        <tr className="border-b border-outline-variant bg-surface-container-low text-label-caps uppercase text-on-surface-variant">
+                          <th className="p-4 font-normal">Symbol</th>
+                          <th className="p-4 font-normal">Strategy / Type</th>
+                          <th className="p-4 text-right font-normal">Greeks (Δ Γ ν Θ)</th>
+                          <th className="p-4 text-right font-normal">P&L</th>
+                          <th className="p-4 text-right font-normal">Opened</th>
+                        </tr>
+                      </thead>
+                      <tbody className="font-mono text-data-md text-on-surface">
+                        {MOCK_POSITIONS.map((p) => (
+                          <RowGroup key={p.id} p={p} />
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+
+              {/* Recently Closed */}
+              <section>
+                <h2 className="mb-4 flex items-center gap-2 text-[18px] font-semibold text-on-surface">
+                  <Icon name="history" className="text-outline" />
+                  Recently Closed
+                </h2>
+                <div className="overflow-hidden rounded-lg border border-outline-variant bg-surface-container">
+                  <div className="overflow-x-auto">
+                    <table className="w-full border-collapse text-left">
+                      <thead>
+                        <tr className="border-b border-outline-variant bg-surface-container-low text-label-caps uppercase text-on-surface-variant">
+                          <th className="p-4 font-normal">Symbol</th>
+                          <th className="p-4 font-normal">Strategy</th>
+                          <th className="p-4 text-right font-normal">P&L</th>
+                          <th className="p-4 font-normal">Note</th>
+                        </tr>
+                      </thead>
+                      <tbody className="font-mono text-data-md">
+                        {CLOSED_POSITIONS.map((p) => (
+                          <tr
+                            key={p.id}
+                            className="border-b border-outline-variant transition-colors last:border-0 hover:bg-surface-container-high"
+                          >
+                            <td className="whitespace-nowrap p-4 text-on-surface-variant">
+                              {p.symbol}
+                            </td>
+                            <td className="p-4 text-on-surface-variant">
+                              {p.strategy}
+                            </td>
+                            <td
+                              className={`p-4 text-right ${p.pnl >= 0 ? "text-secondary" : "text-error"}`}
+                            >
+                              {signedInr(p.pnl)}
+                            </td>
+                            <td className="p-4 text-data-sm text-on-surface-variant">
+                              {p.note}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            {/* Hedge Log timeline */}
+            <div className="lg:col-span-4">
+              <section className="flex h-full flex-col rounded-lg border border-outline-variant bg-surface-container p-5">
+                <h2 className="mb-4 flex items-center gap-2 text-[18px] font-semibold text-on-surface">
+                  <Icon name="memory" className="text-tertiary" />
+                  Mechanical Hedge Log (Today)
+                </h2>
+                <div className="flex-1 overflow-y-auto pr-2">
+                  <div className="relative ml-3 space-y-6 border-l border-outline-variant pb-4">
+                    {HEDGE_LOG.map((h) => (
+                      <div key={h.time + h.action} className="relative pl-6">
+                        <div className="absolute left-[-5px] top-1 h-2.5 w-2.5 rounded-full border-2 border-surface-container bg-outline-variant" />
+                        <div className="mb-1 font-mono text-data-sm text-on-surface-variant">
+                          {h.time}
+                        </div>
+                        <div className="rounded-md border border-outline-variant bg-surface-container-high p-3">
+                          <div className="mb-2 font-mono text-data-md text-on-surface">
+                            {h.action}
+                          </div>
+                          <LogRow label="Symbol" value={h.symbol} />
+                          <LogRow
+                            label="Reason"
+                            value={h.reason}
+                            valueClass={
+                              h.reasonTone === "error"
+                                ? "text-error"
+                                : h.reasonTone === "tertiary"
+                                  ? "text-tertiary"
+                                  : "text-secondary"
+                            }
+                          />
+                          <LogRow
+                            label="P&L Impact"
+                            value={signedInr(h.pnl)}
+                            valueClass={
+                              h.pnl < 0 ? "text-error" : "text-on-surface"
+                            }
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            </div>
+          </div>
         </div>
-
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Card className="px-4 py-3">
-            <div className="text-xs text-gray-500">Open positions</div>
-            <div className="mt-1 text-2xl font-semibold text-white">
-              {open.length}
-            </div>
-          </Card>
-          <Card className="px-4 py-3">
-            <div className="text-xs text-gray-500">Open mark-to-market</div>
-            <div
-              className={`mt-1 text-2xl font-semibold ${
-                openPnl >= 0 ? "text-status-pass" : "text-status-fail"
-              }`}
-            >
-              {openPnl >= 0 ? "+" : ""}${openPnl.toFixed(2)}
-            </div>
-          </Card>
-          <Card className="px-4 py-3">
-            <div className="text-xs text-gray-500">Closed (sample window)</div>
-            <div className="mt-1 text-2xl font-semibold text-white">
-              {closed.length}
-            </div>
-          </Card>
-        </div>
-
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-gray-400">Open book</h2>
-          <Card className="overflow-hidden">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-surface-border text-xs text-gray-500">
-                  <th className="px-4 py-3">Symbol</th>
-                  <th className="px-4 py-3">Strategy</th>
-                  <th className="px-4 py-3">Type</th>
-                  <th className="px-4 py-3">Entry</th>
-                  <th className="px-4 py-3">Δ</th>
-                  <th className="px-4 py-3">Γ</th>
-                  <th className="px-4 py-3">ν</th>
-                  <th className="px-4 py-3">Θ</th>
-                  <th className="px-4 py-3">P&L</th>
-                  <th className="px-4 py-3">Opened</th>
-                </tr>
-              </thead>
-              <tbody>
-                {open.map((p) => (
-                  <tr key={p.id} className="border-b border-surface-border/50">
-                    <td className="px-4 py-3 font-medium text-white">{p.symbol}</td>
-                    <td className="px-4 py-3">{p.strategy}</td>
-                    <td className="px-4 py-3">
-                      <Badge
-                        variant={
-                          p.type === "discretionary" ? "pending" : "default"
-                        }
-                      >
-                        {p.type}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-3 text-gray-400">{p.entry}</td>
-                    <td className="px-4 py-3 font-mono">{p.delta}</td>
-                    <td className="px-4 py-3 font-mono">{p.gamma}</td>
-                    <td className="px-4 py-3 font-mono">{p.vega}</td>
-                    <td className="px-4 py-3 font-mono">{p.theta}</td>
-                    <td
-                      className={`px-4 py-3 font-mono ${
-                        p.pnl >= 0 ? "text-status-pass" : "text-status-fail"
-                      }`}
-                    >
-                      {p.pnl >= 0 ? "+" : ""}${p.pnl.toFixed(2)}
-                    </td>
-                    <td className="px-4 py-3 text-xs text-gray-500">{p.opened}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <div className="space-y-1 border-t border-surface-border px-4 py-3 text-xs text-gray-500">
-              {open.map((p) => (
-                <p key={`${p.id}-note`}>
-                  <span className="text-gray-400">{p.symbol}:</span> {p.note}
-                </p>
-              ))}
-            </div>
-          </Card>
-        </section>
-
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-gray-400">
-            Recently closed
-          </h2>
-          <Card className="overflow-hidden">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-surface-border text-xs text-gray-500">
-                  <th className="px-4 py-3">Symbol</th>
-                  <th className="px-4 py-3">Strategy</th>
-                  <th className="px-4 py-3">P&L</th>
-                  <th className="px-4 py-3">Note</th>
-                </tr>
-              </thead>
-              <tbody>
-                {closed.map((p) => (
-                  <tr key={p.id} className="border-b border-surface-border/50">
-                    <td className="px-4 py-3 font-medium">{p.symbol}</td>
-                    <td className="px-4 py-3">{p.strategy}</td>
-                    <td
-                      className={`px-4 py-3 font-mono ${
-                        p.pnl >= 0 ? "text-status-pass" : "text-status-fail"
-                      }`}
-                    >
-                      {p.pnl >= 0 ? "+" : ""}${p.pnl.toFixed(2)}
-                    </td>
-                    <td className="px-4 py-3 text-gray-400">{p.note}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-        </section>
-
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-gray-400">
-            Mechanical hedge log (today)
-          </h2>
-          <Card className="overflow-hidden">
-            <table className="w-full text-left text-sm">
-              <thead>
-                <tr className="border-b border-surface-border text-xs text-gray-500">
-                  <th className="px-4 py-3">Time IST</th>
-                  <th className="px-4 py-3">Symbol</th>
-                  <th className="px-4 py-3">Action</th>
-                  <th className="px-4 py-3">Reason</th>
-                  <th className="px-4 py-3">P&L</th>
-                </tr>
-              </thead>
-              <tbody>
-                {HEDGE_LOG.map((h) => (
-                  <tr key={h.time + h.symbol} className="border-b border-surface-border/50">
-                    <td className="px-4 py-3 font-mono text-xs">{h.time}</td>
-                    <td className="px-4 py-3 font-medium">{h.symbol}</td>
-                    <td className="px-4 py-3">{h.action}</td>
-                    <td className="px-4 py-3 text-gray-400">{h.reason}</td>
-                    <td
-                      className={`px-4 py-3 font-mono ${
-                        h.pnl >= 0 ? "text-status-pass" : "text-status-fail"
-                      }`}
-                    >
-                      {h.pnl >= 0 ? "+" : ""}${h.pnl.toFixed(2)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Card>
-        </section>
-      </div>
+      </main>
     </>
+  );
+}
+
+function RowGroup({ p }: { p: (typeof MOCK_POSITIONS)[number] }) {
+  return (
+    <>
+      <tr className="border-b border-outline-variant transition-colors hover:bg-surface-container-high">
+        <td className="whitespace-nowrap p-4">{p.symbol}</td>
+        <td className="p-4">
+          <div className="flex flex-col items-start gap-1">
+            <span>{p.strategy}</span>
+            <StatusPill tone={p.type === "core_position" ? "warning" : "success"}>
+              {p.type.replace(/_/g, " ")}
+            </StatusPill>
+          </div>
+        </td>
+        <td className="whitespace-nowrap p-4 text-right font-mono text-data-sm text-on-surface-variant">
+          <span className={`inline-block w-10 ${greekColor(p.delta)}`}>
+            {p.delta}
+          </span>{" "}
+          |{" "}
+          <span className={`inline-block w-10 ${greekColor(p.gamma)}`}>
+            {p.gamma}
+          </span>{" "}
+          |{" "}
+          <span className={`inline-block w-12 ${greekColor(p.vega)}`}>
+            {p.vega}
+          </span>{" "}
+          |{" "}
+          <span className={`inline-block w-10 ${greekColor(p.theta, true)}`}>
+            {p.theta}
+          </span>
+        </td>
+        <td
+          className={`p-4 text-right ${p.pnl >= 0 ? "text-secondary" : "text-error"}`}
+        >
+          {signedInr(p.pnl)}
+        </td>
+        <td className="p-4 text-right text-on-surface-variant">{p.opened}</td>
+      </tr>
+      <tr className="border-b border-outline-variant bg-surface-container-lowest">
+        <td
+          colSpan={5}
+          className={`border-l-2 p-3 pl-8 font-mono text-data-sm text-on-surface-variant ${
+            p.noteTone === "primary" ? "border-primary" : "border-tertiary"
+          }`}
+        >
+          <span
+            className={`mr-2 font-bold ${p.noteTone === "primary" ? "text-primary" : "text-tertiary"}`}
+          >
+            PHASE:
+          </span>
+          {p.note}
+        </td>
+      </tr>
+    </>
+  );
+}
+
+function LogRow({
+  label,
+  value,
+  valueClass = "text-on-surface",
+}: {
+  label: string;
+  value: string;
+  valueClass?: string;
+}) {
+  return (
+    <div className="mb-1 flex items-center justify-between font-mono text-data-sm text-on-surface-variant last:mb-0">
+      <span>{label}:</span>
+      <span className={valueClass}>{value}</span>
+    </div>
   );
 }

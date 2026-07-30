@@ -1,246 +1,247 @@
 import { getBotStatus } from "@/lib/api";
 import { SituationalBar } from "@/components/dashboard/situational-bar";
-import { Badge, Card } from "@/components/ui/primitives";
+import { Icon, StatCard, StatusPill } from "@/components/ui/primitives";
 import { SharedKillConditions } from "@/components/dashboard/kill-conditions";
+import { formatCurrency } from "@/lib/utils";
 
-const BREAKERS = [
-  {
-    name: "Max drawdown",
-    threshold: "10% equity",
-    current: "3.2%",
-    status: "ok" as const,
-  },
-  {
-    name: "Max daily loss",
-    threshold: "2% equity",
-    current: "+0.34% (pnl)",
-    status: "ok" as const,
-  },
-  {
-    name: "Max concurrent discretionary",
-    threshold: "1",
-    current: "1 open",
-    status: "ok" as const,
-  },
-  {
-    name: "Consecutive losses",
-    threshold: "5",
-    current: "2",
-    status: "ok" as const,
-  },
-  {
-    name: "Feed staleness",
-    threshold: "< 30s L1",
-    current: "4s",
-    status: "ok" as const,
-  },
-  {
-    name: "Kill switch",
-    threshold: "inactive",
-    current: "inactive",
-    status: "ok" as const,
-  },
+type BreakerTone = "safe" | "warn" | "danger";
+
+const BREAKERS: {
+  name: string;
+  current: string;
+  limit: string;
+  pct: number;
+  tone: BreakerTone;
+}[] = [
+  { name: "Max Drawdown", current: "2.4%", limit: "10.0%", pct: 24, tone: "safe" },
+  { name: "Max Daily Loss", current: "₹45,000", limit: "₹50,000", pct: 90, tone: "warn" },
+  { name: "Consecutive Losses", current: "1", limit: "3", pct: 33, tone: "safe" },
+  { name: "Feed Staleness", current: "12ms", limit: "500ms", pct: 2, tone: "safe" },
 ];
 
 const GREEK_LIMITS = [
-  { greek: "Delta", current: 0.04, limit: 0.15, unit: "" },
-  { greek: "Gamma", current: 0.82, limit: 2.0, unit: "" },
-  { greek: "Vega", current: 0.35, limit: 1.5, unit: "" },
-  { greek: "Theta", current: -120, limit: -500, unit: "$/day" },
+  { greek: "Delta", current: "150", pct: 30 },
+  { greek: "Gamma", current: "-45", pct: 45 },
+  { greek: "Vega", current: "1,200", pct: 80 },
+  { greek: "Theta", current: "500", pct: 25 },
 ];
 
 const ALERTS = [
   {
-    time: "14:22 IST",
+    time: "10:42:15 AM",
     level: "info" as const,
-    text: "Mechanical Δ re-hedge on SPY — within Greek limits",
+    text: "Volatility spike detected in underlying NIFTY. Margins dynamically adjusted.",
   },
   {
-    time: "09:48 IST",
+    time: "10:15:02 AM",
     level: "warn" as const,
-    text: "TATASTEEL rank #1 liquidity reject — fell back to RELIANCE #2",
+    text: "Daily loss limit approaching 90% threshold.",
   },
   {
-    time: "Yesterday",
+    time: "09:15:00 AM",
     level: "info" as const,
-    text: "AMZN/META packet rejected — high notional margin warn",
-  },
-  {
-    time: "2 days ago",
-    level: "fail" as const,
-    text: "NIFTY cheap-vol approval window expired — not submitted",
+    text: "Session started. Initializing margin checks.",
   },
 ];
 
-const EQUITY = {
-  starting: 1_000_000,
-  current: 1_003_425,
-  peak: 1_036_800,
-  reserved_margin: 95_400,
-};
+const EQUITY = { current: 1_000_000, reserved_margin: 240_000 };
+
+function barColor(pct: number): string {
+  if (pct > 80) return "bg-error";
+  if (pct >= 50) return "bg-tertiary";
+  return "bg-secondary";
+}
+
+function greekTextColor(pct: number): string {
+  if (pct > 80) return "text-error";
+  if (pct >= 50) return "text-tertiary";
+  return "text-secondary";
+}
 
 export default async function RiskPage() {
   const status = await getBotStatus();
-  const utilization =
-    ((EQUITY.peak - EQUITY.current) / EQUITY.peak) * 100;
 
   return (
     <>
       <SituationalBar status={status} />
-      <div className="space-y-6 p-6">
-        <div>
-          <h1 className="text-xl font-semibold text-white">Risk dashboard</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Circuit breakers, portfolio Greek limits, and recent risk events
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-4">
-          <Card className="px-4 py-3">
-            <div className="text-xs text-gray-500">Equity (paper)</div>
-            <div className="mt-1 font-mono text-lg text-white">
-              ₹{EQUITY.current.toLocaleString("en-IN")}
-            </div>
-          </Card>
-          <Card className="px-4 py-3">
-            <div className="text-xs text-gray-500">Peak / DD used</div>
-            <div className="mt-1 font-mono text-lg text-status-warn">
-              {utilization.toFixed(1)}% of 10%
-            </div>
-          </Card>
-          <Card className="px-4 py-3">
-            <div className="text-xs text-gray-500">Reserved margin</div>
-            <div className="mt-1 font-mono text-lg text-white">
-              ₹{EQUITY.reserved_margin.toLocaleString("en-IN")}
-            </div>
-          </Card>
-          <Card className="px-4 py-3">
-            <div className="text-xs text-gray-500">Active breakers</div>
-            <div className="mt-1 text-lg font-semibold text-status-pass">
-              None
-            </div>
-          </Card>
-        </div>
-
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-gray-400">
-            Circuit breakers
-          </h2>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {BREAKERS.map((b) => (
-              <Card
-                key={b.name}
-                className="flex items-center justify-between px-4 py-3"
-              >
-                <div>
-                  <div className="font-medium text-white">{b.name}</div>
-                  <div className="text-xs text-gray-500">
-                    Limit: {b.threshold}
-                  </div>
-                  <div className="mt-1 text-xs text-gray-400">
-                    Now: {b.current}
-                  </div>
-                </div>
-                <Badge variant="pass">{b.status}</Badge>
-              </Card>
-            ))}
+      <main className="flex-1 overflow-y-auto p-margin-page">
+        <div className="mx-auto flex max-w-container-max flex-col gap-6">
+          <div>
+            <h1 className="text-headline-lg text-on-surface">Risk Dashboard</h1>
+            <p className="mt-1 text-body-md text-on-surface-variant">
+              Circuit breakers, portfolio Greek limits, and recent risk events.
+            </p>
           </div>
-        </section>
 
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-gray-400">Greek limits</h2>
-          <Card className="overflow-hidden">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-surface-border text-xs text-gray-500">
-                  <th className="px-4 py-3 text-left">Greek</th>
-                  <th className="px-4 py-3 text-right">Current</th>
-                  <th className="px-4 py-3 text-right">Limit</th>
-                  <th className="px-4 py-3 text-right">Utilization</th>
-                  <th className="px-4 py-3 text-left">Headroom bar</th>
-                </tr>
-              </thead>
-              <tbody>
-                {GREEK_LIMITS.map((row) => {
-                  const used =
-                    row.greek === "Theta"
-                      ? Math.abs(row.current) / Math.abs(row.limit)
-                      : Math.abs(row.current) / Math.abs(row.limit);
-                  const pct = Math.min(100, used * 100);
-                  const tone =
-                    pct > 80
-                      ? "bg-status-fail"
-                      : pct > 50
-                        ? "bg-status-warn"
-                        : "bg-status-pass";
-                  return (
-                    <tr
-                      key={row.greek}
-                      className="border-b border-surface-border/50"
+          {/* KPI row */}
+          <section className="grid grid-cols-1 gap-gutter md:grid-cols-2 lg:grid-cols-4">
+            <StatCard label="Equity" value={formatCurrency(EQUITY.current)} />
+            <StatCard
+              label="Drawdown"
+              value="2.4%"
+              tone="warning"
+              change={{ text: "of 10% limit", positive: false }}
+            />
+            <StatCard
+              label="Reserved Margin"
+              value={formatCurrency(EQUITY.reserved_margin)}
+            />
+            <StatCard
+              label="Active Breakers"
+              value="None"
+              tone="success"
+              icon="check_circle"
+            />
+          </section>
+
+          {/* Bento */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
+            {/* Left */}
+            <div className="flex flex-col gap-6 lg:col-span-8">
+              <section className="rounded-lg border border-outline-variant bg-surface-container p-6">
+                <h2 className="mb-4 text-headline-md text-on-surface">
+                  Circuit Breakers
+                </h2>
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  {BREAKERS.map((b) => (
+                    <div
+                      key={b.name}
+                      className="rounded-md border border-outline-variant bg-surface-dim p-4"
                     >
-                      <td className="px-4 py-3">{row.greek}</td>
-                      <td className="px-4 py-3 text-right font-mono">
-                        {row.current}
-                        {row.unit ? (
-                          <span className="ml-1 text-xs text-gray-500">
-                            {row.unit}
-                          </span>
-                        ) : null}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-gray-500">
-                        {row.limit}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-status-pass">
-                        {pct.toFixed(0)}%
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="h-2 w-full max-w-[160px] rounded bg-surface-border">
+                      <div className="mb-4 flex items-start justify-between">
+                        <h3 className="font-mono text-data-md text-on-surface">
+                          {b.name}
+                        </h3>
+                        <StatusPill
+                          tone={
+                            b.tone === "safe"
+                              ? "success"
+                              : b.tone === "warn"
+                                ? "warning"
+                                : "danger"
+                          }
+                        >
+                          {b.tone === "safe" ? "Safe" : b.tone === "warn" ? "Warn" : "Breach"}
+                        </StatusPill>
+                      </div>
+                      <div className="space-y-2 font-mono text-data-sm">
+                        <div className="flex justify-between">
+                          <span className="text-on-surface-variant">Current</span>
+                          <span className="text-on-surface">{b.current}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-on-surface-variant">Limit</span>
+                          <span className="text-on-surface">{b.limit}</span>
+                        </div>
+                        <div className="mt-2 h-1.5 w-full rounded-full bg-surface-container-high">
                           <div
-                            className={`h-2 rounded ${tone}`}
-                            style={{ width: `${pct}%` }}
+                            className={`h-1.5 rounded-full ${barColor(b.pct)}`}
+                            style={{ width: `${b.pct}%` }}
                           />
                         </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </Card>
-        </section>
-
-        <section>
-          <h2 className="mb-3 text-sm font-medium text-gray-400">
-            Recent risk events
-          </h2>
-          <Card className="divide-y divide-surface-border">
-            {ALERTS.map((a) => (
-              <div
-                key={a.time + a.text}
-                className="flex items-start gap-3 px-4 py-3 text-sm"
-              >
-                <Badge
-                  variant={
-                    a.level === "fail"
-                      ? "fail"
-                      : a.level === "warn"
-                        ? "warn"
-                        : "pass"
-                  }
-                >
-                  {a.level}
-                </Badge>
-                <div>
-                  <div className="text-gray-200">{a.text}</div>
-                  <div className="mt-0.5 text-xs text-gray-500">{a.time}</div>
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            ))}
-          </Card>
-        </section>
+              </section>
 
-        <SharedKillConditions />
-      </div>
+              <section className="flex-1 rounded-lg border border-outline-variant bg-surface-container p-6">
+                <h2 className="mb-4 text-headline-md text-on-surface">
+                  Recent Risk Events
+                </h2>
+                <div className="space-y-3">
+                  {ALERTS.map((a) => (
+                    <div
+                      key={a.time + a.text}
+                      className="flex items-start gap-4 rounded-md border border-transparent p-3 transition-colors hover:border-outline-variant hover:bg-surface-container-high"
+                    >
+                      <StatusPill
+                        tone={
+                          a.level === "warn"
+                            ? "warning"
+                            : a.level === "info"
+                              ? "info"
+                              : "danger"
+                        }
+                        className="mt-0.5"
+                      >
+                        {a.level}
+                      </StatusPill>
+                      <p className="flex-1 text-data-md text-on-surface">{a.text}</p>
+                      <span className="whitespace-nowrap font-mono text-data-sm text-on-surface-variant">
+                        {a.time}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            </div>
+
+            {/* Right */}
+            <div className="flex flex-col gap-6 lg:col-span-4">
+              <section className="flex-1 rounded-lg border border-outline-variant bg-surface-container p-6">
+                <h2 className="mb-4 text-headline-md text-on-surface">
+                  Greek Limits
+                </h2>
+                <table className="w-full border-collapse text-left">
+                  <thead>
+                    <tr className="border-b border-outline-variant">
+                      <th className="py-3 pr-4 text-label-caps uppercase text-on-surface-variant">
+                        Greek
+                      </th>
+                      <th className="py-3 px-4 text-right text-label-caps uppercase text-on-surface-variant">
+                        Current
+                      </th>
+                      <th className="py-3 pl-4 text-right text-label-caps uppercase text-on-surface-variant">
+                        Util %
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {GREEK_LIMITS.map((row, i) => (
+                      <tr
+                        key={row.greek}
+                        className={`transition-colors hover:bg-surface-container-high ${
+                          i < GREEK_LIMITS.length - 1
+                            ? "border-b border-outline-variant"
+                            : ""
+                        }`}
+                      >
+                        <td className="py-4 pr-4 font-mono text-data-md text-on-surface">
+                          {row.greek}
+                        </td>
+                        <td className="py-4 px-4 text-right font-mono text-data-md text-on-surface">
+                          {row.current}
+                        </td>
+                        <td className="py-4 pl-4 text-right font-mono text-data-md">
+                          <div className="flex items-center justify-end gap-2">
+                            <span className={greekTextColor(row.pct)}>
+                              {row.pct}%
+                            </span>
+                            <div className="h-1 w-12 rounded-full bg-surface-container-high">
+                              <div
+                                className={`h-1 rounded-full ${barColor(row.pct)}`}
+                                style={{ width: `${row.pct}%` }}
+                              />
+                            </div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </section>
+            </div>
+          </div>
+
+          <SharedKillConditions />
+
+          <div className="flex items-center justify-end gap-2 py-2 text-data-sm text-on-surface-variant">
+            <Icon name="shield" className="text-[16px] text-secondary" filled />
+            All portfolio Greeks within configured limits
+          </div>
+        </div>
+      </main>
     </>
   );
 }

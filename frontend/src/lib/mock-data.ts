@@ -219,12 +219,16 @@ export const mockPendingDecisions: PendingDecision[] = [
 export const mockDecisionLog: PendingDecision[] = [
   {
     ...mockPendingDecisions[0],
+    decision_id: "dec_20260705_101",
+    signal_id: "sig_20260705_101",
     status: "approved",
     created_at: new Date(now - 6 * 60 * 60 * 1000).toISOString(),
     expires_at: new Date(now - 5.75 * 60 * 60 * 1000).toISOString(),
   },
   {
     ...mockPendingDecisions[1],
+    decision_id: "dec_20260705_102",
+    signal_id: "sig_20260705_102",
     status: "rejected",
     created_at: new Date(now - 4 * 60 * 60 * 1000).toISOString(),
     expires_at: new Date(now - 3.75 * 60 * 60 * 1000).toISOString(),

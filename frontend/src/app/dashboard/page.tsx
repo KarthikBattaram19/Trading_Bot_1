@@ -8,13 +8,13 @@ import {
 } from "@/lib/api";
 import { SituationalBar } from "@/components/dashboard/situational-bar";
 import { FeedStatusPanel } from "@/components/recommendations/feed-status";
-import { Badge, Card } from "@/components/ui/primitives";
+import { Icon, Panel, StatCard, StatusPill } from "@/components/ui/primitives";
 import type { FeedSource } from "@/types/recommendations";
 import { formatCurrency, formatPct } from "@/lib/utils";
 
 /**
- * Phase 0 frontend shell (implementation_plan 0.8 / UI_Dashboard):
- * bot status, API + paper-sim health, feed status, kill-switch placeholder.
+ * Phase 0 overview (implementation_plan 0.8 / UI_Dashboard) — restyled to the
+ * Bhale Bullodu "Command Center" design system (Stitch export).
  */
 export default async function DashboardPage() {
   const [status, apiHealth, paperHealth, feeds] = await Promise.all([
@@ -24,138 +24,208 @@ export default async function DashboardPage() {
     getFeedStatus(),
   ]);
   const feedSources: FeedSource[] = feeds;
+  const supervision = status.supervision_mode ?? status.autonomy;
+  const paperPass = String(paperHealth.status ?? "").toLowerCase() === "ready";
 
   return (
     <>
       <SituationalBar status={status} />
-      <div className="space-y-6 p-6">
-        <div>
-          <h1 className="text-xl font-semibold text-white">Bot overview</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Phase 0 shell — ICICI Direct data-only marks · shadow mode · kill-switch
-            placeholder · no place_order
-          </p>
-        </div>
-
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <StatCard label="Execution" value={status.execution_mode} />
-          <StatCard
-            label="Supervision"
-            value={status.supervision_mode ?? status.autonomy}
-          />
-          <StatCard label="Scheduler" value={status.scheduler_mode} />
-          <StatCard
-            label="Kill switch"
-            value={status.kill_switch_armed ? "armed" : "inactive"}
-            highlight={Boolean(status.kill_switch_armed)}
-          />
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-3">
-          <Card className="p-4">
-            <div className="text-xs text-gray-500">API health</div>
-            <div className="mt-1 flex items-center gap-2">
-              <Badge variant={apiHealth.status === "ok" ? "pass" : "fail"}>
-                {apiHealth.status}
-              </Badge>
-              <span className="text-sm text-gray-400">
-                mode {apiHealth.execution_mode}
-                {apiHealth.place_order_enabled
-                  ? " · place_order on"
-                  : " · no place_order"}
-              </span>
-            </div>
-            <div className="mt-2 text-xs text-gray-500">
-              Phase {apiHealth.phase ?? "0"} · containers not required · Nixpacks
-              remote
-            </div>
-          </Card>
-          <Card className="p-4">
-            <div className="text-xs text-gray-500">Paper-sim health</div>
-            <div className="mt-1 text-sm text-white">
-              {String(paperHealth.module ?? "paper_sim")}
-              {paperHealth.status ? ` · ${String(paperHealth.status)}` : ""}
-            </div>
-            <div className="mt-2 text-xs text-gray-500">
-              {paperHealth.broker_place_order
-                ? "WARNING: place_order coupled"
-                : "Separate from ICICI Direct live orders (broker_place_order: false)"}
-            </div>
-          </Card>
-          <Card className="p-4">
-            <div className="text-xs text-gray-500">Daily P&L</div>
-            <div
-              className={`mt-1 text-2xl font-semibold ${
-                status.daily_pnl >= 0 ? "text-status-pass" : "text-status-fail"
-              }`}
-            >
-              {formatCurrency(status.daily_pnl)}
-            </div>
-            <div className="mt-2 text-xs text-gray-500">
-              Win rate {formatPct(status.win_rate)} · DD{" "}
-              {status.drawdown_pct.toFixed(1)}%
-            </div>
-          </Card>
-        </div>
-
-        <Card className="p-4">
-          <div className="mb-3">
-            <h2 className="font-medium text-white">Feed status</h2>
-            <p className="text-sm text-gray-500">
-              ICICI Direct marks + Market_News (MCP registry retired)
-            </p>
-          </div>
-          <FeedStatusPanel sources={feedSources} />
-        </Card>
-
-        <Card className="flex flex-wrap items-center justify-between gap-4 p-4">
+      <main className="flex-1 overflow-y-auto p-margin-page">
+        <div className="mx-auto flex max-w-container-max flex-col gap-gutter">
           <div>
-            <h2 className="font-medium text-white">Next surfaces</h2>
-            <p className="text-sm text-gray-500">
-              Recommendations and supervised cockpit expand after Phase 0 exit
+            <h1 className="text-headline-lg font-semibold text-on-surface">
+              Bot Overview
+            </h1>
+            <p className="mt-1 text-body-md text-on-surface-variant">
+              Phase 0 shell — ICICI Direct data-only marks · shadow mode ·
+              kill-switch placeholder · no place_order
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Link
+
+          {/* KPI stat cards */}
+          <section className="grid grid-cols-1 gap-gutter md:grid-cols-2 lg:grid-cols-4">
+            <StatCard
+              label="Execution Mode"
+              value={status.execution_mode.toUpperCase()}
+              pill={{ tone: "warning", text: "SIM" }}
+            />
+            <StatCard
+              label="Supervision"
+              value={supervision.toUpperCase()}
+              pill={{ tone: "warning", text: "MANUAL" }}
+            />
+            <StatCard
+              label="Scheduler"
+              value={status.scheduler_mode.toUpperCase()}
+              pill={{
+                tone: status.scheduler_mode === "paused" ? "warning" : "success",
+                text: status.scheduler_mode === "paused" ? "PAUSED" : "ACTIVE",
+              }}
+            />
+            <StatCard
+              label="Kill Switch Status"
+              value={status.kill_switch_armed ? "ARMED" : "STANDBY"}
+              tone="warning"
+              icon="warning"
+            />
+          </section>
+
+          {/* Health & P&L */}
+          <section className="grid grid-cols-1 gap-gutter lg:grid-cols-3">
+            <Panel title="API Health">
+              <div className="flex items-center gap-3">
+                <StatusPill tone={apiHealth.status === "ok" ? "success" : "danger"}>
+                  {apiHealth.status === "ok" ? "ACTIVE" : apiHealth.status}
+                </StatusPill>
+                <StatusPill tone="neutral">
+                  {apiHealth.execution_mode} mode
+                </StatusPill>
+              </div>
+              <div className="mt-4 flex items-center gap-2 text-body-md text-on-surface">
+                <Icon
+                  name="check_circle"
+                  className="text-[16px] text-secondary"
+                  filled
+                />
+                ICICI Direct{" "}
+                {apiHealth.place_order_enabled
+                  ? "· place_order ON"
+                  : "stable · no place_order"}
+              </div>
+              <p className="mt-2 text-data-sm text-on-surface-variant">
+                Phase {apiHealth.phase ?? "0"} · containers not required ·
+                Nixpacks remote
+              </p>
+            </Panel>
+
+            <Panel title="Paper-Sim Health">
+              <div className="flex items-center gap-3">
+                <StatusPill tone={paperPass ? "success" : "warning"}>
+                  {paperPass ? "PASS" : String(paperHealth.status ?? "…")}
+                </StatusPill>
+                <StatusPill tone="neutral">
+                  {String(paperHealth.module ?? "paper_sim")}
+                </StatusPill>
+              </div>
+              <div className="mt-4 flex items-center gap-2 text-body-md text-on-surface">
+                <Icon name="science" className="text-[16px] text-primary" />
+                Simulating NFO trades
+              </div>
+              <p className="mt-2 text-data-sm text-on-surface-variant">
+                {paperHealth.broker_place_order
+                  ? "WARNING: place_order coupled"
+                  : "Separate from ICICI Direct live orders (broker_place_order: false)"}
+              </p>
+            </Panel>
+
+            <Panel
+              title="Daily P&L"
+              bodyClassName="relative overflow-hidden"
+            >
+              <Icon
+                name="monitoring"
+                className="pointer-events-none absolute right-2 top-2 text-6xl text-on-surface/5"
+              />
+              <div
+                className={`font-mono text-[36px] leading-[44px] font-bold ${
+                  status.daily_pnl >= 0 ? "text-secondary" : "text-error"
+                }`}
+              >
+                {formatCurrency(status.daily_pnl)}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-4 border-t border-outline-variant pt-4">
+                <div>
+                  <span className="mb-1 block text-[10px] uppercase tracking-wider text-on-surface-variant">
+                    Win Rate
+                  </span>
+                  <span className="font-mono text-data-md text-on-surface">
+                    {formatPct(status.win_rate)}
+                  </span>
+                </div>
+                <div>
+                  <span className="mb-1 block text-[10px] uppercase tracking-wider text-on-surface-variant">
+                    Drawdown
+                  </span>
+                  <span
+                    className={`font-mono text-data-md ${
+                      status.drawdown_pct > 5 ? "text-error" : "text-on-surface"
+                    }`}
+                  >
+                    {status.drawdown_pct.toFixed(1)}%
+                  </span>
+                </div>
+              </div>
+            </Panel>
+          </section>
+
+          {/* Feed status */}
+          <Panel
+            title="Feed Status"
+            action={
+              <span className="text-data-sm text-on-surface-variant">
+                ICICI Direct marks + Market_News · MCP registry retired
+              </span>
+            }
+          >
+            <FeedStatusPanel sources={feedSources} />
+          </Panel>
+
+          {/* Next surfaces */}
+          <footer className="mt-2 flex flex-col gap-4 sm:flex-row">
+            <NavCard
               href="/recommendations"
-              className="rounded bg-accent px-4 py-2 text-sm font-medium text-white hover:bg-blue-600"
-            >
-              Recommendations →
-            </Link>
-            <Link
-              href="/risk"
-              className="rounded border border-surface-border px-4 py-2 text-sm text-gray-300 hover:border-accent/50"
-            >
-              Risk →
-            </Link>
-          </div>
-        </Card>
-      </div>
+              icon="auto_graph"
+              label="Recommendations"
+              tone="primary"
+            />
+            <NavCard href="/risk" icon="security" label="Risk Management" tone="error" />
+          </footer>
+        </div>
+      </main>
     </>
   );
 }
 
-function StatCard({
+function NavCard({
+  href,
+  icon,
   label,
-  value,
-  highlight,
+  tone,
 }: {
+  href: string;
+  icon: string;
   label: string;
-  value: string;
-  highlight?: boolean;
+  tone: "primary" | "error";
 }) {
   return (
-    <Card className="px-4 py-3">
-      <div className="text-xs text-gray-500">{label}</div>
-      <div
-        className={
-          highlight
-            ? "mt-1 font-medium text-status-pending"
-            : "mt-1 font-medium capitalize text-white"
-        }
-      >
-        {value.replace(/_/g, " ")}
+    <Link
+      href={href}
+      className="group flex flex-1 items-center justify-between rounded-md border border-outline-variant bg-surface-container p-4 transition-colors hover:bg-surface-container-high"
+    >
+      <div className="flex items-center gap-3">
+        <div
+          className={
+            tone === "primary"
+              ? "rounded bg-primary-container/20 p-2"
+              : "rounded bg-error-container/20 p-2"
+          }
+        >
+          <Icon
+            name={icon}
+            className={tone === "primary" ? "text-primary" : "text-error"}
+          />
+        </div>
+        <span
+          className={
+            tone === "primary"
+              ? "text-sm font-bold text-on-surface transition-colors group-hover:text-primary"
+              : "text-sm font-bold text-on-surface transition-colors group-hover:text-error"
+          }
+        >
+          {label}
+        </span>
       </div>
-    </Card>
+      <Icon name="arrow_forward" className="text-on-surface-variant" />
+    </Link>
   );
 }

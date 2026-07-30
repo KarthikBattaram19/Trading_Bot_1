@@ -1,14 +1,24 @@
+import { Icon } from "@/components/ui/primitives";
+
 interface KillConditionsProps {
   conditions: string[];
+  title?: string;
 }
 
-export function KillConditions({ conditions }: KillConditionsProps) {
+export function KillConditions({
+  conditions,
+  title = "Abort if (kill conditions)",
+}: KillConditionsProps) {
   return (
-    <details className="rounded border border-surface-border/50">
-      <summary className="cursor-pointer px-3 py-2 text-sm text-gray-400 hover:text-gray-200">
-        Abort if (kill conditions)
+    <details className="group rounded-md border border-outline-variant bg-surface-container">
+      <summary className="flex cursor-pointer items-center justify-between px-4 py-3 text-label-caps uppercase text-on-surface-variant outline-none">
+        {title}
+        <Icon
+          name="expand_more"
+          className="transition-transform group-open:rotate-180"
+        />
       </summary>
-      <ul className="list-inside list-disc space-y-1 border-t border-surface-border/50 px-3 py-2 text-sm text-gray-500">
+      <ul className="list-inside list-disc space-y-1 border-t border-outline-variant px-4 py-3 text-data-sm text-on-surface">
         {conditions.map((c) => (
           <li key={c}>{c}</li>
         ))}
@@ -18,14 +28,19 @@ export function KillConditions({ conditions }: KillConditionsProps) {
 }
 
 const DEFAULT_KILL_CONDITIONS = [
-  "Liquidity collapses or spreads blow out beyond limits",
+  "India VIX spikes > 25% within 5 minutes",
+  "Broker API latency exceeds 2000ms for 3 consecutive pings",
+  "Combined portfolio drawdown exceeds 15%",
   "A hedge leg becomes unavailable",
   "Model input is stale or corrupted",
-  "Earnings or news event the setup was not designed to absorb",
   "Required neutrality cannot be restored within cost limits",
-  "Core strategy assumption no longer holds",
 ];
 
 export function SharedKillConditions() {
-  return <KillConditions conditions={DEFAULT_KILL_CONDITIONS} />;
+  return (
+    <KillConditions
+      conditions={DEFAULT_KILL_CONDITIONS}
+      title="Shared Kill Conditions"
+    />
+  );
 }

@@ -1,12 +1,14 @@
 import type { FeedSource } from "@/types/recommendations";
-import { Badge } from "@/components/ui/primitives";
+import { StatusPill } from "@/components/ui/primitives";
 import { formatTime } from "@/lib/utils";
 
 /** ICICI Direct + Market_News feed health (no MCP copy — plan §1 / 0.3). */
 export function FeedStatusPanel({ sources }: { sources: FeedSource[] }) {
   if (!sources?.length) {
     return (
-      <p className="text-sm text-gray-500">No feed sources reported.</p>
+      <p className="text-data-sm text-on-surface-variant">
+        No feed sources reported.
+      </p>
     );
   }
 
@@ -15,43 +17,54 @@ export function FeedStatusPanel({ sources }: { sources: FeedSource[] }) {
       {sources.map((src) => (
         <li
           key={src.source_id}
-          className="flex flex-wrap items-start justify-between gap-2 rounded border border-surface-border px-3 py-2"
+          className="flex flex-wrap items-start justify-between gap-2 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2"
         >
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="font-medium text-white">{src.source_name}</span>
-              <Badge
-                variant={
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <span
+                className={
                   src.status === "active"
-                    ? "pass"
+                    ? "h-2 w-2 shrink-0 rounded-full bg-secondary"
                     : src.status === "stub"
-                      ? "warn"
-                      : "fail"
+                      ? "h-2 w-2 shrink-0 rounded-full bg-tertiary"
+                      : "h-2 w-2 shrink-0 rounded-full bg-error"
+                }
+              />
+              <span className="font-medium text-on-surface">
+                {src.source_name}
+              </span>
+              <StatusPill
+                tone={
+                  src.status === "active"
+                    ? "success"
+                    : src.status === "stub"
+                      ? "warning"
+                      : "danger"
                 }
               >
                 {src.status}
-              </Badge>
-              <Badge
-                variant={
+              </StatusPill>
+              <StatusPill
+                tone={
                   src.health === "fresh"
-                    ? "pass"
+                    ? "info"
                     : src.health === "stale"
-                      ? "warn"
-                      : "fail"
+                      ? "warning"
+                      : "danger"
                 }
               >
                 {src.health}
-              </Badge>
+              </StatusPill>
             </div>
-            <div className="mt-1 text-xs text-gray-500">
+            <div className="mt-1 text-data-sm text-on-surface-variant">
               {src.capabilities.join(" · ")}
             </div>
             {src.detail && (
-              <div className="mt-1 text-xs text-gray-400">{src.detail}</div>
+              <div className="mt-1 text-data-sm text-outline">{src.detail}</div>
             )}
           </div>
           {src.last_fetch_at && (
-            <span className="font-mono text-xs text-gray-600">
+            <span className="font-mono text-data-sm text-outline">
               {formatTime(src.last_fetch_at)}
             </span>
           )}

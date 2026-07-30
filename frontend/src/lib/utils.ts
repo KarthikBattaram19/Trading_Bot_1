@@ -5,12 +5,15 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
-export function formatCurrency(value: number): string {
-  return new Intl.NumberFormat("en-US", {
+/** ₹ with Indian numbering (e.g. ₹1,00,000). Signed for P&L readability. */
+export function formatCurrency(value: number, decimals = 0): string {
+  const formatted = new Intl.NumberFormat("en-IN", {
     style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value);
+    currency: "INR",
+    maximumFractionDigits: decimals,
+    minimumFractionDigits: decimals,
+  }).format(Math.abs(value));
+  return value < 0 ? `-${formatted}` : `${formatted}`;
 }
 
 export function formatPct(value: number, decimals = 1): string {

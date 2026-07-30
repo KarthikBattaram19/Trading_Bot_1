@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Badge, Button, Card } from "@/components/ui/primitives";
+import { Icon, StatusPill } from "@/components/ui/primitives";
 
 interface Message {
   id: string;
@@ -52,7 +52,7 @@ const SAMPLE_THREAD: Message[] = [
     id: "m6",
     role: "assistant",
     content:
-      "Against configured limits (Δ 0.15 / Γ 2.0 / ν 1.5 / Θ −500):\n\n• Delta 0.04 → ~27% of limit used\n• Gamma 0.82 → ~41% used\n• Vega 0.35 → ~23% used\n• Theta −120 → ~24% used\n\nNo circuit breakers are active. Daily P&L +$342.50 with drawdown 3.2% (max DD breaker 10%). Headroom is comfortable for one discretionary book under one-trade scope.",
+      "Against configured limits (Δ 0.15 / Γ 2.0 / ν 1.5 / Θ −500):\n\n• Delta 0.04 → ~27% of limit used\n• Gamma 0.82 → ~41% used\n• Vega 0.35 → ~23% used\n• Theta −120 → ~24% used\n\nNo circuit breakers are active. Daily P&L +₹342.50 with drawdown 3.2% (max DD breaker 10%). Headroom is comfortable for one discretionary book under one-trade scope.",
   },
 ];
 
@@ -67,79 +67,102 @@ export function ChatView({ decisionId }: { decisionId?: string }) {
   const [messages] = useState(SAMPLE_THREAD);
 
   return (
-    <Card className="flex flex-1 flex-col overflow-hidden">
-      <div className="flex flex-wrap items-center gap-2 border-b border-surface-border px-4 py-3">
-        <Badge variant="pass">RAG connected (mock)</Badge>
+    <div className="flex flex-1 flex-col overflow-hidden rounded-md border border-outline-variant bg-surface">
+      <div className="flex flex-wrap items-center gap-2 border-b border-outline-variant bg-surface-container-low px-4 py-3">
+        <StatusPill tone="success">
+          <span className="mr-1 inline-block h-1.5 w-1.5 rounded-full bg-secondary" />
+          RAG Connected
+        </StatusPill>
         {decisionId ? (
-          <Badge variant="pending">Context: {decisionId}</Badge>
+          <StatusPill tone="info">Context: {decisionId}</StatusPill>
         ) : (
-          <Badge variant="default">General desk context</Badge>
+          <StatusPill tone="neutral">General desk context</StatusPill>
         )}
-        <span className="text-xs text-gray-500">
+        <span className="text-data-sm text-on-surface-variant">
           Sample thread — POST /api/v1/chat not required in mock mode
         </span>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={
-              m.role === "user" ? "ml-8 text-right" : "mr-8 text-left"
-            }
-          >
-            <div
-              className={
-                m.role === "user"
-                  ? "inline-block rounded-lg bg-accent/20 px-4 py-3 text-left text-sm text-gray-100"
-                  : "inline-block rounded-lg border border-surface-border bg-surface px-4 py-3 text-left text-sm text-gray-200"
-              }
-            >
-              <div className="mb-1 text-[10px] uppercase tracking-wide text-gray-500">
-                {m.role === "user" ? "You" : "Bhale Bullodu"}
+      <div className="flex-1 space-y-5 overflow-y-auto p-4">
+        {messages.map((m) =>
+          m.role === "assistant" ? (
+            <div key={m.id} className="flex items-start gap-3">
+              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-outline-variant bg-surface-container-high text-on-surface-variant">
+                <Icon name="smart_toy" className="text-[18px]" />
               </div>
-              <p className="whitespace-pre-wrap leading-relaxed">{m.content}</p>
-              {m.citations && m.citations.length > 0 && (
-                <ul className="mt-3 space-y-1 border-t border-surface-border pt-2 text-xs text-gray-500">
-                  {m.citations.map((c, i) => (
-                    <li key={i}>
-                      {c.document}
-                      {c.chapter ? ` · ${c.chapter}` : ""}
-                      {c.page != null ? ` · p.${c.page}` : ""}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <div className="max-w-[80%] rounded-md border border-outline-variant bg-surface-container px-4 py-3">
+                <div className="mb-1 text-[10px] uppercase tracking-wider text-on-surface-variant">
+                  Bhale Bullodu
+                </div>
+                <p className="whitespace-pre-wrap text-data-md leading-relaxed text-on-surface">
+                  {m.content}
+                </p>
+                {m.citations && m.citations.length > 0 && (
+                  <div className="mt-3 flex flex-wrap gap-2 border-t border-outline-variant pt-2">
+                    {m.citations.map((c, i) => (
+                      <span
+                        key={i}
+                        className="flex items-center gap-1 rounded border border-outline-variant bg-surface-container-low px-2 py-1 font-mono text-[10px] text-on-surface-variant"
+                      >
+                        <Icon name="description" className="text-[12px]" />
+                        {c.document}
+                        {c.chapter ? ` · ${c.chapter}` : ""}
+                        {c.page != null ? ` · p.${c.page}` : ""}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          ) : (
+            <div key={m.id} className="flex justify-end">
+              <div className="max-w-[80%] rounded-md border border-primary-container/50 bg-primary-container/20 px-4 py-3">
+                <div className="mb-1 text-right text-[10px] uppercase tracking-wider text-primary">
+                  You
+                </div>
+                <p className="whitespace-pre-wrap text-data-md leading-relaxed text-on-surface">
+                  {m.content}
+                </p>
+              </div>
+            </div>
+          ),
+        )}
       </div>
 
-      <div className="border-t border-surface-border p-4">
+      <div className="border-t border-outline-variant p-4">
         <div className="mb-3 flex flex-wrap gap-2">
           {SUGGESTIONS.map((s) => (
             <button
               key={s}
               type="button"
               onClick={() => setInput(s)}
-              className="rounded border border-surface-border px-2 py-1 text-xs text-gray-400 hover:border-accent hover:text-accent"
+              className="flex items-center gap-1 rounded-full border border-outline-variant px-3 py-1.5 text-data-sm text-on-surface-variant transition-colors hover:border-primary hover:text-primary"
             >
+              <Icon name="auto_awesome" className="text-[14px]" />
               {s}
             </button>
           ))}
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2 rounded-full border border-outline-variant bg-surface-container-low px-2 py-1 focus-within:border-primary">
+          <Icon name="add" className="ml-1 text-[20px] text-on-surface-variant" />
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="Ask about entry rationale, Greeks, or failure memory…"
-            className="flex-1 rounded border border-surface-border bg-surface px-3 py-2 text-sm text-white placeholder:text-gray-600 focus:border-accent focus:outline-none"
+            className="flex-1 bg-transparent px-1 py-1.5 text-data-md text-on-surface placeholder:text-outline focus:outline-none"
           />
-          <Button variant="primary" disabled>
-            Send
-          </Button>
+          <button
+            type="button"
+            disabled
+            className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-container text-white disabled:opacity-40"
+          >
+            <Icon name="send" className="text-[16px]" />
+          </button>
         </div>
+        <p className="mt-2 text-center text-[11px] text-outline">
+          AI models may produce inaccurate information — verify against packets.
+        </p>
       </div>
-    </Card>
+    </div>
   );
 }

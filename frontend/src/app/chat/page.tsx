@@ -13,15 +13,16 @@ export default async function ChatPage({ searchParams }: PageProps) {
   return (
     <>
       <SituationalBar status={status} />
-      <div className="flex h-[calc(100vh-4rem)] flex-col p-6">
+      <main className="flex h-[calc(100vh-var(--topbar,64px))] flex-1 flex-col p-margin-page">
         <div className="mb-4">
-          <h1 className="text-xl font-semibold text-white">AI assistant</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            RAG-powered Q&A over strategy books, decision packets, and failure memory
+          <h1 className="text-headline-lg text-on-surface">AI Assistant</h1>
+          <p className="mt-1 text-body-md text-on-surface-variant">
+            RAG-powered Q&amp;A over strategy books, decision packets, and failure
+            memory.
           </p>
         </div>
         <ChatView decisionId={decision} />
-      </div>
+      </main>
     </>
   );
 }

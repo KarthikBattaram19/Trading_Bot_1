@@ -3,19 +3,31 @@ import Link from "next/link";
 import { getBotStatus, getDecisionLog } from "@/lib/api";
 import { SituationalBar } from "@/components/dashboard/situational-bar";
 import { SharedKillConditions } from "@/components/dashboard/kill-conditions";
-import { Badge, Card } from "@/components/ui/primitives";
+import { Icon, StatusPill } from "@/components/ui/primitives";
 import { STRATEGY_LABELS, type DecisionStatus } from "@/types/decisions";
 import { formatPct } from "@/lib/utils";
 
-const STATUS_VARIANT: Record<
+const STATUS_TONE: Record<
   DecisionStatus,
-  "pass" | "fail" | "warn" | "pending"
+  "success" | "danger" | "warning" | "info"
 > = {
-  approved: "pass",
-  rejected: "fail",
-  expired: "warn",
-  pending: "pending",
+  approved: "success",
+  rejected: "danger",
+  expired: "warning",
+  pending: "info",
 };
+
+const STAT_META: {
+  key: DecisionStatus;
+  label: string;
+  color: string;
+  icon: string;
+}[] = [
+  { key: "approved", label: "Approved", color: "text-secondary", icon: "check_circle" },
+  { key: "rejected", label: "Rejected", color: "text-error", icon: "cancel" },
+  { key: "expired", label: "Expired", color: "text-tertiary", icon: "schedule" },
+  { key: "pending", label: "Pending", color: "text-primary", icon: "hourglass_top" },
+];
 
 export default async function DecisionsPage() {
   const [status, decisions] = await Promise.all([
@@ -23,7 +35,7 @@ export default async function DecisionsPage() {
     getDecisionLog(),
   ]);
 
-  const counts = {
+  const counts: Record<DecisionStatus, number> = {
     approved: decisions.filter((d) => d.status === "approved").length,
     rejected: decisions.filter((d) => d.status === "rejected").length,
     expired: decisions.filter((d) => d.status === "expired").length,
@@ -33,114 +45,114 @@ export default async function DecisionsPage() {
   return (
     <>
       <SituationalBar status={status} />
-      <div className="space-y-6 p-6">
-        <div>
-          <h1 className="text-xl font-semibold text-white">Decision log</h1>
-          <p className="mt-1 text-sm text-gray-500">
-            Read-only audit trail of autonomous decisions — no approval queue
-          </p>
-        </div>
+      <main className="flex-1 overflow-y-auto p-margin-page">
+        <div className="mx-auto flex max-w-container-max flex-col gap-6">
+          {status.one_trade_locked && (
+            <div className="flex items-start gap-3 rounded-md border border-tertiary/50 bg-tertiary/10 px-4 py-3 text-data-md text-tertiary">
+              <Icon name="lock" className="text-[18px]" />
+              One-trade scope locked. Further autonomous entries are paused until
+              the current position resolves.
+            </div>
+          )}
 
-        {status.one_trade_locked && (
-          <Card className="border-status-warn/50 bg-status-warn/10 px-4 py-3 text-sm text-status-warn">
-            One-trade scope is locked. Close the active discretionary trade before
-            another can open.
-          </Card>
-        )}
+          <div>
+            <h1 className="text-headline-lg text-on-surface">Decision Log</h1>
+            <p className="mt-1 text-body-md text-on-surface-variant">
+              Real-time trace of algorithmic reasoning and trade executions
+              (read-only audit trail — no approval queue).
+            </p>
+          </div>
 
-        <div className="grid gap-3 sm:grid-cols-4">
-          <SummaryStat label="Approved" value={counts.approved} tone="pass" />
-          <SummaryStat label="Rejected" value={counts.rejected} tone="fail" />
-          <SummaryStat label="Expired" value={counts.expired} tone="warn" />
-          <SummaryStat label="Pending" value={counts.pending} tone="pending" />
-        </div>
+          {/* Summary cards */}
+          <section className="grid grid-cols-1 gap-gutter sm:grid-cols-2 lg:grid-cols-4">
+            {STAT_META.map((s) => (
+              <div
+                key={s.key}
+                className="flex items-center justify-between rounded-md border border-outline-variant bg-surface p-4"
+              >
+                <div>
+                  <div className="text-label-caps uppercase text-on-surface-variant">
+                    {s.label}
+                  </div>
+                  <div className={`mt-1 font-mono text-data-lg ${s.color}`}>
+                    {counts[s.key]}
+                  </div>
+                </div>
+                <Icon name={s.icon} className={`text-[24px] ${s.color}`} />
+              </div>
+            ))}
+          </section>
 
-        <Card className="overflow-hidden">
-          <table className="w-full text-left text-sm">
-            <thead>
-              <tr className="border-b border-surface-border text-xs text-gray-500">
-                <th className="px-4 py-3">Decision</th>
-                <th className="px-4 py-3">Symbol</th>
-                <th className="px-4 py-3">Strategy</th>
-                <th className="px-4 py-3">Confidence</th>
-                <th className="px-4 py-3">Regime</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Created</th>
-                <th className="px-4 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {decisions.map((d) => (
-                <tr
-                  key={d.decision_id}
-                  className="border-b border-surface-border/50 hover:bg-surface-border/20"
-                >
-                  <td className="px-4 py-3 font-mono text-xs text-gray-400">
-                    {d.decision_id}
-                  </td>
-                  <td className="px-4 py-3 font-medium text-white">
-                    {d.underlying_symbol}
-                  </td>
-                  <td className="px-4 py-3 text-gray-300">
-                    {STRATEGY_LABELS[d.module]}
-                  </td>
-                  <td className="px-4 py-3 font-mono">
-                    {formatPct(d.confidence)}
-                  </td>
-                  <td className="px-4 py-3 text-gray-400">
-                    {d.regime.replace(/_/g, " ")}
-                  </td>
-                  <td className="px-4 py-3">
-                    <Badge variant={STATUS_VARIANT[d.status]}>{d.status}</Badge>
-                  </td>
-                  <td className="px-4 py-3 text-xs text-gray-500">
-                    {new Date(d.created_at).toLocaleString("en-IN", {
-                      timeZone: "Asia/Kolkata",
-                      month: "short",
-                      day: "numeric",
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
-                  </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link
-                      href={`/decisions/${d.decision_id}`}
-                      className="text-sm text-accent hover:underline"
+          {/* Log table */}
+          <div className="overflow-hidden rounded-md border border-outline-variant bg-surface">
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-left">
+                <thead>
+                  <tr className="border-b border-outline-variant bg-surface-container-low text-label-caps uppercase text-on-surface-variant">
+                    <th className="p-4 font-normal">Decision</th>
+                    <th className="p-4 font-normal">Symbol</th>
+                    <th className="p-4 font-normal">Strategy</th>
+                    <th className="p-4 text-right font-normal">Confidence</th>
+                    <th className="p-4 font-normal">Regime</th>
+                    <th className="p-4 font-normal">Status</th>
+                    <th className="p-4 font-normal">Created</th>
+                    <th className="p-4 font-normal" />
+                  </tr>
+                </thead>
+                <tbody className="text-data-md">
+                  {decisions.map((d, i) => (
+                    <tr
+                      key={`${d.decision_id}:${d.status}:${d.created_at}:${i}`}
+                      className="border-b border-outline-variant transition-colors last:border-0 hover:bg-surface-container-high"
                     >
-                      Packet →
-                    </Link>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Card>
+                      <td className="p-4 font-mono text-data-sm text-on-surface-variant">
+                        {d.decision_id}
+                      </td>
+                      <td className="p-4 font-medium text-on-surface">
+                        {d.underlying_symbol}
+                      </td>
+                      <td className="p-4 text-on-surface-variant">
+                        {STRATEGY_LABELS[d.module]}
+                      </td>
+                      <td className="p-4 text-right font-mono text-on-surface">
+                        {formatPct(d.confidence)}
+                      </td>
+                      <td className="p-4 text-on-surface-variant">
+                        {d.regime.replace(/_/g, " ")}
+                      </td>
+                      <td className="p-4">
+                        <StatusPill tone={STATUS_TONE[d.status]}>
+                          {d.status}
+                        </StatusPill>
+                      </td>
+                      <td className="p-4 font-mono text-data-sm text-on-surface-variant">
+                        {new Date(d.created_at).toLocaleString("en-IN", {
+                          timeZone: "Asia/Kolkata",
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </td>
+                      <td className="p-4 text-right">
+                        <Link
+                          href={`/decisions/${d.decision_id}`}
+                          className="inline-flex items-center gap-1 text-data-sm text-primary hover:underline"
+                        >
+                          Packet
+                          <Icon name="arrow_forward" className="text-[14px]" />
+                        </Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
 
-        <SharedKillConditions />
-      </div>
+          <SharedKillConditions />
+        </div>
+      </main>
     </>
-  );
-}
-
-function SummaryStat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: number;
-  tone: "pass" | "fail" | "warn" | "pending";
-}) {
-  const colors = {
-    pass: "text-status-pass",
-    fail: "text-status-fail",
-    warn: "text-status-warn",
-    pending: "text-status-pending",
-  };
-  return (
-    <Card className="px-4 py-3">
-      <div className="text-xs text-gray-500">{label}</div>
-      <div className={`mt-1 text-2xl font-semibold ${colors[tone]}`}>{value}</div>
-    </Card>
   );
 }

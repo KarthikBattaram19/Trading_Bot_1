@@ -75,7 +75,7 @@ export function StrategyInsightPanel({
   }
 
   return (
-    <p className="text-sm text-status-fail">Strategy blocked — do not trade.</p>
+    <p className="text-data-md text-error">Strategy blocked — do not trade.</p>
   );
 }
 
@@ -93,17 +93,19 @@ function Item({
   warn?: boolean;
 }) {
   return (
-    <div className="rounded border border-surface-border/50 px-3 py-2">
-      <dt className="text-xs text-gray-500">{label}</dt>
+    <div className="rounded-md border border-outline-variant bg-surface-container-low px-3 py-2">
+      <dt className="text-[10px] uppercase tracking-wider text-on-surface-variant">
+        {label}
+      </dt>
       <dd
         className={
           warn
-            ? "mt-0.5 font-medium text-status-warn"
+            ? "mt-0.5 font-medium text-tertiary"
             : pass
-              ? "mt-0.5 font-medium text-status-pass"
+              ? "mt-0.5 font-medium text-secondary"
               : highlight
-                ? "mt-0.5 font-mono font-medium text-white"
-                : "mt-0.5 text-gray-200"
+                ? "mt-0.5 font-mono font-medium text-on-surface"
+                : "mt-0.5 text-on-surface"
         }
       >
         {value}

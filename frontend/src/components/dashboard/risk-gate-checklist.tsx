@@ -14,11 +14,13 @@ export function RiskGateChecklist({ gates, compact }: RiskGateChecklistProps) {
   return (
     <div>
       <div className="mb-3 flex items-center justify-between">
-        <h3 className="text-sm font-medium text-gray-300">Pre-flight checklist</h3>
-        <span className="text-xs text-gray-500">
+        <h3 className="text-label-caps uppercase text-on-surface">
+          Pre-flight checklist
+        </h3>
+        <span className="text-data-sm text-on-surface-variant">
           {passed}/{gates.length} pass
           {approveBlocked && (
-            <span className="ml-2 text-status-fail">Approve disabled</span>
+            <span className="ml-2 text-error">Approve disabled</span>
           )}
         </span>
       </div>
@@ -26,12 +28,14 @@ export function RiskGateChecklist({ gates, compact }: RiskGateChecklistProps) {
         {gates.map((gate) => (
           <li
             key={gate.id}
-            className="flex items-start justify-between gap-2 rounded border border-surface-border/50 px-3 py-2 text-sm"
+            className="flex items-start justify-between gap-2 rounded-md border border-outline-variant bg-surface-container-low px-3 py-2 text-data-md"
           >
-            <span className="text-gray-300">{gate.label}</span>
+            <span className="text-on-surface">{gate.label}</span>
             <div className="flex shrink-0 items-center gap-2">
               {gate.detail && (
-                <span className="font-mono text-xs text-gray-500">{gate.detail}</span>
+                <span className="font-mono text-data-sm text-on-surface-variant">
+                  {gate.detail}
+                </span>
               )}
               <Badge
                 variant={
