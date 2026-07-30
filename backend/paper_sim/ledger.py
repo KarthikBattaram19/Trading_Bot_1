@@ -10,6 +10,7 @@ from backend.paper_sim.fill_model import compute_fill_price, leg_notional
 from backend.paper_sim.models import (
     PaperAccountSnapshot,
     PaperFill,
+    PaperIntendedLeg,
     PaperLegPosition,
     PaperPosition,
     PaperSide,
@@ -49,6 +50,7 @@ class PaperLedger:
         slippage_bps: float,
         order_id: str,
         enforce_trade_cap: bool,
+        max_trade_investment_inr: float | None = None,
     ) -> tuple[list[PaperFill], list[PaperLegPosition], float, float]:
         """Price legs, enforce per-leg / cash caps; optionally trade investment cap."""
         if not legs:
@@ -58,6 +60,11 @@ class PaperLedger:
         leg_positions: list[PaperLegPosition] = []
         total_debit = 0.0
         total_credit = 0.0
+        trade_cap = (
+            float(max_trade_investment_inr)
+            if max_trade_investment_inr is not None
+            else float(self.config.max_trade_investment_inr)
+        )
 
         for raw in legs:
             side = raw["side"] if isinstance(raw["side"], PaperSide) else PaperSide(raw["side"])
@@ -111,10 +118,10 @@ class PaperLedger:
                 total_debit - total_credit,
                 total_debit * 0.1 if total_debit else abs(total_credit) * 0.2,
             )
-            if net_investment > self.config.max_trade_investment_inr:
+            if net_investment > trade_cap:
                 raise PaperLedgerError(
                     f"trade investment {net_investment:.2f} exceeds "
-                    f"max_trade_investment {self.config.max_trade_investment_inr:.2f}"
+                    f"max_trade_investment {trade_cap:.2f}"
                 )
 
         cash_impact = total_credit - total_debit
@@ -136,6 +143,9 @@ class PaperLedger:
         order_id: str | None = None,
         hedge_point_price: float | None = None,
         rehedge_method: str | None = None,
+        intended_legs: list[PaperIntendedLeg] | None = None,
+        auto_complete_multi_leg: bool = True,
+        structure_complete: bool = True,
     ) -> tuple[PaperPosition, list[PaperFill]]:
         """
         Open a multi-leg paper position.
@@ -157,7 +167,12 @@ class PaperLedger:
         for fill in fills:
             self.fills.append(fill)
 
+        opening_investment = max(
+            total_debit - total_credit,
+            total_debit * 0.1 if total_debit else abs(total_credit) * 0.2,
+        )
         method = rehedge_method or getattr(self.config, "rehedge_method", "increase_hedge")
+        planned = list(intended_legs or [])
         position = PaperPosition(
             position_id=f"pos_{uuid4().hex[:12]}",
             strategy_tag=strategy_tag,
@@ -168,11 +183,92 @@ class PaperLedger:
             realized_pnl=0.0,
             unrealized_pnl=0.0,
             note=note,
+            intended_legs=planned,
+            structure_complete=bool(structure_complete),
+            opening_investment_inr=float(opening_investment),
+            auto_complete_multi_leg=bool(auto_complete_multi_leg),
             hedge_point_price=float(hedge_point_price) if hedge_point_price else None,
             breakeven_paid_count=0,
             rehedge_method=method,  # type: ignore[arg-type]
         )
         self.positions[position.position_id] = position
+        self._touch()
+        return position, fills
+
+    def add_opening_legs(
+        self,
+        position_id: str,
+        *,
+        legs: list[dict],
+        slippage_bps: float,
+        order_id: str | None = None,
+        mark_structure_complete: bool | None = None,
+    ) -> tuple[PaperPosition, list[PaperFill]]:
+        """
+        Append remaining *opening* legs to an incomplete multi-leg structure.
+
+        Uses the same per-leg / cash / cumulative max_trade_investment rules as
+        ``open_position`` (not hedge exemptions). Does not bump breakeven_paid_count.
+        """
+        position = self.positions.get(position_id)
+        if position is None:
+            raise PaperLedgerError(f"unknown position_id={position_id}")
+        if position.status != "open":
+            raise PaperLedgerError(f"position {position_id} is already closed")
+
+        order_id = order_id or f"paper_ml_{uuid4().hex[:10]}"
+        remaining_cap = max(
+            0.0,
+            float(self.config.max_trade_investment_inr)
+            - float(position.opening_investment_inr or 0.0),
+        )
+        fills, new_legs, total_debit, total_credit = self._fill_legs(
+            legs=legs,
+            slippage_bps=slippage_bps,
+            order_id=order_id,
+            enforce_trade_cap=True,
+            max_trade_investment_inr=remaining_cap,
+        )
+
+        incremental = max(
+            total_debit - total_credit,
+            total_debit * 0.1 if total_debit else abs(total_credit) * 0.2,
+        )
+        absolute_cap = float(self.config.max_trade_investment_inr)
+        if position.opening_investment_inr + incremental > absolute_cap + 1e-6:
+            raise PaperLedgerError(
+                f"trade investment {position.opening_investment_inr + incremental:.2f} "
+                f"exceeds max_trade_investment {absolute_cap:.2f}"
+            )
+
+        self.cash += total_credit - total_debit
+        for fill in fills:
+            self.fills.append(fill)
+
+        for new_leg in new_legs:
+            merged = False
+            for existing in position.legs:
+                if (
+                    existing.symbol_token == new_leg.symbol_token
+                    and existing.side == new_leg.side
+                ):
+                    total_qty = existing.quantity + new_leg.quantity
+                    existing.avg_price = (
+                        existing.avg_price * existing.quantity
+                        + new_leg.avg_price * new_leg.quantity
+                    ) / total_qty
+                    existing.quantity = total_qty
+                    existing.mark_ltp = new_leg.mark_ltp
+                    merged = True
+                    break
+            if not merged:
+                position.legs.append(new_leg)
+
+        position.opening_investment_inr = float(position.opening_investment_inr) + float(
+            incremental
+        )
+        if mark_structure_complete is not None:
+            position.structure_complete = bool(mark_structure_complete)
         self._touch()
         return position, fills
 

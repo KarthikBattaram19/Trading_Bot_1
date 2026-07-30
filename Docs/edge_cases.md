@@ -240,6 +240,7 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 | PS-07 | Continuous re-hedge loop thrash (spot oscillating) | Cooldown / max `breakeven_paid_count`; cost gate | P1 | Part J |
 | PS-08 | Automation running + kill-switch | Stop new entries/hedges per pause policy | P0 | §6.2 |
 | PS-09 | Marks refresh fails mid-automation tick | Skip actions; mark degraded | P0 | Paper_Simulator `/marks/refresh` |
+| PS-11 | Post-entry multi-leg auto-complete under same open rules | Completing legs re-gate freshness / lot / pre-trade / Part T / cumulative ₹1L; **no** second consent; reject if caps fail | P0 | Paper_Simulator; §11.7 |
 | PS-10 | Partial fills / depth | v1 does **not** model — document limitation; live path separate | P2 | Paper_Simulator “Does not” |
 | PS-11 | Adapter `paper` dry-run confused with paper-sim P&L | Prefer `/api/v1/paper-sim/*` for P&L | P0 | §11.7 |
 | PS-12 | `broker_place_order: true` on paper health | Must be false | P0 | Paper_Simulator `/health` |

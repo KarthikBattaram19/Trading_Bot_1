@@ -277,6 +277,44 @@ class PaperAutomation:
             self._record(actions[-1])
             return {"actions": actions, "status": self.status()}
 
+        # Phase 1: complete intended multi-leg opening structures without consent
+        # (same open-trade rules), before γ–θ management.
+        for position in list(open_positions):
+            if position.structure_complete or not position.auto_complete_multi_leg:
+                continue
+            try:
+                completion = await self.engine.complete_multi_leg_structure(
+                    position.position_id
+                )
+                actions.append(
+                    {
+                        "action": "multi_leg_auto_complete",
+                        **{
+                            k: completion.get(k)
+                            for k in (
+                                "position_id",
+                                "added_legs",
+                                "structure_complete",
+                                "reason",
+                                "operator_consent_required",
+                            )
+                            if k in completion
+                        },
+                    }
+                )
+                self._record(actions[-1])
+            except Exception as exc:  # noqa: BLE001
+                actions.append(
+                    {
+                        "action": "multi_leg_auto_complete_failed",
+                        "position_id": position.position_id,
+                        "detail": str(exc),
+                    }
+                )
+                self._record(actions[-1])
+
+        open_positions = list(self.engine.positions(status="open"))
+
         # PS-06: news kill / early exit / take_profit prefer flatten over re-hedge
         if news_action in {"kill_event", "early_exit", "take_profit"}:
             for position in open_positions:

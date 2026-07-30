@@ -804,11 +804,14 @@ Before operator approval, the system should present:
 ### Post-Entry Automation
 Once approved and filled, the system may automate:
 
+- **remaining legs of the intended multi-leg opening structure** (Phase 1+ on paper-sim — **no additional consent**; same open-trade capital / freshness / lot / Part T rules as the first entry)
 - delta-maintenance hedges
 - risk-reduction exits
 - stop logic
 - same-day flattening for vega scalping
 - alerts for lost neutrality or abnormal costs
+
+Consent applies to the **discretionary entry decision**. Completing the bot's intended multi-leg opening basket after that entry does **not** require a second Approve.
 
 ### Human Escalation Triggers
 Require operator review if:

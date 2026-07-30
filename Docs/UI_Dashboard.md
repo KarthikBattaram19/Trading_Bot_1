@@ -14,6 +14,7 @@ The operating model:
 
 - **Operator approves discretionary entries** before broker submit (`SUPERVISION_MODE=supervised`, Phase 2 default on paper — `architecture.md` §21).
 - **Mechanical hedges** (delta drift, stops, circuit breakers) run automatically and appear in a separate activity stream — not in the approval queue.
+- **Phase 1+ multi-leg opening completion:** after an entry is accepted, remaining intended opening legs may auto-fill without a second Approve — same capital / freshness / lot rules as the entry (`Paper_Simulator.md`).
 - **One discretionary trade at a time** — the UI locks when a trade is pending or open.
 - **Market condition** includes **Market_News**-driven sentiment (Architecture §8.8) crossed with playbook SH-4 — same logic used by paper-sim.
 

@@ -124,6 +124,7 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 | # | Criterion | Evidence | Must |
 | - | --------- | -------- | ---- |
 | 1.1 | Ledger: account, positions, fills, multi-leg orders, close | Integration + Manual P&amp;L | Yes |
+| 1.1a | Post-entry multi-leg auto-complete without consent; same open-trade rules | Unit (`test_multi_leg_auto_complete`) | Yes |
 | 1.2 | Marks from ICICI Direct LTP + scrip master; fresh-marks gate | Integration (MD-01) | Yes |
 | 1.3 | Market_News ingest → `/paper-sim/news` + packet `market_news` | Integration + Manual | Yes |
 | 1.4 | SH-4 selection with news overlay | Unit/integration (N-02–N-12) | Yes |
@@ -150,7 +151,7 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 | -- | ----- |
 | N-01, N-03, N-12 | News stale / crisis / IV z blocked |
 | MD-05, MD-10, MD-14 | Bad LTP; GARCH gap; spot ≤ ₹1000 when options+underlying |
-| PS-03, PS-05, PS-06 | Multi-leg missing mark; capital-cap hedge; news kill vs re-hedge |
+| PS-03, PS-05, PS-06, PS-11 | Multi-leg missing mark; capital-cap hedge; news kill vs re-hedge; multi-leg auto-complete under open rules |
 | Q-05, Q-07 | Lotsize; `net_hedge_edge ≤ 0` |
 | S-01, S-10 | Session window; IST / `Asia/Kolkata` |
 
@@ -177,7 +178,7 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 | 2.3 | Supervised cockpit (decision queue) | Manual vs `UI_Dashboard.md` | Yes |
 | 2.4 | One-trade gate, circuit breakers, auto-pause, kill-switch | Integration + Manual | Yes |
 | 2.5 | AI validator only if Track B PASS | CI faithfulness ≥ 0.85 | Yes |
-| 2.6 | Multi-leg paper builder; ICICI Direct multi-leg dry-run only | Integration | Yes |
+| 2.6 | Live-path multi-leg builder polish; ICICI Direct multi-leg dry-run only (paper auto-complete = Phase 1.1a) | Integration | Yes |
 
 Also required (architecture §21 Phase 2):
 

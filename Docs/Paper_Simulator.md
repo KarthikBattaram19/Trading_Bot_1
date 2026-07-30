@@ -64,8 +64,9 @@ Base: `/api/v1/paper-sim`
 | POST | `/reset` | Reset virtual cash / clear positions |
 | GET | `/positions` | Open (or filtered) paper positions |
 | GET | `/fills` | Recent simulated fills |
-| POST | `/orders` | Multi-leg paper fill at LTP ± slippage (manual / override) |
+| POST | `/orders` | Multi-leg paper fill at LTP ± slippage (manual / override). After entry, remaining **intended** multi-leg opening legs may auto-complete **without consent** under the same open-trade rules |
 | POST | `/positions/{id}/close` | Flatten position at current marks |
+| POST | `/positions/{id}/complete-multi-leg` | Retry auto-completion of intended opening legs (no consent; same open rules) |
 | POST | `/marks/refresh` | Re-mark open legs via ICICI Direct LTP |
 | GET | `/chain?underlying=SBIN` | Option chain for an underlying (+ optional LTP); spot ≤ ₹1000 required only if structure uses stock/underlying |
 | GET | `/news` | Current `MarketNewsSummary` from `Market_News.txt` pipeline |
@@ -141,6 +142,21 @@ Aligned with playbook + `Trading_Parameters.md` Part H:
 
 Manual `POST /orders` remains allowed as supervised override; automated entries follow signals + news gates.
 
+### Post-entry multi-leg auto-complete (Phase 1)
+
+After an entry fills, if the bot **intends** a multi-leg opening structure (`intended_legs` on the order, or strategy-inferred — e.g. `simple_vol` ATM CE+PE, gamma/vega option+stock), remaining opening legs may be submitted **automatically without operator consent**.
+
+**Same rules as the first entry (mandatory):**
+
+- Fresh marks gate (reject if any completing leg is stale / missing LTP)
+- Quantity multiple of NFO `lotsize`
+- Pre-trade risk gate (kill-switch, buying power, drawdown)
+- Part T underlying price cap when the structure trades options **with** the cash underlying
+- Per-leg max investment ₹1,00,000
+- **Cumulative** max investment to open the trade ₹1,00,000 (`opening_investment_inr` across entry + completion legs)
+
+This is **opening-structure completion**, not γ–θ management re-hedge. Set `auto_complete_multi_leg: false` on `POST /orders` to leave the structure incomplete for manual control. Automation ticks also attempt completion before re-hedge.
+
 ### Continuous gamma–theta re-hedge automation
 
 Aligned with `Trading_Parameters.md` Part J and playbook management rules:
@@ -165,6 +181,7 @@ Re-hedge methods: `increase_hedge` \| `reduce_options` \| `adjust_call_put_mix`.
 - **Select and manage strategies per `Trading_Strategies.md`** (SH-4, scenarios, exits, kills)  
 - Compute **GARCH(1,1)** and **IV z-score** signals  
 - Run **continuous gamma–theta re-hedge automation** into the local paper ledger  
+- **Auto-complete intended multi-leg opening legs** after entry without consent (same open-trade rules)  
 
 **Does not (yet)**
 

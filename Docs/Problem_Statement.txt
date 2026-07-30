@@ -9,6 +9,7 @@ The current project design supersedes it with a retail trading bot that:
   • Progresses to FULL AUTONOMY only after validated paper soak and explicit promotion
     (supervised → semi_autonomous → fully_autonomous).
   • Always automates mechanical hedges (delta drift, stop-loss) without per-trade approval.
+  • Phase 1+: after entry, may auto-complete intended multi-leg opening legs without additional consent (same open-trade rules).
 
 Authoritative references (do not implement from this file alone):
   • architecture.md v1.14 — §6.2.2 (SUPERVISION_MODE), §20.4.7, §20.4.13

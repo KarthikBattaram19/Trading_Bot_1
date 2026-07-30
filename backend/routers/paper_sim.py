@@ -56,7 +56,11 @@ async def paper_fills(limit: int = Query(default=100, ge=1, le=500)):
 
 @router.post("/orders")
 async def paper_submit_order(request: PaperOrderRequest):
-    """Simulate a multi-leg fill locally. Does not call ICICI Direct place_order."""
+    """Simulate a multi-leg fill locally. Does not call ICICI Direct place_order.
+
+    After entry, remaining intended multi-leg opening legs may auto-complete
+    without operator consent (same open-trade gates).
+    """
     from backend.paper_sim.freshness import StaleMarksError
 
     try:
@@ -68,6 +72,23 @@ async def paper_submit_order(request: PaperOrderRequest):
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 — surface feed/auth failures clearly
+        raise HTTPException(status_code=502, detail=f"paper mark feed error: {exc}") from exc
+
+
+@router.post("/positions/{position_id}/complete-multi-leg")
+async def paper_complete_multi_leg(position_id: str):
+    """Retry auto-completion of intended opening legs (no consent; same open rules)."""
+    from backend.paper_sim.freshness import StaleMarksError
+
+    try:
+        return await get_paper_engine().complete_multi_leg_structure(
+            position_id, force=True
+        )
+    except StaleMarksError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except PaperLedgerError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=f"paper mark feed error: {exc}") from exc
 
 

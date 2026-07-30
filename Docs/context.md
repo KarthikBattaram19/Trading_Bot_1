@@ -188,6 +188,7 @@ The bot **must integrate with necessary third-party applications** to run strate
 
 - All order routing goes through the **ICICI Direct broker adapter**; the frontend never holds broker credentials or calls Breeze API directly
 - Paper-sim mirrors live behavior (multi-leg fills, positions, buying power) using simulated capital and configurable slippage
+- After a Phase 1 paper entry, the bot may **auto-complete** its intended multi-leg opening structure **without additional consent**, subject to the same open-trade rules (₹1L trade / leg, freshness, lotsize, Part T) — see `Paper_Simulator.md` and `architecture.md` §11.7
 - Each **OSS strategy** declares or inherits **data feed URL bindings** for its underlying and option legs; the bot refuses to trade if required feeds are stale or unavailable
 - Promoting paper-sim → live is an **explicit step** on the ICICI Direct adapter path (`EXECUTION_MODE=live` + risk gates), not a flip of the paper ledger
 - Pre-trade risk gates (Greeks limits, position size, drawdown, feed freshness, transaction cost gate) must pass before any order reaches a broker adapter
@@ -1208,7 +1209,7 @@ No Compose. See **`Docs/LOCAL_DEV.md`**.
 | Orchestration | Direct clients; LangChain optional | `architecture.md` §20.3 |
 | Historical data | **Parquet** (replay) + PostgreSQL (metadata) | `architecture.md` §14.4 |
 | Regime classifier (initial) | **Rule-based** | `architecture.md` §20.3 |
-| Multi-leg orders | **Phase 2 minimum** | `architecture.md` §11.7 |
+| Multi-leg orders | **Phase 1 (paper_sim auto-complete)**; live sequential+rollback Phase 5 | `architecture.md` §11.7 |
 | LLM authority | **Quant leads; Groq validates** | `architecture.md` §10.2, §10.6 |
 | Execution autonomy | **Graduated** — `SUPERVISION_MODE` supervised → semi → fully autonomous; `EXECUTION_MODE` shadow → paper → live | `architecture.md` §6.2.1, §6.2.2, §6.4 |
 | One trade at a time | **1** discretionary entry per session (§20.4.11) | `architecture.md` §20.4.11 |

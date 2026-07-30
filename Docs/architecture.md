@@ -1,8 +1,8 @@
 # System Architecture: AI-Assisted Volatility Trading Bot
 
 > **Sources:** `context.md`, `Docs/Strategy_Ingestion_Pipeline.txt`, `Docs/Problem_Statement.txt`, `Docs/Volatility Trading.pdf`, `Docs/Gamma Scalping.pdf`, `Docs/Vega Scalping.pdf`, `Docs/Trading_Strategies.pdf`, `Docs/Trading_Strategies.md`, `Docs/Trading_Parameters.md`, `Docs/UI_Dashboard.md`, `Docs/Paper_Simulator.md`, `Docs/OSS (1).xlsm`, `Docs/OSS_Guide (1).pdf`, `Market_News.txt`, ICICI Direct Breeze API ([docs](https://api.icicidirect.com/breezeapi/documents/index.html))  
-> **Version:** 1.26  
-> **Last updated:** July 16, 2026 — **No MCP registry:** ICICI Direct owns marks + orders; **Market_News** owns sentiment (§8.8–8.9, §11); prior: underlying spot ≤ INR 1000 only for options+underlying / NFO lot sizing / paper → live
+> **Version:** 1.27  
+> **Last updated:** July 30, 2026 — Phase 1 post-entry multi-leg auto-complete without consent (same open-trade rules); prior: **No MCP registry** / ICICI Direct marks + orders; Market_News; spot ≤ INR 1000 for options+underlying
 
 ---
 
@@ -3067,10 +3067,12 @@ Secrets under `credential_ref` (Secret Manager / env): see §11.12.
 
 | Capability                          | Phase               | Behavior                                                |
 | ----------------------------------- | ------------------- | ------------------------------------------------------- |
-| Single-leg equity/options           | Phase 2             | Direct submit                                           |
-| Multi-leg spreads (2+ legs)         | **Phase 2 minimum** | Sequential submit with rollback on partial fill failure |
+| Single-leg equity/options           | Phase 1 (paper) / Phase 2 (live path) | Direct submit                                           |
+| Multi-leg spreads (2+ legs)         | **Phase 1 (paper_sim)** | Basket open **or** post-entry auto-complete of intended legs without extra consent; same open-trade gates; sequential + rollback on live is Phase 5 |
 | Atomic multi-leg (broker-supported) | Phase 3+            | Single basket order where broker API allows             |
 
+
+**Phase 1 — post-entry multi-leg without consent:** After a paper entry fills, if the bot's intended opening structure is multi-leg (`intended_legs` / strategy-inferred CE+PE or option+stock), remaining opening legs may be submitted **automatically without operator consent**. Completion **must** re-apply the same rules used for the first entry: fresh marks, lotsize multiples, pre-trade gate, Part T (when options+underlying), per-leg ₹1L, and **cumulative** max trade investment ₹1L (`opening_investment_inr`). This is distinct from γ–θ re-hedges (management). API: `POST /paper-sim/orders` (`auto_complete_multi_leg`, default true) and `POST /paper-sim/positions/{id}/complete-multi-leg`.
 
 **Rollback:** If leg 2+ fails after leg 1 fills, attempt to flatten leg 1 within `rollback_timeout_sec` (default 30s); log as `partial_fill_incident`.
 
@@ -4499,7 +4501,7 @@ Project root/
 | 2   | Orchestration framework                    | Direct `chromadb`/`groq` clients; LangChain optional                                   | **Resolved**                     |
 | 3   | Historical data storage                    | **Parquet** (replay/OHLCV) + PostgreSQL (metadata)                                     | **Resolved**                     |
 | 4   | Regime classifier (initial)                | **Rule-based** (VIX percentile, HV/IV ratio, trend); ML/HMM Phase 4                    | **Resolved**                     |
-| 5   | Multi-leg option orders                    | **Phase 2 minimum** (sequential + rollback)                                            | **Resolved**                     |
+| 5   | Multi-leg option orders                    | **Phase 1 paper_sim** auto-complete without consent (same open rules); live sequential + rollback Phase 5 | **Resolved**                     |
 | 6   | Embedding / reranker stack                 | **bge-m3** + **bge-reranker-large**                                                    | **Resolved**                     |
 | 7   | Primary broker (Phase 2+)                  | ICICI Direct remains sole broker; deepen multi-leg / NFO coverage                         | **Resolved**                     |
 | 8   | Regime classifier (advanced)               | HMM vs. ML classifier                                                                  | Open                             |
@@ -4824,6 +4826,7 @@ Authoritative API/behavior: `Docs/Paper_Simulator.md`. ICICI Direct phases **A0�
 - [ ] **Market_News** pipeline (§8.8) → `GET /news`; SH-4 strategy selection (`Trading_Strategies.md`)
 - [ ] GARCH / IV z-score signals + `POST /signals/evaluate`
 - [ ] Continuous γ–θ re-hedge automation (`/automation/start|stop|status`)
+- [ ] **Post-entry multi-leg auto-complete** without consent; same open-trade gates (§11.7)
 - [ ] BSM pricing + Greeks minimal + OSS parity smoke tests (§8.5.12)
 - [ ] Transaction cost model (§9.4); pre-trade risk gate thresholds (§11.4)
 - [ ] Volatility module (HV, IV) enough for cheap-vol / vega frames; gamma re-hedge path
@@ -4831,7 +4834,7 @@ Authoritative API/behavior: `Docs/Paper_Simulator.md`. ICICI Direct phases **A0�
 - [ ] ICICI Direct WS Streaming 2.0 freshness (**A2**) for sub-second marks (mandatory Phase 1.8)
 - [ ] ICICI Direct **A3** shadow dry-run: place/cancel/status payloads logged via `IciciDirectBrokerAdapter` + `/broker/shadow-order*` (mandatory Phase 1.9)
 
-**Exit:** Manual + automated paper trades produce local P&L; playbook + news gates honored; A3 shadow payloads logged; zero `place_order`.
+**Exit:** Manual + automated paper trades produce local P&L; playbook + news gates honored; intended multi-leg structures may auto-complete after entry without consent under the same open-trade rules; A3 shadow payloads logged; zero `place_order`.
 
 ### Phase 2: Supervised Paper Bot (Weeks 6–9)
 
@@ -4844,11 +4847,11 @@ Authoritative API/behavior: `Docs/Paper_Simulator.md`. ICICI Direct phases **A0�
 - [ ] AI decision engine: rule fast path + Groq validator (requires Track B golden eval green)
 - [ ] Gamma + vega modules wired into paper-sim (discretionary still supervised)
 - [ ] Stat arb module (optional second module after ≥ 30 closed trades on first)
-- [ ] Multi-leg order builder for paper path; ICICI Direct sequential multi-leg (**A4**) only as dry-run until Phase 5
+- [ ] Live-path multi-leg order builder polish; ICICI Direct sequential multi-leg (**A4**) only as dry-run until Phase 5 (paper multi-leg auto-complete already in Phase 1)
 - [ ] WebSocket events (`decisions.pending`, trades, alerts); config audit trail
 - [ ] Frontend bot monitor + kill-switch + role-based auth (§16.3)
 
-**Exit:** Operator approves paper entries; mechanical hedges auto; promotion checklist for semi-auto ready.
+**Exit:** Operator approves paper **entries**; mechanical hedges **and** Phase 1 multi-leg opening completion auto; promotion checklist for semi-auto ready.
 
 ### Phase 3: Semi-Autonomy on Paper (Weeks 10–12)
 

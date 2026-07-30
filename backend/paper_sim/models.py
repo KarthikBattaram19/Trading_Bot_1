@@ -27,12 +27,21 @@ class PaperLegRequest(BaseModel):
 
 
 class PaperOrderRequest(BaseModel):
-    """Multi-leg paper order — never forwarded to ICICI Direct place_order."""
+    """Multi-leg paper order — never forwarded to ICICI Direct place_order.
+
+    Phase 1: after the entry ``legs`` fill, remaining ``intended_legs`` of a
+    multi-leg strategy may auto-complete without operator consent, subject to
+    the same open-trade gates (capital, freshness, lotsize, pre-trade, Part T).
+    """
 
     strategy_tag: str | None = None
     underlying: str | None = None
     legs: list[PaperLegRequest] = Field(min_length=1)
     note: str | None = None
+    # Full opening structure the bot intends (defaults to inferred / entry legs).
+    intended_legs: list[PaperLegRequest] | None = None
+    # When true (Phase 1 default), auto-submit missing intended opening legs.
+    auto_complete_multi_leg: bool = True
 
 
 class PaperFill(BaseModel):
@@ -62,6 +71,19 @@ class PaperLegPosition(BaseModel):
     lotsize: int = 1
 
 
+class PaperIntendedLeg(BaseModel):
+    """Persisted intended opening leg (for auto multi-leg completion)."""
+
+    symbol: str
+    exchange: str = "NFO"
+    symbol_token: str | None = None
+    side: PaperSide
+    quantity: int = Field(gt=0)
+    option_type: Literal["CE", "PE"] | None = None
+    strike: float | None = None
+    expiry: str | None = None
+
+
 class PaperPosition(BaseModel):
     position_id: str
     strategy_tag: str | None = None
@@ -73,6 +95,11 @@ class PaperPosition(BaseModel):
     realized_pnl: float = 0.0
     unrealized_pnl: float = 0.0
     note: str | None = None
+    # Phase 1 multi-leg opening plan (auto-complete without consent)
+    intended_legs: list[PaperIntendedLeg] = Field(default_factory=list)
+    structure_complete: bool = True
+    opening_investment_inr: float = 0.0
+    auto_complete_multi_leg: bool = True
     # Part J — γ–θ re-hedge state (mechanical; set on entry / each re-hedge)
     hedge_point_price: float | None = None
     gamma_theta_breakeven_pct: float | None = None

@@ -26,9 +26,16 @@ from backend.paper_sim.market_feed import IciciDirectDataOnlyFeed, MarketQuoteFe
 from backend.paper_sim.models import (
     PaperAccountSnapshot,
     PaperFill,
+    PaperIntendedLeg,
     PaperOrderRequest,
     PaperPosition,
     PaperSide,
+    PaperLegRequest,
+)
+from backend.paper_sim.structure_builder import (
+    build_intended_legs_from_entry,
+    missing_intended_legs,
+    strategy_implies_multi_leg,
 )
 
 logger = logging.getLogger(__name__)
@@ -133,23 +140,27 @@ class PaperEngine:
             max_age_sec=self.config.instrument_master_max_age_sec
         )
 
-    async def submit_order(self, request: PaperOrderRequest) -> dict[str, Any]:
-        await self._ensure_scrip_master()
+    async def _resolve_and_gate_legs(
+        self,
+        legs: list[PaperLegRequest],
+        *,
+        underlying: str | None,
+    ) -> tuple[list[dict], dict[str, Any], Any]:
+        """Resolve instruments, freshness, lotsize, pre-trade, Part T — same open rules."""
         resolved_legs: list[dict] = []
         ticks_for_gate: list[tuple[NormalizedTick, float]] = []
 
-        # T11: index / spot-cap rules apply only when options are traded with the underlying.
-        includes_underlying = any(_is_cash_underlying_leg(leg) for leg in request.legs)
-        if includes_underlying and request.underlying:
-            und = request.underlying.upper()
+        includes_underlying = any(_is_cash_underlying_leg(leg) for leg in legs)
+        if includes_underlying and underlying:
+            und = underlying.upper()
             if und in _INDEX_UNDERLYINGS:
                 raise PaperLedgerError(
-                    f"underlying {request.underlying} is an index — "
+                    f"underlying {underlying} is an index — "
                     "cannot trade options with cash underlying under Part T "
                     f"(spot cap {self.config.underlying_price_cap_inr:.0f} INR applies)"
                 )
 
-        for leg in request.legs:
+        for leg in legs:
             record = None
             if leg.symbol_token:
                 record = self.feed.resolve(symboltoken=leg.symbol_token)
@@ -192,10 +203,8 @@ class PaperEngine:
                 }
             )
 
-        # MD-01 / PS-03: reject the whole basket if any leg mark is stale or invalid.
         freshness = self._gate_ticks(ticks_for_gate)
 
-        # §11.4 pre-trade thresholds (kill-switch, freshness, lotsize already enforced)
         try:
             from backend.routers.bot import is_kill_switch_armed
 
@@ -242,7 +251,61 @@ class PaperEngine:
                         "(options+underlying path)"
                     )
 
-        # Part J: set hedge_point_price from underlying spot (or cash-leg mark) at entry
+        return resolved_legs, freshness, gate
+
+    @staticmethod
+    def _to_intended_models(legs: list[PaperLegRequest]) -> list[PaperIntendedLeg]:
+        return [
+            PaperIntendedLeg(
+                symbol=lg.symbol,
+                exchange=lg.exchange,
+                symbol_token=lg.symbol_token,
+                side=lg.side,
+                quantity=lg.quantity,
+                option_type=lg.option_type,
+                strike=lg.strike,
+                expiry=lg.expiry,
+            )
+            for lg in legs
+        ]
+
+    @staticmethod
+    def _intended_to_requests(legs: list[PaperIntendedLeg]) -> list[PaperLegRequest]:
+        return [
+            PaperLegRequest(
+                symbol=lg.symbol,
+                exchange=lg.exchange,
+                symbol_token=lg.symbol_token,
+                side=lg.side,
+                quantity=lg.quantity,
+                option_type=lg.option_type,
+                strike=lg.strike,
+                expiry=lg.expiry,
+            )
+            for lg in legs
+        ]
+
+    async def submit_order(self, request: PaperOrderRequest) -> dict[str, Any]:
+        await self._ensure_scrip_master()
+
+        # Resolve bot's intended multi-leg plan (explicit or inferred from strategy).
+        if request.intended_legs:
+            intended = list(request.intended_legs)
+        elif strategy_implies_multi_leg(request.strategy_tag):
+            intended = build_intended_legs_from_entry(
+                strategy_tag=request.strategy_tag,
+                underlying=request.underlying,
+                entry_legs=list(request.legs),
+                feed=self.feed,
+            )
+        else:
+            intended = list(request.legs)
+
+        resolved_legs, freshness, gate = await self._resolve_and_gate_legs(
+            list(request.legs), underlying=request.underlying
+        )
+
+        includes_underlying = any(leg.get("is_cash_underlying") for leg in resolved_legs)
         hedge_point: float | None = None
         if includes_underlying:
             cash_marks = [
@@ -264,6 +327,11 @@ class PaperEngine:
                 )
                 hedge_point = float(und_tick.ltp)
 
+        missing_at_open = missing_intended_legs(
+            current_legs=resolved_legs, intended_legs=intended
+        )
+        structure_complete = len(missing_at_open) == 0
+
         order_id = f"paper_{uuid4().hex[:12]}"
         position, fills = self.ledger.open_position(
             strategy_tag=request.strategy_tag,
@@ -274,6 +342,9 @@ class PaperEngine:
             order_id=order_id,
             hedge_point_price=hedge_point,
             rehedge_method=self.config.rehedge_method,
+            intended_legs=self._to_intended_models(intended),
+            auto_complete_multi_leg=bool(request.auto_complete_multi_leg),
+            structure_complete=structure_complete,
         )
         logger.info(
             "paper_sim fill order_id=%s position_id=%s legs=%s hedge_point=%s (no broker place_order)",
@@ -282,6 +353,18 @@ class PaperEngine:
             len(fills),
             hedge_point,
         )
+
+        multi_leg_completion: dict[str, Any] | None = None
+        if (
+            request.auto_complete_multi_leg
+            and not structure_complete
+            and strategy_implies_multi_leg(request.strategy_tag)
+        ):
+            multi_leg_completion = await self.complete_multi_leg_structure(
+                position.position_id
+            )
+            position = self.ledger.positions[position.position_id]
+
         return {
             "success": True,
             "path": "paper_sim",
@@ -292,6 +375,103 @@ class PaperEngine:
             "account": self.ledger.snapshot().model_dump(mode="json"),
             "marks_freshness": freshness,
             "pre_trade_gate": gate.as_dict(),
+            "multi_leg_completion": multi_leg_completion,
+            "operator_consent_required_for_completion": False,
+        }
+
+    async def complete_multi_leg_structure(
+        self, position_id: str, *, force: bool = False
+    ) -> dict[str, Any]:
+        """
+        Auto-complete remaining intended opening legs without operator consent.
+
+        Re-applies the same open-trade rules as the first entry (fresh marks,
+        lotsize, pre-trade gate, Part T, cumulative ₹1L trade / per-leg caps).
+
+        ``force=True`` is used by the explicit HTTP retry path; automatic
+        submit/automation paths honor ``auto_complete_multi_leg``.
+        """
+        position = self.ledger.positions.get(position_id)
+        if position is None:
+            raise PaperLedgerError(f"unknown position_id={position_id}")
+        if position.status != "open":
+            raise PaperLedgerError(f"position {position_id} is already closed")
+        if position.structure_complete:
+            return {
+                "action": "noop",
+                "reason": "structure_already_complete",
+                "position_id": position_id,
+                "operator_consent_required": False,
+            }
+        if not force and not position.auto_complete_multi_leg:
+            return {
+                "action": "skip",
+                "reason": "auto_complete_disabled",
+                "position_id": position_id,
+                "operator_consent_required": False,
+            }
+        if not position.intended_legs:
+            position.structure_complete = True
+            return {
+                "action": "noop",
+                "reason": "no_intended_legs",
+                "position_id": position_id,
+                "operator_consent_required": False,
+            }
+
+        await self._ensure_scrip_master()
+        intended_reqs = self._intended_to_requests(position.intended_legs)
+        missing = missing_intended_legs(
+            current_legs=position.legs, intended_legs=intended_reqs
+        )
+        if not missing:
+            position.structure_complete = True
+            self.ledger._touch()
+            return {
+                "action": "noop",
+                "reason": "no_missing_legs",
+                "position_id": position_id,
+                "operator_consent_required": False,
+            }
+
+        resolved_legs, freshness, gate = await self._resolve_and_gate_legs(
+            missing, underlying=position.underlying
+        )
+        order_id = f"paper_ml_{uuid4().hex[:10]}"
+        position, fills = self.ledger.add_opening_legs(
+            position_id,
+            legs=resolved_legs,
+            slippage_bps=self.config.slippage_bps,
+            order_id=order_id,
+            mark_structure_complete=True,
+        )
+        # Re-check: if somehow still missing, leave incomplete for next tick.
+        still_missing = missing_intended_legs(
+            current_legs=position.legs,
+            intended_legs=self._intended_to_requests(position.intended_legs),
+        )
+        if still_missing:
+            position.structure_complete = False
+            self.ledger._touch()
+
+        logger.info(
+            "paper_sim multi-leg auto-complete position_id=%s added_legs=%s "
+            "(no consent; same open-trade rules)",
+            position_id,
+            len(fills),
+        )
+        return {
+            "action": "complete_multi_leg",
+            "position_id": position_id,
+            "order_id": order_id,
+            "added_legs": len(fills),
+            "fills": [f.model_dump(mode="json") for f in fills],
+            "position": position.model_dump(mode="json"),
+            "account": self.ledger.snapshot().model_dump(mode="json"),
+            "marks_freshness": freshness,
+            "pre_trade_gate": gate.as_dict(),
+            "operator_consent_required": False,
+            "structure_complete": position.structure_complete,
         }
 
     async def close_position(self, position_id: str) -> dict[str, Any]:
@@ -439,6 +619,7 @@ class PaperEngine:
                 "positions": True,
                 "fills": True,
                 "multi_leg_orders": True,
+                "multi_leg_auto_complete": True,
                 "close": True,
                 "reset": True,
                 "marks_refresh": True,

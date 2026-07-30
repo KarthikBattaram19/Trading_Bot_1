@@ -84,6 +84,7 @@ Track B must not block Phase 0–1. Complete RAG faithfulness before LLM-gated d
 | #    | Work item                                                                              | Done when                     |
 | ---- | -------------------------------------------------------------------------------------- | ----------------------------- |
 | 1.1  | `paper_sim` ledger: account, positions, fills, multi-leg orders, close                 | Local P&L updates             |
+| 1.1a | Post-entry multi-leg auto-complete without consent (same open-trade rules)             | Incomplete → complete under ₹1L / freshness / lot gates |
 | 1.2  | Marks from ICICI Direct LTP + scrip master option chain                                | Fresh marks gate works        |
 | 1.3  | `Market_News` **ingest** (§8.8) → `GET /paper-sim/news` + recommendation `market_news` | Tone/topics/flags on packet   |
 | 1.4  | SH-4 strategy selection with news overlay (`Trading_Strategies.md`)                    | Kill / prefer rows honor news |
@@ -111,10 +112,10 @@ Track B must not block Phase 0–1. Complete RAG faithfulness before LLM-gated d
 | 2.3 | Supervised cockpit (decision queue — `UI_Dashboard.md`)                       |
 | 2.4 | One-trade gate, circuit breakers, auto-pause, kill-switch                     |
 | 2.5 | AI validator only after Track B golden eval green                             |
-| 2.6 | Multi-leg paper order builder; ICICI Direct sequential multi-leg dry-run only |
+| 2.6 | Live-path multi-leg builder polish; ICICI Direct sequential multi-leg dry-run only (paper auto-complete already Phase 1) |
 
 
-**Exit:** Operator approves paper entries; mechanical hedges auto.
+**Exit:** Operator approves paper entries; mechanical hedges + opening multi-leg completion auto.
 
 ---
 
