@@ -79,6 +79,60 @@ async def test_get_global_indices_degrades_on_error():
     assert all(m.error for m in marks)
 
 
+@pytest.mark.asyncio
+async def test_get_global_indices_rejects_implausible_vix():
+    class FlakyClient:
+        calls = 0
+
+        async def get_quotes(self, **kwargs: Any) -> dict[str, Any]:
+            code = str(kwargs.get("stock_code") or "").upper()
+            FlakyClient.calls += 1
+            if code == "NIFTY":
+                return {
+                    "Success": [
+                        {
+                            "ltp": 24500.5,
+                            "previous_close": 24400.0,
+                            "ltp_percent_change": 0.41,
+                        }
+                    ]
+                }
+            # First VIX quote is garbage (seen live from Breeze); second is fine.
+            if FlakyClient.calls <= 2:
+                return {
+                    "Success": [
+                        {"ltp": 0.1191, "previous_close": 0.06, "ltp_percent_change": 99.0}
+                    ]
+                }
+            return {
+                "Success": [
+                    {"ltp": 13.25, "previous_close": 13.0, "ltp_percent_change": 1.92}
+                ]
+            }
+
+    class FlakySession:
+        async def ensure_session(self) -> FlakyClient:
+            return FlakyClient()
+
+    adapter = IciciDirectMarketDataAdapter(session_manager=FlakySession())  # type: ignore[arg-type]
+    first = await adapter.get_global_indices()
+    vix1 = first[1]
+    assert vix1.stale is True
+    assert vix1.ltp is None
+
+    second = await adapter.get_global_indices()
+    vix2 = second[1]
+    assert vix2.stale is False
+    assert vix2.ltp == pytest.approx(13.25)
+
+    # A later garbage quote must not overwrite the last good mark.
+    FlakyClient.calls = 0
+    third = await adapter.get_global_indices()
+    vix3 = third[1]
+    assert vix3.ltp == pytest.approx(13.25)
+    assert vix3.stale is True
+
+
 def test_market_indices_endpoint(monkeypatch):
     monkeypatch.setenv("EXECUTION_MODE", "shadow")
     reset_market_data_for_tests()

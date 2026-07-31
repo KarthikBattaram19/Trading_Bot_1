@@ -58,6 +58,8 @@ class IciciDirectMarketDataAdapter:
         self.session_manager = session_manager or get_session_manager()
         self.instruments = instrument_master or get_instrument_master()
         self._last_ticks: dict[str, NormalizedTick] = {}
+        # Last good situational-bar marks (survive intermittent Breeze garbage quotes).
+        self._last_good_indices: dict[str, IndexMark] = {}
         # Map WS stock-token → (exchange, tradingsymbol, provider_symbol_id)
         self._ws_meta: dict[str, tuple[str, str, str]] = {}
         self.ws_prefer_max_age_sec = float(ws_prefer_max_age_sec)
@@ -293,14 +295,8 @@ class IciciDirectMarketDataAdapter:
         stock_code: str,
         exchange: str,
     ) -> IndexMark:
-        # Prefer fresh WS LTP; still need REST (or prior REST) for % change.
-        cached = self.get_cached_tick(exchange, stock_code)
-        if cached is None:
-            # Probe tokens use display names (e.g. "NIFTY 50") as provider_symbol_id.
-            for _ex, _code, token in WS_FEED_PROBES:
-                if _code.upper() == stock_code.upper() and _ex.upper() == exchange.upper():
-                    cached = self.get_cached_tick(exchange, token)
-                    break
+        key = f"{exchange.upper()}:{stock_code.upper()}"
+        prior = self._last_good_indices.get(key)
 
         try:
             client = await self.session_manager.ensure_session()
@@ -319,9 +315,8 @@ class IciciDirectMarketDataAdapter:
                 or data.get("last")
                 or data.get("last_price")
             )
-            previous_close = _optional_float(
-                data.get("previous_close") or data.get("prev_close") or data.get("close")
-            )
+            previous_close = _optional_float(data.get("previous_close") or data.get("prev_close"))
+            # Do not fall back to ``close`` — for some cash rows it is not prior close.
             change_pct = _optional_float(
                 data.get("ltp_percent_change")
                 or data.get("percent_change")
@@ -330,21 +325,23 @@ class IciciDirectMarketDataAdapter:
             if change_pct is None and ltp is not None and previous_close and previous_close != 0:
                 change_pct = ((ltp - previous_close) / previous_close) * 100.0
 
-            # Do not overlay WS LTP for global indices — some index tick shapes
-            # (esp. India VIX) can decode with bad scale and flash garbage %.
-            if ltp is None and cached is not None and not cached.stale:
-                ltp = cached.ltp
-                if previous_close and previous_close != 0:
-                    change_pct = ((ltp - previous_close) / previous_close) * 100.0
-
-            if ltp is None:
-                return IndexMark(
-                    label=label,
-                    stock_code=stock_code,
-                    exchange=exchange.upper(),
-                    stale=True,
-                    error="quote missing ltp",
+            if ltp is None or not _plausible_index_ltp(stock_code, ltp):
+                return self._stale_index_fallback(
+                    label,
+                    stock_code,
+                    exchange,
+                    prior,
+                    error=f"implausible or missing ltp ({ltp})",
                 )
+            if change_pct is not None and abs(change_pct) > 25.0:
+                # Day moves >25% on NIFTY/VIX are almost always quote noise.
+                change_pct = None
+                if previous_close and previous_close != 0 and _plausible_index_ltp(
+                    stock_code, previous_close
+                ):
+                    change_pct = ((ltp - previous_close) / previous_close) * 100.0
+                    if abs(change_pct) > 25.0:
+                        change_pct = None
 
             tick = NormalizedTick(
                 exchange=exchange.upper(),
@@ -362,7 +359,7 @@ class IciciDirectMarketDataAdapter:
             )
             self._last_ticks[f"{exchange.upper()}:{stock_code}"] = tick
             self.last_error = None
-            return IndexMark(
+            mark = IndexMark(
                 label=label,
                 stock_code=stock_code,
                 exchange=exchange.upper(),
@@ -372,26 +369,33 @@ class IciciDirectMarketDataAdapter:
                 ts=tick.ts,
                 stale=False,
             )
+            self._last_good_indices[key] = mark
+            return mark
         except Exception as exc:  # noqa: BLE001
             logger.warning("Index mark %s failed: %s", stock_code, exc)
             self.last_error = str(exc)
-            if cached is not None and cached.ltp is not None:
-                return IndexMark(
-                    label=label,
-                    stock_code=stock_code,
-                    exchange=exchange.upper(),
-                    ltp=cached.ltp,
-                    ts=cached.ts,
-                    stale=True,
-                    error=str(exc),
-                )
-            return IndexMark(
-                label=label,
-                stock_code=stock_code,
-                exchange=exchange.upper(),
-                stale=True,
-                error=str(exc),
+            return self._stale_index_fallback(
+                label, stock_code, exchange, prior, error=str(exc)
             )
+
+    def _stale_index_fallback(
+        self,
+        label: str,
+        stock_code: str,
+        exchange: str,
+        prior: IndexMark | None,
+        *,
+        error: str,
+    ) -> IndexMark:
+        if prior is not None and prior.ltp is not None:
+            return prior.model_copy(update={"stale": True, "error": error})
+        return IndexMark(
+            label=label,
+            stock_code=stock_code,
+            exchange=exchange.upper(),
+            stale=True,
+            error=error,
+        )
 
     async def get_candles(
         self,
@@ -598,6 +602,16 @@ def _optional_float(value: Any) -> float | None:
         return float(value)
     except (TypeError, ValueError):
         return None
+
+
+def _plausible_index_ltp(stock_code: str, ltp: float) -> bool:
+    """Reject intermittent Breeze garbage quotes for situational-bar marks."""
+    code = stock_code.upper()
+    if code in {"INDVIX", "INDIA VIX", "INDIAVIX"}:
+        return 5.0 <= ltp <= 100.0
+    if code in {"NIFTY", "NIFTY 50"}:
+        return 5_000.0 <= ltp <= 100_000.0
+    return ltp > 0
 
 
 _market_data: IciciDirectMarketDataAdapter | None = None
