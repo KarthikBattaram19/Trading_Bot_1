@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 from fastapi import APIRouter
@@ -15,6 +16,8 @@ from backend.integrations.registry import (
 from backend.models.recommendations import FeedSource
 from backend.services.feed_health import get_feed_sources
 from backend.services.trade_executor import get_active_trade_id, is_one_trade_locked
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1", tags=["bot"])
 
@@ -82,7 +85,21 @@ async def resume_bot():
     return {"status": "active", "kill_switch_armed": False}
 
 
+async def _ensure_ws_for_feed_ui() -> None:
+    """Best-effort A2 connect when ICICI credentials/session can open livestream."""
+    try:
+        from backend.integrations.icici_direct.market_data import get_market_data_adapter
+        from backend.integrations.icici_direct.session_manager import get_session_manager
+
+        health = get_session_manager().health()
+        if health.get("authenticated") or health.get("credentials_ready"):
+            await get_market_data_adapter().ensure_ws_connected()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Feed UI WS ensure skipped: %s", exc)
+
+
 @router.get("/feeds/status")
 async def list_feed_status() -> list[FeedSource]:
     """ICICI Direct + Market_News feed health (MCP registry retired — plan §1 / 0.3)."""
+    await _ensure_ws_for_feed_ui()
     return get_feed_sources()

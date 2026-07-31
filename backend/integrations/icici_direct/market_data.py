@@ -65,7 +65,11 @@ class IciciDirectMarketDataAdapter:
         return self._stream
 
     async def ensure_instruments(self, *, max_age_sec: float | None = None) -> int:
-        """Load scrip master; refresh when empty or older than ``max_age_sec`` (MD-11)."""
+        """Load scrip master; refresh when empty or older than ``max_age_sec`` (MD-11).
+
+        SecurityMaster.zip is public — prefer session client when authenticated,
+        otherwise download without Breeze login so G11–G12 universe can load.
+        """
         from backend.paper_sim.freshness import instrument_master_age_sec
 
         age = instrument_master_age_sec(self.instruments.loaded_at)
@@ -74,8 +78,15 @@ class IciciDirectMarketDataAdapter:
             needs_refresh = True
         if not needs_refresh:
             return self.instruments.count
-        client = await self.session_manager.ensure_session()
-        return await self.instruments.refresh(client)
+        try:
+            client = await self.session_manager.ensure_session()
+            return await self.instruments.refresh(client)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Session unavailable for instrument refresh (%s); using public SecurityMaster.zip",
+                exc,
+            )
+            return await self.instruments.refresh_public()
 
     async def connect_ws(self) -> dict[str, Any]:
         """A2 — open shared Breeze livestream connection using session_token auth."""
@@ -85,6 +96,35 @@ class IciciDirectMarketDataAdapter:
         await self._stream.connect(session_token_b64=client.session_token)
         self.last_error = None
         return self.ws_status()
+
+    async def ensure_ws_connected(self) -> dict[str, Any]:
+        """Connect A2 WS when credentials/session allow; no-op if already connected.
+
+        Used after broker auth and when the UI polls feed health / recommendations
+        so Streaming 2.0 does not stay idle after REST-only session setup.
+        """
+        if self.ws_connected:
+            return self.ws_status()
+        session_health = self.session_manager.health()
+        if not session_health.get("authenticated"):
+            if not session_health.get("credentials_ready"):
+                return self.ws_status()
+            try:
+                await self.session_manager.ensure_session()
+            except Exception as exc:  # noqa: BLE001
+                self.last_error = str(exc)
+                logger.warning("Breeze session for WS ensure failed: %s", exc)
+                status = self.ws_status()
+                status["ensure_error"] = str(exc)
+                return status
+        try:
+            return await self.connect_ws()
+        except Exception as exc:  # noqa: BLE001
+            self.last_error = str(exc)
+            logger.warning("Breeze WS ensure_ws_connected failed: %s", exc)
+            status = self.ws_status()
+            status["ensure_error"] = str(exc)
+            return status
 
     async def disconnect_ws(self) -> dict[str, Any]:
         await self._stream.disconnect()

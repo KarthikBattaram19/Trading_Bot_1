@@ -33,7 +33,8 @@ class InstrumentRecord(BaseModel):
     strike: float | None = None
     lotsize: int = 1
     tick_size: float = 0.05
-    stock_code: str | None = None  # Breeze short stock code when distinct
+    stock_code: str | None = None  # Breeze ShortName (e.g. RELIND, STABAN)
+    underlying: str | None = None  # G11 display / NSE ticker (e.g. RELIANCE, SBIN)
 
 
 class NormalizedTick(BaseModel):

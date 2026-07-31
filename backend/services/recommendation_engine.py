@@ -8,12 +8,17 @@ per Docs/Trading_Strategies.md Table SH-4, ranks candidates, returns top 3.
 from __future__ import annotations
 
 import json
+import logging
 import math
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from backend.integrations.icici_direct.instrument_master import (
+    data_feed_bindings_for,
+    get_instrument_master,
+)
 from backend.models.recommendations import (
     GateResult,
     HedgeInsight,
@@ -36,7 +41,22 @@ from backend.services.strategy_selection import (
     select_strategy_sh4,
 )
 
+logger = logging.getLogger(__name__)
+
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "trading_parameters.defaults.json"
+
+# Offline fixture metrics keyed by G11 NSE/display symbol (marks enrichment).
+_DEMO_SPECS: list[tuple] = [
+    ("RELIANCE", 982.5, 0.24, -2.3, None, 185, 12500, 22000, 1.2, 22, 0.018, False),
+    ("TATASTEEL", 142.8, 0.31, -2.6, None, 42, 8900, 12500, 1.8, 18, 0.022, False),
+    ("INFY", 1680.0, 0.29, -1.8, 1, 210, 15200, 28000, 1.1, 25, 0.015, False),
+    ("SBIN", 812.4, 0.27, None, None, 95, 22000, 35000, 0.9, 20, 0.012, False),
+    ("HDFCBANK", 945.0, 0.22, None, 3, 120, 18500, 18500, 1.0, 28, 0.009, False),
+    ("ITC", 428.5, 0.26, -2.1, None, 68, 31000, 42000, 0.7, 15, 0.011, False),
+    ("NIFTY", 24500.0, 0.18, -2.4, None, 145, 45000, 80000, 0.5, 7, 0.014, False),
+    ("BANKBARODA", 245.6, 0.35, None, None, 55, 9800, 8000, 2.3, 12, 0.028, False),
+]
+_DEMO_BY_SYMBOL = {row[0]: row for row in _DEMO_SPECS}
 
 
 @dataclass
@@ -103,49 +123,108 @@ def _iv_z_for_demo(iv: float, target_z: float | None, cfg: dict[str, Any]) -> fl
     return result.iv_z_score if result.usable else None
 
 
-def _build_universe() -> list[InstrumentCandidate]:
-    """Simulated NSE universe within INR retail caps (T11 ≤ 1000)."""
-    specs = [
-        ("RELIANCE", 982.5, 0.24, -2.3, None, 185, 12500, 22000, 1.2, 22, 0.018, False),
-        ("TATASTEEL", 142.8, 0.31, -2.6, None, 42, 8900, 12500, 1.8, 18, 0.022, False),
-        ("INFY", 1680.0, 0.29, -1.8, 1, 210, 15200, 28000, 1.1, 25, 0.015, False),
-        ("SBIN", 812.4, 0.27, None, None, 95, 22000, 35000, 0.9, 20, 0.012, False),
-        ("HDFCBANK", 945.0, 0.22, None, 3, 120, 18500, 18500, 1.0, 28, 0.009, False),
-        ("ITC", 428.5, 0.26, -2.1, None, 68, 31000, 42000, 0.7, 15, 0.011, False),
-        ("NIFTY", 24500.0, 0.18, -2.4, None, 145, 45000, 80000, 0.5, 7, 0.014, False),
-        ("BANKBARODA", 245.6, 0.35, None, None, 55, 9800, 8000, 2.3, 12, 0.028, False),
-    ]
+def _candidate_from_spec(row: tuple, cfg: dict[str, Any]) -> InstrumentCandidate:
+    symbol, price, iv, z, de, prem, vol, oi, spread, dte, rv, distorted = row
+    history = [price * (1 + 0.01 * math.sin(i / 3)) for i in range(60)]
+    log_returns = log_returns_from_prices(history)
+    garch, garch_dist = _garch_forecast(log_returns, cfg)
+    if iv == 0:
+        iv = garch * 0.92
+    iv_z = _iv_z_for_demo(iv, z, cfg)
+    return InstrumentCandidate(
+        symbol=symbol,
+        und_price=price,
+        iv_annualized=iv,
+        garch_forecast=garch,
+        iv_z_score=iv_z,
+        days_to_earnings=de,
+        atm_premium_inr=prem,
+        volume=vol,
+        open_interest=oi,
+        spread_pct=spread,
+        dte=dte,
+        realized_vol_intraday=rv,
+        garch_distorted=distorted or garch_dist,
+        price_history=history,
+    )
 
+
+def _stub_candidate(symbol: str, cfg: dict[str, Any]) -> InstrumentCandidate:
+    """Universe member without enriched marks — fails retail gates until live LTP/IV land."""
+    history = [1.0 for _ in range(5)]
+    garch, garch_dist = _garch_forecast(log_returns_from_prices(history), cfg)
+    return InstrumentCandidate(
+        symbol=symbol,
+        und_price=0.0,
+        iv_annualized=0.0,
+        garch_forecast=garch,
+        iv_z_score=None,
+        days_to_earnings=None,
+        atm_premium_inr=999.0,
+        volume=0,
+        open_interest=0,
+        spread_pct=99.0,
+        dte=0,
+        realized_vol_intraday=None,
+        garch_distorted=True or garch_dist,
+        price_history=history,
+    )
+
+
+def _demo_universe(cfg: dict[str, Any] | None = None) -> list[InstrumentCandidate]:
+    cfg = cfg or _load_config()
+    return [_candidate_from_spec(row, cfg) for row in _DEMO_SPECS]
+
+
+async def _ensure_fno_underlyings() -> tuple[list[str], str]:
+    """Load ICICI Direct NFO underlyings for G11–G12 feed-bound universe.
+
+    Returns (symbols, source_note).
+    """
+    master = get_instrument_master()
+    if not master.list_fno_underlyings():
+        try:
+            from backend.integrations.icici_direct.market_data import get_market_data_adapter
+
+            await get_market_data_adapter().ensure_instruments()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("FNO instrument master refresh failed: %s", exc)
+            try:
+                await master.refresh_public()
+            except Exception as exc2:  # noqa: BLE001
+                logger.warning("Public SecurityMaster.zip refresh failed: %s", exc2)
+
+    underlyings = master.list_fno_underlyings()
+    if underlyings:
+        return underlyings, "icici_direct_fonsescripmaster"
+    return [row[0] for row in _DEMO_SPECS], "demo_fallback"
+
+
+async def _build_universe() -> tuple[list[InstrumentCandidate], dict[str, dict[str, str]], str]:
+    """Feed-bound universe (G11–G12): all NSE F&O underlyings from ICICI Direct master."""
     cfg = _load_config()
+    symbols, source = await _ensure_fno_underlyings()
+    master = get_instrument_master()
     candidates: list[InstrumentCandidate] = []
-    for row in specs:
-        symbol, price, iv, z, de, prem, vol, oi, spread, dte, rv, distorted = row
-        history = [price * (1 + 0.01 * math.sin(i / 3)) for i in range(60)]
-        log_returns = log_returns_from_prices(history)
-        garch, garch_dist = _garch_forecast(log_returns, cfg)
-        if iv == 0:
-            iv = garch * 0.92
-        iv_z = _iv_z_for_demo(iv, z, cfg)
+    bindings: dict[str, dict[str, str]] = {}
 
-        candidates.append(
-            InstrumentCandidate(
-                symbol=symbol,
-                und_price=price,
-                iv_annualized=iv,
-                garch_forecast=garch,
-                iv_z_score=iv_z,
-                days_to_earnings=de,
-                atm_premium_inr=prem,
-                volume=vol,
-                open_interest=oi,
-                spread_pct=spread,
-                dte=dte,
-                realized_vol_intraday=rv,
-                garch_distorted=distorted or garch_dist,
-                price_history=history,
-            )
+    for symbol in symbols:
+        bindings[symbol] = master.feed_bindings_for(symbol) if master.count else data_feed_bindings_for(
+            symbol
         )
-    return candidates
+        demo = _DEMO_BY_SYMBOL.get(symbol)
+        if demo is not None:
+            candidates.append(_candidate_from_spec(demo, cfg))
+        else:
+            candidates.append(_stub_candidate(symbol, cfg))
+
+    if not candidates:
+        demo_cands = _demo_universe(cfg)
+        for c in demo_cands:
+            bindings[c.symbol] = data_feed_bindings_for(c.symbol)
+        return demo_cands, bindings, "demo_fallback"
+
+    return candidates, bindings, source
 
 
 def _structure_uses_underlying(strategy: StrategySelectionLogic, cfg: dict[str, Any]) -> bool:
@@ -609,13 +688,23 @@ async def generate_recommendations(
 ) -> RecommendationResponse:
     cfg = _load_config()
     now = datetime.now(timezone.utc)
+    # A2: open WS Streaming 2.0 when credentials/session allow before reporting feeds.
+    try:
+        from backend.integrations.icici_direct.market_data import get_market_data_adapter
+        from backend.integrations.icici_direct.session_manager import get_session_manager
+
+        health = get_session_manager().health()
+        if health.get("authenticated") or health.get("credentials_ready"):
+            await get_market_data_adapter().ensure_ws_connected()
+    except Exception:  # noqa: BLE001
+        pass
     sources = get_feed_sources()
     learning = get_learning_service()
 
     if news is None:
         news = get_market_news()
 
-    universe = _build_universe()
+    universe, feed_bindings, universe_source = await _build_universe()
     ranked: list[InstrumentRecommendation] = []
     passing = 0
     learning_hits = 0
@@ -717,6 +806,12 @@ async def generate_recommendations(
 
     notes = [
         f"Scanned {len(universe)} instruments from feed-bound universe (G11–G12).",
+        (
+            "Universe source: ICICI Direct FONSEScripMaster "
+            f"({universe_source}) — all NSE F&O underlyings with auto G12 bindings."
+            if universe_source.startswith("icici_direct")
+            else f"Universe source: {universe_source} (ICICI Direct FNO master unavailable)."
+        ),
         f"{passing} passed all retail gates (T1–T16, I21).",
         f"Confidence floor: only candidates with confidence ≥ {min_confidence:.0%} are recommended.",
         "Strategy selection follows Trading_Strategies.md Table SH-4 with Market_News overlay.",
@@ -724,6 +819,14 @@ async def generate_recommendations(
         "Each recommendation includes a complete P1 insight packet for operator review.",
         "Continual learning: failure memory + module weights applied (§12).",
     ]
+    if feed_bindings:
+        sample_sym = next(iter(feed_bindings))
+        sample_bind = feed_bindings[sample_sym]
+        notes.append(
+            f"G12 example ({sample_sym}): und_price={sample_bind.get('und_price')}, "
+            f"option_chain={sample_bind.get('option_chain')} "
+            f"({len(feed_bindings)} underlyings bound)."
+        )
     if below_confidence:
         notes.append(
             f"{len(below_confidence)} candidate(s) scored but were excluded for "

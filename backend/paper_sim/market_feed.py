@@ -72,8 +72,8 @@ class IciciDirectDataOnlyFeed:
             needs_refresh = True
         if not needs_refresh:
             return self._instruments.count
-        client = await self._md.session_manager.ensure_session()
-        return await self._instruments.refresh(client)
+        # Prefer market-data adapter path (session → public zip fallback).
+        return await self._md.ensure_instruments(max_age_sec=max_age_sec)
 
     async def get_ltp(
         self,

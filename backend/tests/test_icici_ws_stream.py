@@ -174,6 +174,58 @@ async def test_ws_disconnect_marks_ticks_stale():
 
 
 @pytest.mark.asyncio
+async def test_ensure_ws_connected_opens_when_authenticated():
+    adapter, transport = make_test_market_data_with_fake_ws()
+
+    class _Client:
+        session_token = _session_token()
+
+    adapter.session_manager.ensure_session = AsyncMock(return_value=_Client())  # type: ignore[method-assign]
+    adapter.session_manager.health = lambda: {  # type: ignore[method-assign]
+        "authenticated": True,
+        "credentials_ready": True,
+    }
+    status = await adapter.ensure_ws_connected()
+    assert status["connected"] is True
+    assert transport.connect_calls == 1
+
+    # No-op when already connected
+    again = await adapter.ensure_ws_connected()
+    assert again["connected"] is True
+    assert transport.connect_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_ws_connected_skips_when_not_authenticated():
+    adapter, transport = make_test_market_data_with_fake_ws()
+    adapter.session_manager.health = lambda: {  # type: ignore[method-assign]
+        "authenticated": False,
+        "credentials_ready": False,
+    }
+    status = await adapter.ensure_ws_connected()
+    assert status["connected"] is False
+    assert transport.connect_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_ensure_ws_connected_authenticates_when_credentials_ready():
+    adapter, transport = make_test_market_data_with_fake_ws()
+
+    class _Client:
+        session_token = _session_token()
+
+    adapter.session_manager.health = lambda: {  # type: ignore[method-assign]
+        "authenticated": False,
+        "credentials_ready": True,
+    }
+    adapter.session_manager.ensure_session = AsyncMock(return_value=_Client())  # type: ignore[method-assign]
+    status = await adapter.ensure_ws_connected()
+    assert status["connected"] is True
+    assert transport.connect_calls == 1
+    adapter.session_manager.ensure_session.assert_awaited()
+
+
+@pytest.mark.asyncio
 async def test_reconnect_backoff_schedules_after_disconnect():
     transport = FakeStreamTransport()
     stream = BreezeMarketStream(

@@ -40,9 +40,11 @@ def _icici_direct_feed_status() -> FeedSource:
                 feed_health = FeedHealth.fresh
                 last_fetch = now
             else:
+                err = ws.get("last_error") or ws.get("ensure_error")
                 detail = (
                     "ICICI Direct session active — REST LTP/quotes; "
                     "WS Streaming 2.0 not connected"
+                    + (f" ({err})" if err else "")
                 )
                 feed_health = FeedHealth.fresh
                 last_fetch = now

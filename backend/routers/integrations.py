@@ -30,6 +30,8 @@ class BrokerTestResponse(BaseModel):
     profile_exchanges: list[str] = Field(default_factory=list)
     authenticated_at: str | None = None
     place_order_enabled: bool = False
+    ws_connected: bool = False
+    ws: dict[str, Any] = Field(default_factory=dict)
 
 
 class LtpRequest(BaseModel):
@@ -189,12 +191,29 @@ async def test_broker_connection() -> BrokerTestResponse:
         auth = await adapter.authenticate()
         # authenticate() already exchanged API_Session via customerdetails.
         await session_mgr.ensure_session()
+        # A2 (Phase 1.8): open WS Streaming 2.0 with the same session_token.
+        market = get_market_data_adapter()
+        ws_status = await market.ensure_ws_connected()
+        ws_connected = bool(ws_status.get("connected"))
+        if ws_connected:
+            detail = (
+                "ICICI Direct Breeze session established (data-only; place_order disabled); "
+                "WS Streaming 2.0 connected"
+            )
+        else:
+            err = ws_status.get("ensure_error") or ws_status.get("last_error") or "not connected"
+            detail = (
+                "ICICI Direct Breeze session established (data-only; place_order disabled); "
+                f"WS Streaming 2.0 not connected ({err})"
+            )
         return BrokerTestResponse(
             ok=True,
-            detail="ICICI Direct Breeze session established (data-only; place_order disabled)",
+            detail=detail,
             profile_exchanges=[],
             authenticated_at=auth.get("authenticated_at"),
             place_order_enabled=place_order_enabled(),
+            ws_connected=ws_connected,
+            ws=ws_status,
         )
     except IciciDirectAPIError as exc:
         msg = str(exc)
