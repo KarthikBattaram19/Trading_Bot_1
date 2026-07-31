@@ -153,7 +153,7 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 | AI-06 | Golden eval red but LLM gating enabled | Forbidden until Track B green | P0 | plan §9; §1.2 |
 | AI-07 | Confidence < risk-gate threshold (e.g. 0.70) | Reject | P0 | §10.4, §11.4 |
 | AI-08 | Win rate < 60% → auto-raise confidence +0.05 | Apply; fewer entries | P1 | §10.4 |
-| AI-09 | Recommendation confidence < 0.85 | Exclude from top-3; note in `analysis_notes` | P0 | §6.4 |
+| AI-09 | Recommendation confidence < 0.80 | Exclude from top-3; note in `analysis_notes` | P0 | §6.4 |
 | AI-10 | Failure-memory top-3 match | Penalize confidence −0.10 | P1 | §12.6 |
 | AI-11 | LLM malformed / non-JSON decision output | Reject entry; log; do not parse loosely into submit | P0 | §10.1, §10.5 |
 | AI-12 | Chat prompt accidentally used for decision | Separate prompt profiles; reject | P0 | §10.7 |
@@ -190,7 +190,7 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 | RF-02 | Rank #1 pre-submit gate fail | Try #2 then #3 | P0 | §6.4 |
 | RF-03 | Rank #1 broker/paper reject | Try next; log `attempts[]` | P0 | §6.4 |
 | RF-04 | All ranks fail | No trade; full attempt log | P0 | §6.4 |
-| RF-05 | Fewer than 3 instruments ≥ 0.85 confidence | Top-k from eligible only; may be 0–2 | P1 | §6.4 |
+| RF-05 | Fewer than 3 instruments ≥ 0.80 confidence | Top-k from eligible only; may be 0–2 | P1 | §6.4 |
 | RF-06 | Zero eligible recommendations | Empty list; no execute | P0 | §6.4 |
 | RF-07 | SSR refresh + client refresh double-submit same cycle | One-trade + idempotency must prevent duplicate | P0 | §6.4 timing |
 | RF-08 | Client `useEffect` / timer execute (legacy) | Forbidden — execute only in GET cycle / explicit legacy POST | P0 | §6.4 |

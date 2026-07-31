@@ -409,7 +409,7 @@ The LLM:
 - Validates and ranks discretionary trading signals across strategy modules
 - Interprets market conditions and volatility regimes in real time
 - Validates trade decisions against RAG-retrieved domain knowledge (faithfulness ≥ 0.85 on golden eval set)
-- Gates low-confidence discretionary trades—only high-conviction signals proceed; `/recommendations` surfaces only post-learning confidence ≥ **85%**
+- Gates low-confidence discretionary trades—only high-conviction signals proceed; `/recommendations` surfaces only post-learning confidence ≥ **80%**
 - Explains every decision for audit and frontend display (approval packet or autonomous log)
 - Defers to quant + cost gate when LLM disagrees on mechanical hedges (`architecture.md` §10.6)
 
@@ -559,7 +559,7 @@ The **frontend** is the trader-facing presentation layer. It contains no busines
 | **Decision queue** | Pre-approval packets; Approve / Reject / Ask AI (`supervised` primary — `Docs/UI_Dashboard.md`) |
 | **Strategy views** | Active signals, module weights, adaptation history, **option strategy legs and Greeks table**, stat arb / gamma / vega exposure |
 | **Bot monitoring** | Trade log, fill history, open positions, decision explanations, one-trade lock status |
-| **Recommendations** | Top-3 ranked instruments with post-learning confidence ≥ **85%**; same-cycle auto-execute only when `fully_autonomous` (§6.4) |
+| **Recommendations** | Top-3 ranked instruments with post-learning confidence ≥ **80%**; same-cycle auto-execute only when `fully_autonomous` (§6.4) |
 | **Controls** | Kill-switch (pause bot), strategy enable/disable, risk limit overrides, supervision promotion, paper-sim account config |
 | **AI assistant (user chatbot)** | Permanent `/chat` UI for RAG-powered Q&A over the four PDFs; on-demand trade/decision explanations; **Ask AI** from decision cards |
 | **Configuration** | Live data feed URL registry, **strategy ↔ feed bindings**, **option strategy trade inputs**, **broker / third-party connection config**, learning parameters, success-ratio thresholds |
@@ -1404,7 +1404,7 @@ Build Phase 0–1 (ICICI Direct data-only → `paper_sim` fills → P&L → SH-4
 | **`SUPERVISION_MODE`** | `supervised` \| `semi_autonomous` \| `fully_autonomous` — who authorizes discretionary entries (§2.3.1) |
 | **Graduated Supervision** | Promote supervised → semi → fully autonomous only after paper evidence |
 | **Autonomous Execution** | End-state mode: discretionary entries auto-submit when gates pass; ranked fallback (§6.4) |
-| **Ranked Fallback** | In `fully_autonomous`, recommendations screen tries rank #1, then #2, then #3 on failure among confidence ≥ **85%** names (§6.4) |
+| **Ranked Fallback** | In `fully_autonomous`, recommendations screen tries rank #1, then #2, then #3 on failure among confidence ≥ **80%** names (§6.4) |
 | **One Trade at a Time** | At most one open discretionary entry per session; new signals deferred until close (§20.4.11) |
 | **Continuous Learning** | Closed-loop system that updates strategy parameters and module weights based on trade outcomes and performance metrics |
 | **Success Ratio** | Composite measure of bot performance: win rate, profit factor, Sharpe ratio, and drawdown control |

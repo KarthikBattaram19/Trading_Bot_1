@@ -792,7 +792,7 @@ async def generate_recommendations(
         ranked.append(draft)
 
     min_confidence = float(
-        cfg.get("execution_constraints", {}).get("min_recommendation_confidence", 0.85)
+        cfg.get("execution_constraints", {}).get("min_recommendation_confidence", 0.80)
     )
     below_confidence = [r for r in ranked if r.confidence < min_confidence]
     ranked = [r for r in ranked if r.confidence >= min_confidence]

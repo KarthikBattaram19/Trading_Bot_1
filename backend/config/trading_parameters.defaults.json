@@ -93,7 +93,7 @@
     "supervised_approval_required": true,
     "automation_allowed_post_fill": true,
     "multi_leg_sync_submit": true,
-    "min_recommendation_confidence": 0.85
+    "min_recommendation_confidence": 0.80
   },
   "gamma_theta_breakeven": {
     "use_half_breakeven": false,

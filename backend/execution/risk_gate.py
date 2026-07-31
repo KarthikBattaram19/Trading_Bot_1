@@ -33,7 +33,7 @@ class PreTradeThresholds:
     max_drawdown_pct: float = 10.0
     max_error_rate_1h: float = 0.05
     min_confidence: float = 0.70
-    min_recommendation_confidence: float = 0.85
+    min_recommendation_confidence: float = 0.80
     min_rag_faithfulness: float = 0.85
     max_broker_reject_rate_1h: float = 0.10
     min_edge_threshold: float = 0.0

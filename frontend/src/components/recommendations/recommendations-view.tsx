@@ -151,7 +151,7 @@ export function RecommendationsView({
 
             {data.recommendations.length === 0 ? (
               <div className="rounded-md border border-outline-variant bg-surface p-8 text-center text-data-md text-on-surface-variant">
-                No instruments met the ≥85% confidence floor (after gates,
+                No instruments met the ≥80% confidence floor (after gates,
                 strategy fit, and learning penalties). Check analysis notes, feed
                 freshness, and failure-memory hits.
               </div>

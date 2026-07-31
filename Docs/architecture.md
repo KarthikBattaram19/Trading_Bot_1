@@ -404,7 +404,7 @@ flowchart LR
 | **Decision queue**     | Pre-approval packet cards; Approve / Reject / Ask AI (`supervised` primary; audit history in higher modes) | REST + `decisions.pending` WS (`Docs/UI_Dashboard.md`) |
 | **Strategy views**     | Active signals, module weights, Greeks exposure                                                                                     | REST strategy state      |
 | **Trade monitor**      | Trade log, fills, open positions, mechanical hedge activity                                                                         | WebSocket trade events   |
-| **Recommendations**    | Top-3 ranked instruments with **complete insight packets** (P1 fields + score breakdown + strategy panels); only candidates with post-learning confidence ≥ **85%** (`min_recommendation_confidence`); same-cycle ranked fallback auto-execute only when `SUPERVISION_MODE=fully_autonomous` (§6.4, §13.2.1) | REST `GET /recommendations` |
+| **Recommendations**    | Top-3 ranked instruments with **complete insight packets** (P1 fields + score breakdown + strategy panels); only candidates with post-learning confidence ≥ **80%** (`min_recommendation_confidence`); same-cycle ranked fallback auto-execute only when `SUPERVISION_MODE=fully_autonomous` (§6.4, §13.2.1) | REST `GET /recommendations` |
 | **Kill switch**        | Pause bot; prevent new orders                                                                                                       | REST command endpoint    |
 | **Configuration**      | Live data feed URLs, **strategy ↔ feed bindings**, **option strategy trade inputs**, **third-party broker connections**, thresholds, **supervision promotion** | REST CRUD                |
 | **AI assistant (user chatbot)** | RAG-powered Q&A over the four domain PDFs; on-demand trade/decision explanations; permanent final-UI surface at `/chat` | REST `POST /api/v1/chat` (§7.7) |
@@ -1011,7 +1011,7 @@ The ranked-fallback path applies only when **`SUPERVISION_MODE=fully_autonomous`
 
 When fully autonomous, the **recommendations screen** triggers discretionary entry without operator approval. Recommendations are generated and the ranked fallback trade is opened **in the same request cycle** — initial page load (SSR) and client refresh both use a single `GET /api/v1/recommendations` call. There is **no deliberate delay** between rendering recommendations and opening a trade: no post-render client `useEffect`, no polling, and no timer between recommend and submit.
 
-Only instruments with **post-learning confidence ≥ 85%** (`execution_constraints.min_recommendation_confidence`, default **0.85**) are eligible for the ranked list; the top-3 is taken from that filtered set.
+Only instruments with **post-learning confidence ≥ 80%** (`execution_constraints.min_recommendation_confidence`, default **0.80**) are eligible for the ranked list; the top-3 is taken from that filtered set.
 
 **Ranked fallback algorithm:**
 
@@ -1079,7 +1079,7 @@ Each of the top-3 cards exposes a full operator-facing packet aligned with `Trad
 | Key | Default (current build) | Purpose |
 | --- | ----------------------- | ------- |
 | `SIMULATE_FIRST_RANK_FAILURE` | `true` (dev) | paper-sim / adapter stub rejects rank #1 to validate fallback path |
-| `execution_constraints.min_recommendation_confidence` | **0.85** | Post-learning confidence floor — only instruments with confidence ≥ **85%** are recommended (top-3 is chosen from that set) |
+| `execution_constraints.min_recommendation_confidence` | **0.80** | Post-learning confidence floor — only instruments with confidence ≥ **80%** are recommended (top-3 is chosen from that set) |
 
 Candidates that pass retail gates and strategy selection but fall below this floor are excluded from `recommendations[]` and called out in `analysis_notes`.
 
@@ -2657,7 +2657,7 @@ flowchart TB
 
 **Default minimum confidence (discretionary execution / risk gate):** Configurable (e.g., 0.70); auto-raised by +0.05 when rolling win rate drops below 60%.
 
-**Recommendations surface floor:** `execution_constraints.min_recommendation_confidence` defaults to **0.85**. Only instruments with post-learning confidence ≥ **85%** are recommended on `/recommendations` (§6.4). This is separate from (and typically stricter than) the discretionary risk-gate threshold above.
+**Recommendations surface floor:** `execution_constraints.min_recommendation_confidence` defaults to **0.80**. Only instruments with post-learning confidence ≥ **80%** are recommended on `/recommendations` (§6.4). This is separate from (and typically stricter than) the discretionary risk-gate threshold above.
 
 **Calibration:** Weights tuned on paper-trade history via offline analysis (`analytics/confidence_calibration.py`). No weight changes deploy without passing walk-forward validation (§12.5).
 
@@ -2962,7 +2962,7 @@ Orders are built from strategy legs. Single-leg orders use one entry; multi-leg 
 | Kill-switch inactive                 | —                                                                | Reject all new orders                                 |
 | Sufficient buying power              | —                                                                | Reject                                                |
 | Confidence >= threshold (risk gate)  | ≥ 0.70 (configurable)                                            | Reject                                                |
-| Recommendation surface floor (§6.4)  | Confidence ≥ `min_recommendation_confidence` (**0.85** default) after learning penalties | Exclude from top-3 recommendations                    |
+| Recommendation surface floor (§6.4)  | Confidence ≥ `min_recommendation_confidence` (**0.80** default) after learning penalties | Exclude from top-3 recommendations                    |
 | Transaction cost gate (§9.4)         | `net_hedge_edge > 0`                                             | Reject hedge                                          |
 | RAG faithfulness (discretionary)     | ≥ 0.85                                                           | Reject entry                                          |
 | Regime classifier known              | Not `unknown` / `high_vol_stress`                                | Reject discretionary entry                            |

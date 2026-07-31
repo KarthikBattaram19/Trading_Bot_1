@@ -346,7 +346,7 @@ Used by **Simple Volatility Trading** and **Gamma Scalping mode 1 (cheap vol)**.
 | I12 | **Max residual vega** | Decimal | Portfolio limit | Post-fill check |
 | I13 | **Supervised approval required** | Boolean | true (entries) | Discretionary entries |
 | I14 | **Automation allowed post-fill** | Boolean | true | Hedges, stops, flatten |
-| I14a | **Min recommendation confidence** | Decimal 0–1 | **0.85** (`min_recommendation_confidence`) | Surfacing on `/recommendations`: only instruments with **post-learning** confidence ≥ **85%** enter the top-3 list (architecture §6.4 / §10.4) |
+| I14a | **Min recommendation confidence** | Decimal 0–1 | **0.80** (`min_recommendation_confidence`) | Surfacing on `/recommendations`: only instruments with **post-learning** confidence ≥ **80%** enter the top-3 list (architecture §6.4 / §10.4) |
 | I15 | **Max option premium** | Decimal (INR) | **300** | Hard filter — reject if premium ≥ cap |
 | I16 | **Premium currency** | Enum | `INR` | All premium comparisons use INR |
 | I17 | **Moneyness requirement** | Enum | `atm` | **At the Money only** — no OTM/ITM substitutes |
@@ -1009,9 +1009,10 @@ Machine-readable definitions for `GET/POST /api/v1/config/strategy`:
 
 | Field | Value |
 |---|---|
-| Version | 1.7 |
+| Version | 1.8 |
 | Updated | 2026-07-31 |
-| Change | v1.7 — G11–G12 feed-bound universe loads **all NSE F&O underlyings** from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip); G12 bindings auto-generated per underlying |
+| Change | v1.8 — Recommendation surface floor lowered to post-learning confidence ≥ **80%** (`execution_constraints.min_recommendation_confidence` / I14a) |
+| Prior | v1.7 — G11–G12 feed-bound universe loads **all NSE F&O underlyings** from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip); G12 bindings auto-generated per underlying |
 | Prior | v1.6 — Recommendation surface floor: post-learning confidence ≥ **85%** (`execution_constraints.min_recommendation_confidence` / I14a); only those instruments are recommended |
 | Prior | v1.5 — Underlying price cap ≤ INR 1000 applies **only** when trading options **and** the underlying; **options-only** has no underlying price cap (T11/T11d). T11a/T11b likewise scoped to options+underlying mode |
 | Prior | v1.4 — Tradeable universe locked to cash-equity underlyings with spot ≤ INR 1000 (T11/T11a–c) to minimize stock-hedge capital; indices (NIFTY etc.) excluded; examples use equity symbols (e.g. SBIN) |

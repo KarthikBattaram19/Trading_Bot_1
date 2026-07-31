@@ -138,7 +138,7 @@ Render backend pre-trade gate (`architecture.md` §11.4) as pass/fail rows:
 ✗ Regime: high_vol_stress  → Approve disabled
 ```
 
-**Recommendations screen:** only instruments with post-learning confidence ≥ **0.85** (`min_recommendation_confidence`) are ranked/shown (`architecture.md` §6.4). The scan set (G11–G12) is **all NSE F&O underlyings** from ICICI Direct’s instrument master — `universe_scanned` reflects that full list, not a fixed shortlist.
+**Recommendations screen:** only instruments with post-learning confidence ≥ **0.80** (`min_recommendation_confidence`) are ranked/shown (`architecture.md` §6.4). The scan set (G11–G12) is **all NSE F&O underlyings** from ICICI Direct’s instrument master — `universe_scanned` reflects that full list, not a fixed shortlist.
 
 - **Green** — passed
 - **Red** — hard block (Approve disabled)
@@ -153,7 +153,7 @@ Surface **Shared Kill Conditions** from `Trading_Strategies.md` as collapsible �
 | View | Route | Role |
 |------|-------|------|
 | Bot overview | `/dashboard` | Mode, scheduler, drawdown, pending count |
-| **Recommendations** | `/recommendations` | Top-3 ranked trades with **complete insight packets** (P1 + score + gates + logic + learning overlay); only instruments with post-learning confidence ≥ **85%**; ranked fallback when fully autonomous |
+| **Recommendations** | `/recommendations` | Top-3 ranked trades with **complete insight packets** (P1 + score + gates + logic + learning overlay); only instruments with post-learning confidence ≥ **80%**; ranked fallback when fully autonomous |
 | **Learning** | `/learning` | Continual learning loop: close trades, failure memory, module attribution, adaptation history (§12) |
 | Decision queue | `/decisions` | Primary approval workflow |
 | Decision detail | `/decisions/[id]` | Full packet + gate checklist |

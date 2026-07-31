@@ -396,7 +396,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Minimum post-learning confidence required to surface a recommendation (default 0.85)."
+          "description": "Minimum post-learning confidence required to surface a recommendation (default 0.80)."
         }
       }
     },
