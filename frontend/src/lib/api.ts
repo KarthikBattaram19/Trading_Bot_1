@@ -19,6 +19,8 @@ import type {
   TradeOutcomeRecord,
 } from "@/types/learning";
 import type { MarketIndicesResponse } from "@/types/market";
+import type { RiskSnapshot } from "@/types/risk";
+import { mockRiskSnapshot } from "@/lib/risk-mock";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -215,6 +217,20 @@ export async function getPaperSimHealth(): Promise<Record<string, unknown>> {
     };
   }
   return fetchJson<Record<string, unknown>>("/api/v1/paper-sim/health");
+}
+
+export async function getRiskSnapshot(): Promise<RiskSnapshot> {
+  if (useMockData()) {
+    return {
+      ...mockRiskSnapshot,
+      as_of: new Date().toISOString(),
+      events: mockRiskSnapshot.events.map((e) => ({
+        ...e,
+        ts: new Date().toISOString(),
+      })),
+    };
+  }
+  return fetchJson<RiskSnapshot>("/api/v1/risk/snapshot");
 }
 
 export async function getFeedStatus(): Promise<FeedSource[]> {

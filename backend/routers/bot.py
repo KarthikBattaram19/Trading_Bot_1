@@ -34,16 +34,7 @@ def is_kill_switch_armed() -> bool:
 async def bot_status():
     supervision = os.getenv("SUPERVISION_MODE", "supervised").strip().lower()
     guard = paper_stack_guard_status()
-    return {
-        "execution_mode": get_execution_mode().value,
-        "requested_execution_mode": guard["requested_execution_mode"],
-        "deploy_stack": guard["deploy_stack"],
-        "live_blocked": guard["live_blocked"],
-        "supervision_mode": supervision,
-        "default_broker": get_default_broker_provider(),
-        "autonomy": "supervised" if supervision == "supervised" else supervision,
-        "scheduler_mode": "paused" if _kill_switch_armed else _scheduler_mode,
-        "regime": "mixed_vol",
+    metrics: dict = {
         "daily_pnl": 0.0,
         "win_rate": 0.0,
         "drawdown_pct": 0.0,
@@ -54,6 +45,34 @@ async def bot_status():
             "total_vega": 0.0,
         },
         "circuit_breakers_active": ["kill_switch"] if _kill_switch_armed else [],
+    }
+    try:
+        from backend.services.risk_snapshot import bot_metrics_from_risk
+
+        metrics.update(bot_metrics_from_risk())
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Bot status risk metrics unavailable: %s", exc)
+        if _kill_switch_armed and "kill_switch" not in metrics["circuit_breakers_active"]:
+            metrics["circuit_breakers_active"] = [
+                "kill_switch",
+                *metrics["circuit_breakers_active"],
+            ]
+
+    return {
+        "execution_mode": get_execution_mode().value,
+        "requested_execution_mode": guard["requested_execution_mode"],
+        "deploy_stack": guard["deploy_stack"],
+        "live_blocked": guard["live_blocked"],
+        "supervision_mode": supervision,
+        "default_broker": get_default_broker_provider(),
+        "autonomy": "supervised" if supervision == "supervised" else supervision,
+        "scheduler_mode": "paused" if _kill_switch_armed else _scheduler_mode,
+        "regime": "mixed_vol",
+        "daily_pnl": metrics["daily_pnl"],
+        "win_rate": metrics["win_rate"],
+        "drawdown_pct": metrics["drawdown_pct"],
+        "portfolio_greeks": metrics["portfolio_greeks"],
+        "circuit_breakers_active": metrics["circuit_breakers_active"],
         "pending_count": 0,
         "one_trade_locked": is_one_trade_locked(),
         "active_trade_id": get_active_trade_id(),

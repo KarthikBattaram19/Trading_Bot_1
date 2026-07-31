@@ -575,12 +575,14 @@ class PaperLedger:
         return sum(p.unrealized_pnl for p in self.positions.values() if p.status == "open")
 
     def snapshot(self) -> PaperAccountSnapshot:
-        open_count = sum(1 for p in self.positions.values() if p.status == "open")
+        open_positions = [p for p in self.positions.values() if p.status == "open"]
+        open_count = len(open_positions)
         upnl = self.unrealized_pnl
+        reserved = sum(float(p.opening_investment_inr or 0.0) for p in open_positions)
         return PaperAccountSnapshot(
             cash_inr=round(self.cash, 2),
             starting_capital_inr=round(self.starting_capital, 2),
-            reserved_margin_inr=0.0,
+            reserved_margin_inr=round(reserved, 2),
             equity_inr=round(self.cash + upnl, 2),
             realized_pnl=round(self.realized_pnl, 2),
             unrealized_pnl=round(upnl, 2),

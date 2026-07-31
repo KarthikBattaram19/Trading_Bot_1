@@ -22,6 +22,7 @@ from backend.routers import (
     paper_sim,
     quality,
     recommendations,
+    risk,
 )
 
 load_project_env()
@@ -59,6 +60,7 @@ app.include_router(chat.router)
 app.include_router(quality.router)
 app.include_router(integrations.router)
 app.include_router(paper_sim.router)
+app.include_router(risk.router)
 
 
 @app.get("/health")

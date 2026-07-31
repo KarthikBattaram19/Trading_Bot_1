@@ -27,20 +27,24 @@ export function KillConditions({
   );
 }
 
+/** Matches Docs/Trading_Strategies.md Shared Kill Conditions. */
 const DEFAULT_KILL_CONDITIONS = [
-  "India VIX spikes > 25% within 5 minutes",
-  "Broker API latency exceeds 2000ms for 3 consecutive pings",
-  "Combined portfolio drawdown exceeds 15%",
-  "A hedge leg becomes unavailable",
-  "Model input is stale or corrupted",
-  "Required neutrality cannot be restored within cost limits",
+  "liquidity collapses or spreads blow out beyond limits",
+  "a hedge leg becomes unavailable",
+  "the model input is stale or clearly corrupted",
+  "an earnings or news event appears that the setup was not designed to absorb",
+  "required neutrality cannot be restored within cost limits",
+  "residual delta or vega exposure exceeds portfolio limits",
+  "the strategy's core assumption no longer holds",
 ];
 
-export function SharedKillConditions() {
+export function SharedKillConditions({
+  conditions,
+}: {
+  conditions?: string[];
+} = {}) {
+  const list = conditions && conditions.length > 0 ? conditions : DEFAULT_KILL_CONDITIONS;
   return (
-    <KillConditions
-      conditions={DEFAULT_KILL_CONDITIONS}
-      title="Shared Kill Conditions"
-    />
+    <KillConditions conditions={list} title="Shared Kill Conditions" />
   );
 }

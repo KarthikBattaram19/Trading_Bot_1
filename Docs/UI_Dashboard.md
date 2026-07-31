@@ -158,7 +158,7 @@ Surface **Shared Kill Conditions** from `Trading_Strategies.md` as collapsible â
 | Decision queue | `/decisions` | Primary approval workflow |
 | Decision detail | `/decisions/[id]` | Full packet + gate checklist |
 | Positions | `/positions` | Open trades, mechanical hedge log |
-| Risk | `/risk` | Circuit breakers, Greek limits |
+| Risk | `/risk` | Live paper-sim circuit breakers, Greek limits, risk events (`GET /api/v1/risk/snapshot`) |
 | Strategy simulator | `/strategies/simulator` | OSS config, feed binding (pre-market) |
 | **Paper simulator** | `/paper-sim` | In-house paper path (`Paper_Simulator.md`): account, signals, **news**, automation status, fills â€” ICICI Direct marks only |
 | AI chat | `/chat` | RAG deep dive during review |
