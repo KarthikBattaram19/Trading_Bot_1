@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from backend.integrations.icici_direct.instrument_master import InstrumentMaster, get_instrument_master
-from backend.integrations.icici_direct.models import NormalizedTick
+from backend.integrations.icici_direct.models import IndexMark, NormalizedTick
 from backend.integrations.icici_direct.session_manager import SessionManager, get_session_manager
 from backend.integrations.icici_direct.ws_stream import (
     WS_MODE_DEPTH,
@@ -34,6 +34,13 @@ WS_PREFER_MAX_AGE_SEC = 1.0
 WS_FEED_PROBES: tuple[tuple[str, str, str], ...] = (
     ("NSE", "NIFTY", "NIFTY 50"),
     ("NSE", "BANKNIFTY", "Nifty Bank"),
+    ("NSE", "INDVIX", "INDIA VIX"),
+)
+
+# Situational-bar global marks — Breeze cash quotes (stock_code INDVIX per vendor).
+GLOBAL_INDEX_SPECS: tuple[tuple[str, str, str], ...] = (
+    ("NIFTY 50", "NIFTY", "NSE"),
+    ("INDIA VIX", "INDVIX", "NSE"),
 )
 
 
@@ -272,6 +279,122 @@ class IciciDirectMarketDataAdapter:
                 logger.debug("WS auto-subscribe skipped: %s", exc)
 
         return tick
+
+    async def get_global_indices(self) -> list[IndexMark]:
+        """NIFTY 50 + India VIX for the dashboard situational bar."""
+        marks: list[IndexMark] = []
+        for label, stock_code, exchange in GLOBAL_INDEX_SPECS:
+            marks.append(await self._fetch_index_mark(label, stock_code, exchange))
+        return marks
+
+    async def _fetch_index_mark(
+        self,
+        label: str,
+        stock_code: str,
+        exchange: str,
+    ) -> IndexMark:
+        # Prefer fresh WS LTP; still need REST (or prior REST) for % change.
+        cached = self.get_cached_tick(exchange, stock_code)
+        if cached is None:
+            # Probe tokens use display names (e.g. "NIFTY 50") as provider_symbol_id.
+            for _ex, _code, token in WS_FEED_PROBES:
+                if _code.upper() == stock_code.upper() and _ex.upper() == exchange.upper():
+                    cached = self.get_cached_tick(exchange, token)
+                    break
+
+        try:
+            client = await self.session_manager.ensure_session()
+            payload = await client.get_quotes(
+                stock_code=stock_code,
+                exchange_code=exchange.upper(),
+                product_type="cash",
+                expiry_date="",
+                right="",
+                strike_price="",
+            )
+            data = _first_quote(payload)
+            ltp = _optional_float(
+                data.get("ltp")
+                or data.get("LTP")
+                or data.get("last")
+                or data.get("last_price")
+            )
+            previous_close = _optional_float(
+                data.get("previous_close") or data.get("prev_close") or data.get("close")
+            )
+            change_pct = _optional_float(
+                data.get("ltp_percent_change")
+                or data.get("percent_change")
+                or data.get("pChange")
+            )
+            if change_pct is None and ltp is not None and previous_close and previous_close != 0:
+                change_pct = ((ltp - previous_close) / previous_close) * 100.0
+
+            # Overlay fresher WS last when available.
+            if (
+                cached is not None
+                and not cached.stale
+                and (_tick_age_sec(cached) or 999) <= self.ws_prefer_max_age_sec
+            ):
+                ltp = cached.ltp
+                if previous_close and previous_close != 0:
+                    change_pct = ((ltp - previous_close) / previous_close) * 100.0
+
+            if ltp is None:
+                return IndexMark(
+                    label=label,
+                    stock_code=stock_code,
+                    exchange=exchange.upper(),
+                    stale=True,
+                    error="quote missing ltp",
+                )
+
+            tick = NormalizedTick(
+                exchange=exchange.upper(),
+                symbol=label,
+                provider_symbol_id=stock_code,
+                ltp=float(ltp),
+                bid=_optional_float(
+                    data.get("best_bid_price") or data.get("bid") or data.get("bPrice")
+                ),
+                ask=_optional_float(
+                    data.get("best_ask_price") or data.get("ask") or data.get("sPrice")
+                ),
+                ts=datetime.now(timezone.utc),
+                stale=False,
+            )
+            self._last_ticks[f"{exchange.upper()}:{stock_code}"] = tick
+            self.last_error = None
+            return IndexMark(
+                label=label,
+                stock_code=stock_code,
+                exchange=exchange.upper(),
+                ltp=float(ltp),
+                previous_close=previous_close,
+                change_pct=change_pct,
+                ts=tick.ts,
+                stale=False,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Index mark %s failed: %s", stock_code, exc)
+            self.last_error = str(exc)
+            if cached is not None and cached.ltp is not None:
+                return IndexMark(
+                    label=label,
+                    stock_code=stock_code,
+                    exchange=exchange.upper(),
+                    ltp=cached.ltp,
+                    ts=cached.ts,
+                    stale=True,
+                    error=str(exc),
+                )
+            return IndexMark(
+                label=label,
+                stock_code=stock_code,
+                exchange=exchange.upper(),
+                stale=True,
+                error=str(exc),
+            )
 
     async def get_candles(
         self,

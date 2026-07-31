@@ -49,6 +49,20 @@ class NormalizedTick(BaseModel):
     stale: bool = False
 
 
+class IndexMark(BaseModel):
+    """Global situational-bar mark (NIFTY 50 / India VIX)."""
+
+    label: str
+    stock_code: str
+    exchange: str = "NSE"
+    ltp: float | None = None
+    previous_close: float | None = None
+    change_pct: float | None = None
+    ts: datetime | None = None
+    stale: bool = True
+    error: str | None = None
+
+
 class PlaceOrderPayload(BaseModel):
     """Breeze place-order body (NSE / BSE / NFO)."""
 

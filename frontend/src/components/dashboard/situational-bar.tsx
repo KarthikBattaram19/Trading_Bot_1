@@ -1,23 +1,47 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { pauseBot, resumeBot } from "@/lib/api";
+import { getMarketIndices, pauseBot, resumeBot } from "@/lib/api";
 import { formatCurrency, formatGreek, formatPct } from "@/lib/utils";
 import type { BotStatus } from "@/types/decisions";
+import type { IndexMark } from "@/types/market";
 import { Icon, StatusPill } from "@/components/ui/primitives";
 
 interface SituationalBarProps {
   status: BotStatus;
 }
 
+const INDEX_POLL_MS = 15_000;
+
 /**
  * Persistent "Global Metrics" command bar (Stitch: topbar-height 64px).
  * Market-wide metrics + bot state on the left, isolated Kill Switch on the right.
- * NIFTY / INDIA VIX are global illustrative marks (not part of bot state yet).
+ * NIFTY / INDIA VIX come from GET /api/v1/market/indices (ICICI Direct quotes).
  */
 export function SituationalBar({ status }: SituationalBarProps) {
   const [busy, setBusy] = useState(false);
   const [armed, setArmed] = useState(Boolean(status.kill_switch_armed));
+  const [indices, setIndices] = useState<IndexMark[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      try {
+        const data = await getMarketIndices();
+        if (!cancelled) setIndices(data.indices ?? []);
+      } catch {
+        if (!cancelled) setIndices([]);
+      }
+    }
+
+    void load();
+    const id = setInterval(() => void load(), INDEX_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   async function handleKillSwitch() {
     setBusy(true);
@@ -39,6 +63,12 @@ export function SituationalBar({ status }: SituationalBarProps) {
       ? [...status.circuit_breakers_active, "kill_switch"]
       : status.circuit_breakers_active;
 
+  const nifty = indices.find((m) => m.stock_code === "NIFTY") ?? indices[0];
+  const vix =
+    indices.find((m) => m.stock_code === "INDVIX") ??
+    indices.find((m) => m.label.toUpperCase().includes("VIX")) ??
+    indices[1];
+
   return (
     <header className="sticky top-0 z-40 border-b border-outline-variant bg-surface/95 backdrop-blur">
       <div className="flex h-topbar-height items-center justify-between gap-4 px-6">
@@ -49,18 +79,8 @@ export function SituationalBar({ status }: SituationalBarProps) {
           </h1>
 
           <div className="ml-2 flex items-center gap-6 border-l border-outline-variant pl-6">
-            <GlobalMetric
-              label="NIFTY 50"
-              value="22,453.20"
-              change="▲ 0.45%"
-              positive
-            />
-            <GlobalMetric
-              label="INDIA VIX"
-              value="14.82"
-              change="▼ 1.20%"
-              positive={false}
-            />
+            <GlobalMetric mark={nifty} fallbackLabel="NIFTY 50" />
+            <GlobalMetric mark={vix} fallbackLabel="INDIA VIX" />
           </div>
 
           <div className="ml-2 hidden items-center gap-3 border-l border-outline-variant pl-6 lg:flex">
@@ -121,27 +141,61 @@ export function SituationalBar({ status }: SituationalBarProps) {
   );
 }
 
-function GlobalMetric({
-  label,
-  value,
-  change,
-  positive,
-}: {
-  label: string;
-  value: string;
-  change: string;
+function formatIndexValue(ltp: number | null | undefined): string {
+  if (ltp == null || Number.isNaN(ltp)) return "—";
+  return ltp.toLocaleString("en-IN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatChange(changePct: number | null | undefined): {
+  text: string;
   positive: boolean;
+} {
+  if (changePct == null || Number.isNaN(changePct)) {
+    return { text: "—", positive: true };
+  }
+  const positive = changePct >= 0;
+  const arrow = positive ? "▲" : "▼";
+  return {
+    text: `${arrow} ${Math.abs(changePct).toFixed(2)}%`,
+    positive,
+  };
+}
+
+function GlobalMetric({
+  mark,
+  fallbackLabel,
+}: {
+  mark?: IndexMark;
+  fallbackLabel: string;
 }) {
+  const label = mark?.label ?? fallbackLabel;
+  const value = formatIndexValue(mark?.ltp);
+  const { text: change, positive } = formatChange(mark?.change_pct);
+  const muted = !mark || mark.ltp == null;
+
   return (
     <div className="flex flex-col">
       <span className="text-label-caps uppercase text-on-surface-variant">
         {label}
       </span>
-      <span className="font-mono text-data-md text-on-surface">
+      <span
+        className={
+          muted
+            ? "font-mono text-data-md text-on-surface-variant"
+            : "font-mono text-data-md text-on-surface"
+        }
+      >
         {value}{" "}
         <span
           className={
-            positive ? "text-[10px] text-secondary" : "text-[10px] text-error"
+            muted
+              ? "text-[10px] text-on-surface-variant"
+              : positive
+                ? "text-[10px] text-secondary"
+                : "text-[10px] text-error"
           }
         >
           {change}

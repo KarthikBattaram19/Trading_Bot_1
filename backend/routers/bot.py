@@ -1,4 +1,4 @@
-"""Bot status, kill-switch placeholder, and feed health (Phase 0 shell)."""
+"""Bot status, kill-switch placeholder, feed health, and global index marks."""
 
 from __future__ import annotations
 
@@ -103,3 +103,16 @@ async def list_feed_status() -> list[FeedSource]:
     """ICICI Direct + Market_News feed health (MCP registry retired — plan §1 / 0.3)."""
     await _ensure_ws_for_feed_ui()
     return get_feed_sources()
+
+
+@router.get("/market/indices")
+async def market_indices():
+    """NIFTY 50 + India VIX marks for the situational bar (ICICI Direct quotes)."""
+    from backend.integrations.icici_direct.market_data import get_market_data_adapter
+
+    await _ensure_ws_for_feed_ui()
+    marks = await get_market_data_adapter().get_global_indices()
+    return {
+        "as_of": marks[0].ts.isoformat() if marks and marks[0].ts else None,
+        "indices": [m.model_dump(mode="json") for m in marks],
+    }

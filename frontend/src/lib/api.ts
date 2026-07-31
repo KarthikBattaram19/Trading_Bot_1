@@ -18,8 +18,35 @@ import type {
   LearningDashboard,
   TradeOutcomeRecord,
 } from "@/types/learning";
+import type { MarketIndicesResponse } from "@/types/market";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+const mockMarketIndices: MarketIndicesResponse = {
+  as_of: new Date().toISOString(),
+  indices: [
+    {
+      label: "NIFTY 50",
+      stock_code: "NIFTY",
+      exchange: "NSE",
+      ltp: 22453.2,
+      previous_close: 22352.4,
+      change_pct: 0.45,
+      ts: new Date().toISOString(),
+      stale: false,
+    },
+    {
+      label: "INDIA VIX",
+      stock_code: "INDVIX",
+      exchange: "NSE",
+      ltp: 14.82,
+      previous_close: 15.0,
+      change_pct: -1.2,
+      ts: new Date().toISOString(),
+      stale: false,
+    },
+  ],
+};
 
 const mockAutonomousExecution: AutonomousExecutionResult = {
   executed: true,
@@ -63,6 +90,20 @@ async function fetchJson<T>(path: string): Promise<T> {
 export async function getBotStatus(): Promise<BotStatus> {
   if (useMockData()) return mockBotStatus;
   return fetchJson<BotStatus>("/api/v1/bot/status");
+}
+
+export async function getMarketIndices(): Promise<MarketIndicesResponse> {
+  if (useMockData()) {
+    return {
+      ...mockMarketIndices,
+      as_of: new Date().toISOString(),
+      indices: mockMarketIndices.indices.map((m) => ({
+        ...m,
+        ts: new Date().toISOString(),
+      })),
+    };
+  }
+  return fetchJson<MarketIndicesResponse>("/api/v1/market/indices");
 }
 
 export async function getPendingDecisions(): Promise<PendingDecision[]> {
