@@ -2,6 +2,8 @@ import { getBotStatus, getLearningDashboard } from "@/lib/api";
 import { LearningView } from "@/components/learning/learning-view";
 import { SituationalBar } from "@/components/dashboard/situational-bar";
 
+export const dynamic = "force-dynamic";
+
 export default async function LearningPage() {
   const [data, status] = await Promise.all([
     getLearningDashboard(),

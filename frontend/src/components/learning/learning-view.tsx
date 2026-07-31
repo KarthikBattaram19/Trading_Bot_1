@@ -178,8 +178,14 @@ export function LearningView({ initial }: { initial: LearningDashboard }) {
           </div>
           {data.open_trades.length === 0 ? (
             <div className="rounded-md border border-outline-variant bg-surface p-6 text-center text-data-md text-on-surface-variant">
-              No open trades. Refresh recommendations to open one via ranked
-              fallback, then return here to close it.
+              No open trades awaiting an outcome. Open one from{" "}
+              <a
+                href="/recommendations"
+                className="text-primary underline-offset-2 hover:underline"
+              >
+                Recommendations
+              </a>{" "}
+              (ranked fallback), then return here to mark win / loss / scratch.
             </div>
           ) : (
             data.open_trades.map((t) => (

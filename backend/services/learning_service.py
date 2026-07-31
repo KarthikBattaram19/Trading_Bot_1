@@ -33,6 +33,9 @@ from backend.models.recommendations import InstrumentRecommendation
 
 STORE_PATH = Path(__file__).resolve().parents[1] / "data" / "learning_store.json"
 
+# Bump when seed payload shape changes so existing paper stores can backfill.
+SEED_VERSION = 2
+
 # §12.6 — confidence penalty when top failure contexts match
 FAILURE_CONFIDENCE_PENALTY = 0.10
 FAILURE_MATCH_THRESHOLD = 0.55
@@ -43,6 +46,8 @@ MIN_TRADES_FOR_ADAPTATION = 5  # lowered from 30 for paper/demo loop
 WIN_RATE_TIGHTEN_THRESHOLD = 0.60
 DRAWDOWN_FREEZE_PCT = 5.0
 
+_DEMO_OPEN_TRADE_ID = "trd_seed_open_hdfc_001"
+
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
@@ -50,6 +55,7 @@ def _now() -> datetime:
 
 def _empty_store() -> dict[str, Any]:
     return {
+        "seed_version": SEED_VERSION,
         "open_trades": [],
         "outcomes": [],
         "failure_memories": [],
@@ -64,9 +70,9 @@ def _empty_store() -> dict[str, Any]:
     }
 
 
-def _seed_failure_memories() -> list[dict[str, Any]]:
+def _seed_failure_memories(base: str | None = None) -> list[dict[str, Any]]:
     """Seed historical losses so the first ranking cycle already shows learning."""
-    base = _now().isoformat()
+    closed_at = base or _now().isoformat()
     return [
         {
             "failure_id": "fm_seed_tatasteel_vega",
@@ -87,7 +93,7 @@ def _seed_failure_memories() -> list[dict[str, Any]]:
                 "require higher OI or tighter session-time exit before vega scalp."
             ),
             "tags": ["vega_scalping", "iv_flush", "stationarity", "TATASTEEL"],
-            "closed_at": base,
+            "closed_at": closed_at,
         },
         {
             "failure_id": "fm_seed_infy_gamma",
@@ -107,7 +113,7 @@ def _seed_failure_memories() -> list[dict[str, Any]]:
                 "<1.5% move or news tone is already priced."
             ),
             "tags": ["gamma_scalping", "earnings", "quiet_gap", "INFY"],
-            "closed_at": base,
+            "closed_at": closed_at,
         },
         {
             "failure_id": "fm_seed_reliance_sv",
@@ -127,9 +133,89 @@ def _seed_failure_memories() -> list[dict[str, Any]]:
                 "raise edge floor when spread > 1%."
             ),
             "tags": ["simple_volatility", "hedge_cost", "RELIANCE"],
-            "closed_at": base,
+            "closed_at": closed_at,
         },
     ]
+
+
+def _seed_outcomes_from_failures(
+    failures: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Mirror seeded failure memories into closed outcomes + module attribution."""
+    outcomes: list[dict[str, Any]] = []
+    for i, fm in enumerate(failures):
+        closed_at = str(fm.get("closed_at") or _now().isoformat())
+        outcomes.append(
+            {
+                "outcome_id": f"out_seed_{i+1:03d}",
+                "trade_id": fm["trade_id"],
+                "underlying_symbol": fm["underlying_symbol"],
+                "rank": i + 1,
+                "strategy": fm["strategy"],
+                "entry_mode": fm.get("entry_mode"),
+                "scenario_tag": fm.get("scenario_tag", ""),
+                "primary_signal": fm.get("primary_signal", ""),
+                "score_at_entry": 0.85,
+                "confidence_at_entry": 0.82,
+                "outcome": "loss",
+                "realized_pnl_inr": float(fm["loss_pnl_inr"]),
+                "exit_reason": fm.get("exit_reason", "seeded loss"),
+                "notes": None,
+                "recommendation_snapshot": {
+                    "seed": True,
+                    "market_summary": fm.get("market_summary"),
+                },
+                "opened_at": closed_at,
+                "closed_at": closed_at,
+                "failure_memory_id": fm["failure_id"],
+                "config_snapshot_id": "defaults",
+            }
+        )
+    return outcomes
+
+
+def _seed_open_trade(opened_at: str | None = None) -> dict[str, Any]:
+    """One paper demo open trade so /learning Mark Win/Loss is usable."""
+    ts = opened_at or _now().isoformat()
+    return {
+        "trade_id": _DEMO_OPEN_TRADE_ID,
+        "underlying_symbol": "HDFCBANK",
+        "rank": 1,
+        "strategy": "vega_scalping",
+        "entry_mode": "standard",
+        "scenario_tag": "Scenario A: Clean Intraday IV Flush",
+        "primary_signal": "iv_z_score=-2.10 ≤ -2.0",
+        "score": 0.84,
+        "confidence": 0.81,
+        "recommendation_snapshot": {
+            "seed": True,
+            "underlying_symbol": "HDFCBANK",
+            "market_summary": "Demo open trade for continual-learning outcome recording.",
+        },
+        "opened_at": ts,
+        "config_snapshot_id": "defaults",
+    }
+
+
+def _build_seeded_store() -> dict[str, Any]:
+    """Full paper demo store — failures, matching outcomes, and one open trade."""
+    base = _now().isoformat()
+    failures = _seed_failure_memories(base)
+    outcomes = _seed_outcomes_from_failures(failures)
+    total_pnl = sum(float(o["realized_pnl_inr"]) for o in outcomes)
+    store = _empty_store()
+    store["failure_memories"] = failures
+    store["outcomes"] = outcomes
+    store["open_trades"] = [_seed_open_trade(base)]
+    store["module_weights"] = {
+        "simple_volatility": 0.95,
+        "gamma_scalping": 0.92,
+        "vega_scalping": 0.90,
+    }
+    store["equity_inr"] = total_pnl
+    store["peak_equity_inr"] = 0.0
+    store["seed_version"] = SEED_VERSION
+    return store
 
 
 class LearningService:
@@ -142,14 +228,52 @@ class LearningService:
     def _ensure_store(self) -> None:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
         if not self.store_path.exists():
-            store = _empty_store()
-            store["failure_memories"] = _seed_failure_memories()
+            self._write(_build_seeded_store())
+            return
+        with open(self.store_path, encoding="utf-8") as f:
+            store = json.load(f)
+        if self._migrate_incomplete_seed(store):
             self._write(store)
+
+    def _migrate_incomplete_seed(self, store: dict[str, Any]) -> bool:
+        """
+        v1 stores only seeded failure_memories, leaving /learning looking frozen
+        (0 closed, empty attribution, no Mark Win/Loss). Backfill when the
+        operator has not recorded any real outcomes yet.
+        """
+        version = int(store.get("seed_version") or 1)
+        if version >= SEED_VERSION:
+            return False
+
+        outcomes = store.get("outcomes") or []
+        # Do not rewrite stores that already have operator-recorded outcomes.
+        if outcomes:
+            store["seed_version"] = SEED_VERSION
+            return True
+
+        failures = store.get("failure_memories") or _seed_failure_memories()
+        store["failure_memories"] = failures
+        store["outcomes"] = _seed_outcomes_from_failures(failures)
+        open_trades = store.get("open_trades") or []
+        if not open_trades:
+            store["open_trades"] = [_seed_open_trade()]
+        store["module_weights"] = {
+            "simple_volatility": 0.95,
+            "gamma_scalping": 0.92,
+            "vega_scalping": 0.90,
+        }
+        total_pnl = sum(float(o["realized_pnl_inr"]) for o in store["outcomes"])
+        store["equity_inr"] = float(store.get("equity_inr") or 0.0) or total_pnl
+        store["seed_version"] = SEED_VERSION
+        return True
 
     def _read(self) -> dict[str, Any]:
         self._ensure_store()
         with open(self.store_path, encoding="utf-8") as f:
-            return json.load(f)
+            store = json.load(f)
+        if self._migrate_incomplete_seed(store):
+            self._write(store)
+        return store
 
     def _write(self, store: dict[str, Any]) -> None:
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
