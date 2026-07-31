@@ -138,7 +138,7 @@ Render backend pre-trade gate (`architecture.md` §11.4) as pass/fail rows:
 ✗ Regime: high_vol_stress  → Approve disabled
 ```
 
-**Recommendations screen:** only instruments with post-learning confidence ≥ **0.85** (`min_recommendation_confidence`) are ranked/shown (`architecture.md` §6.4).
+**Recommendations screen:** only instruments with post-learning confidence ≥ **0.85** (`min_recommendation_confidence`) are ranked/shown (`architecture.md` §6.4). The scan set (G11–G12) is **all NSE F&O underlyings** from ICICI Direct’s instrument master — `universe_scanned` reflects that full list, not a fixed shortlist.
 
 - **Green** — passed
 - **Red** — hard block (Approve disabled)

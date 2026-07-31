@@ -1,7 +1,7 @@
 # Project Context: AI-Assisted Volatility Trading Bot
 
 > **Source documents:** `Docs/Problem_Statement.txt`, `Docs/Strategy_Ingestion_Pipeline.txt`, `Docs/OSS (1).xlsm`, `Docs/OSS_Guide (1).pdf`, `Docs/Volatility Trading.pdf`, `Docs/Gamma Scalping.pdf`, `Docs/Vega Scalping.pdf`, `Docs/Trading_Strategies.pdf`, `Docs/Trading_Strategies.md`, `Docs/Trading_Parameters.md`, `Docs/UI_Dashboard.md`, `Docs/Paper_Simulator.md`, `Market_News.txt`, `architecture.md`  
-> **Last synthesized:** July 15, 2026 (v3.7 — OSS Iron Condor valuation **2024-01-04 10:35 IST**; prior v3.6: paper first → autonomy on `paper_sim` → live last; Railway+Vercel paper; GCP `asia-south1` live; ICICI Direct data-only until Phase 5)
+> **Last synthesized:** July 31, 2026 (v3.8 — G11–G12 feed-bound universe = all ICICI Direct NSE F&O underlyings; prior v3.7: OSS Iron Condor valuation **2024-01-04 10:35 IST**; Railway+Vercel paper; GCP `asia-south1` live)
 
 ---
 
@@ -210,7 +210,7 @@ Market data is **not hard-coded or bundled**. Operators register **URL-based liv
 - **NFO lot sizing overrides OSS Y8=`100`**: each option leg’s effective multiplier and quantity step come from ICICI Direct instrument-master `lotsize` for that contract (`nfo_lot_sizing`)
 - Stale or failed feeds block autonomous execution for strategies that depend on them
 
-**Strategy ↔ feed binding:** When an OSS strategy is saved, the operator links it to registered URLs—for example, one for spot/OHLCV and one for that symbol’s NFO option chain (ICICI Direct Breeze API). If the strategy includes **stock/underlying** legs, the underlying must be cash equity with spot ≤ **INR 1000** (e.g. `SBIN`). **Options-only** strategies have **no** underlying price cap. The bot resolves bindings at runtime and validates feed freshness before each decision cycle.
+**Strategy ↔ feed binding:** The recommendation engine’s feed-bound universe (G11–G12) is **all NSE F&O underlyings** from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip), each auto-bound to NSE spot quotes + NFO option chain. When an OSS strategy is saved, the operator may still link explicit URLs; defaults resolve through the ICICI Direct adapter. If the strategy includes **stock/underlying** legs, the underlying must be cash equity with spot ≤ **INR 1000** (e.g. `SBIN`). **Options-only** strategies have **no** underlying price cap. The bot resolves bindings at runtime and validates feed freshness before each decision cycle.
 
 ### 2.8 Trade Input — Option Strategy Simulator (OSS) Model
 
@@ -665,7 +665,7 @@ Live market data enters the system through **operator-configured URL endpoints**
 }
 ```
 
-Register feeds for the underlyings the strategy will trade. For **options+underlying** structures, use cash-equity underlyings with spot ≤ INR 1000. For **options-only**, there is no underlying price cap.
+Register feeds for the underlyings the strategy will trade. **Default universe:** every NSE F&O underlying on ICICI Direct (`FONSEScripMaster.txt`) with G12 bindings `icici_direct:NSE:{symbol}:quotes` and `icici_direct:NFO:{stock_code}:option_chain`. For **options+underlying** structures, use cash-equity underlyings with spot ≤ INR 1000. For **options-only**, there is no underlying price cap.
 
 **Example strategy ↔ feed binding:**
 
@@ -674,8 +674,8 @@ Register feeds for the underlyings the strategy will trade. For **options+underl
   "strategy_id": "strat_001",
   "underlying_symbol": "SBIN",
   "data_feed_bindings": {
-    "und_price": "feed_sbin_spot",
-    "option_chain": "feed_sbin_chain"
+    "und_price": "icici_direct:NSE:SBIN:quotes",
+    "option_chain": "icici_direct:NFO:STABAN:option_chain"
   }
 }
 ```

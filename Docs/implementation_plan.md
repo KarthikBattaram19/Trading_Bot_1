@@ -64,7 +64,7 @@ Track B must not block Phase 0–1. Complete RAG faithfulness before LLM-gated d
 | 0.2 | FastAPI scaffold, `GET /health`, `.env.example`                                                                   | Health green locally                                                            |
 | 0.3 | **Remove MCP registry** (see §1); expose ICICI Direct + news feed status                                          | No `mcp_registry` / MCP routes                                                  |
 | 0.4 | ICICI Direct **A0:** session manager + connection test API                                                        | `POST .../broker/test` succeeds with secrets                                    |
-| 0.5 | ICICI Direct **A1:** instrument master + LTP REST → normalized ticks                                              | Marks refresh on demand                                                         |
+| 0.5 | ICICI Direct **A1:** instrument master + LTP REST → normalized ticks; **G11–G12 universe = all NSE F&O underlyings** from `FONSEScripMaster.txt` | Marks refresh on demand; recommendations scan full FNO list |
 | 0.6 | `GET /api/v1/paper-sim/health` stub; `EXECUTION_MODE=shadow` default                                              | Mode documented                                                                 |
 | 0.7 | Railway (`backend/`) + Vercel (`frontend/`) wire-up                                                               | Frontend hits Railway API                                                       |
 | 0.8 | Frontend shell: bot status, health, kill-switch placeholder                                                       | Per `UI_Dashboard.md`                                                           |

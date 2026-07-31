@@ -173,7 +173,8 @@ Re-hedge methods: `increase_hedge` \| `reduce_options` \| `adjust_call_put_mix`.
 
 **Does**
 
-- Resolve NFO contracts from ICICI Direct instrument master  
+- Resolve NFO contracts from ICICI Direct instrument master (`FONSEScripMaster.txt`)
+- Recommendation / paper universe (G11–G12): **all** unique NSE F&O underlyings from that master, with auto feed bindings for spot + option chain
 - Fill at ICICI Direct LTP with configurable slippage  
 - Track multi-leg positions, cash, realized & unrealized P&L  
 - Enforce playbook capital / liquidity / ATM / premium caps  

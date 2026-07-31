@@ -287,8 +287,8 @@ From `Trading_Strategies.md` §Common Execution Framework — **Data Requirement
 | G8 | **Borrow availability** | `borrow_status` | Enum + rate | Conditional | Short stock / short option legs |
 | G9 | **Margin estimate** | `margin_estimate` | Decimal | Yes | Pre-approval packet, size limits |
 | G10 | **Feed freshness timestamp** | `feed_as_of` | Datetime | Yes | Stale-data kill switch |
-| G11 | **Underlying symbol** | `underlying_symbol` | String | Yes | Chain and spot binding |
-| G12 | **Data feed bindings** | `data_feed_bindings` | Map | Yes | `und_price`, `option_chain` URL IDs |
+| G11 | **Underlying symbol** | `underlying_symbol` | String | Yes | Chain and spot binding. **Feed-bound universe:** every NSE F&O underlying from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip), mapped to NSE display tickers (e.g. `RELIND`→`RELIANCE`, `STABAN`→`SBIN`) |
+| G12 | **Data feed bindings** | `data_feed_bindings` | Map | Yes | Auto-bound per G11 member: `und_price` → `icici_direct:NSE:{symbol}:quotes`, `option_chain` → `icici_direct:NFO:{stock_code}:option_chain` |
 
 ### G13 — Option Chain Field Requirements
 
@@ -1009,9 +1009,10 @@ Machine-readable definitions for `GET/POST /api/v1/config/strategy`:
 
 | Field | Value |
 |---|---|
-| Version | 1.6 |
-| Updated | 2026-07-15 |
-| Change | v1.6 — Recommendation surface floor: post-learning confidence ≥ **85%** (`execution_constraints.min_recommendation_confidence` / I14a); only those instruments are recommended |
+| Version | 1.7 |
+| Updated | 2026-07-31 |
+| Change | v1.7 — G11–G12 feed-bound universe loads **all NSE F&O underlyings** from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip); G12 bindings auto-generated per underlying |
+| Prior | v1.6 — Recommendation surface floor: post-learning confidence ≥ **85%** (`execution_constraints.min_recommendation_confidence` / I14a); only those instruments are recommended |
 | Prior | v1.5 — Underlying price cap ≤ INR 1000 applies **only** when trading options **and** the underlying; **options-only** has no underlying price cap (T11/T11d). T11a/T11b likewise scoped to options+underlying mode |
 | Prior | v1.4 — Tradeable universe locked to cash-equity underlyings with spot ≤ INR 1000 (T11/T11a–c) to minimize stock-hedge capital; indices (NIFTY etc.) excluded; examples use equity symbols (e.g. SBIN) |
 | Prior | v1.3 — India NFO lot sizing (A11/B9/I10): per-symbol ICICI Direct `lotsize`, never OSS US `100`; OSS Iron Condor valuation locked to **2024-01-04 10:35 IST** (`+05:30`); backend schema + defaults v1.3 |

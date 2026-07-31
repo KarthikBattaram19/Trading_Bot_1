@@ -2150,6 +2150,23 @@ Backend pricing and Greeks **must match OSS reference outputs** before any strat
 
 Each OSS strategy **binds** to the feed URLs that supply live marks for its underlying and option legs. Bindings are persisted with the strategy and validated before autonomous execution.
 
+**Feed-bound universe (G11–G12):** The recommendation scanner does **not** use a fixed shortlist. It loads **all NSE F&O underlyings** from ICICI Direct’s daily `SecurityMaster.zip` → `FONSEScripMaster.txt` (~200+ names: OPTSTK / OPTIDX / FUTSTK / FUTIDX). Each underlying becomes a G11 `underlying_symbol` (NSE display ticker where available) with auto G12 bindings into the ICICI Direct adapter:
+
+```json
+{
+  "strategy_id": "strat_001",
+  "underlying_symbol": "SBIN",
+  "data_feed_bindings": {
+    "und_price": "icici_direct:NSE:SBIN:quotes",
+    "option_chain": "icici_direct:NFO:STABAN:option_chain"
+  }
+}
+```
+
+(`STABAN` is the Breeze `ShortName` / stock_code for SBIN on NFO.)
+
+Legacy example (same shape; feed ids may use human-readable aliases in configs):
+
 ```json
 {
   "strategy_id": "strat_001",
@@ -2290,7 +2307,7 @@ ICICI Direct Breeze API is the **sole live feed provider** for NSE / BSE / NFO m
 | Underlying LTP | WS quotes (`4.1!token`) or REST `quotes` | Sub-second (WS) / poll interval (REST) |
 | Option marks | WS quotes on NFO tokens (same connection) | Same |
 | Historical HV | Historical candle API | Batch / nightly |
-| Instrument metadata | Scrip master cache | Daily refresh |
+| Instrument metadata | Scrip master cache (`SecurityMaster.zip`) | Daily refresh (~08:00 IST). **G11–G12 universe** = all unique NFO underlyings from `FONSEScripMaster.txt` |
 
 Normalized tick schema (internal) — must not leak ICICI Direct fields into quant code:
 
@@ -5052,7 +5069,9 @@ Push / PR
 
 ### Appendix D: Architecture Evolution (Previous vs. Current)
 
-This appendix records how the current architecture (v1.26) evolved from the original academic scope in `Docs/Problem_Statement.txt` and early stack notes in `Docs/Strategy_Ingestion_Pipeline.txt`. The original documents remain valuable for domain requirements and RAG pipeline stages; the **operating model and engineering spec** are superseded by this document and `context.md`.
+This appendix records how the current architecture (v1.27) evolved from the original academic scope in `Docs/Problem_Statement.txt` and early stack notes in `Docs/Strategy_Ingestion_Pipeline.txt`. The original documents remain valuable for domain requirements and RAG pipeline stages; the **operating model and engineering spec** are superseded by this document and `context.md`.
+
+**v1.27 change:** Feed-bound recommendation universe (G11–G12) loads **all NSE F&O underlyings** from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip); G12 bindings auto-map to ICICI Direct NSE quotes + NFO option chain. Instrument master zip parser uses file→exchange mapping (NSE + NFO only).
 
 **v1.26 change:** **No MCP registry.** Market data (quotes, chains, historical) and live order placement use **ICICI Direct Breeze API** only. India sentiment stays on the **`Market_News.txt` pipeline** (§8.8). Retire assignable MCP ids (`user-broker-feed`, `user-nse-india`, `user-market-news`) and `backend/services/mcp_registry.py`. Recommendation `feed_sources` report ICICI Direct + news health directly (§8.9.3, §20.3 #19).
 

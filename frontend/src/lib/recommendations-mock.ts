@@ -74,10 +74,11 @@ export const mockRecommendations: RecommendationResponse = {
       }
     ]
   },
-  "universe_scanned": 8,
+  "universe_scanned": 213,
   "candidates_passing_gates": 6,
   "analysis_notes": [
-    "Scanned 8 instruments from feed-bound universe (G11–G12).",
+    "Scanned 213 instruments from feed-bound universe (G11–G12).",
+    "Universe source: ICICI Direct FONSEScripMaster (icici_direct_fonsescripmaster) — all NSE F&O underlyings with auto G12 bindings.",
     "6 passed all retail gates (T1–T16, I21).",
     "Confidence floor: only candidates with confidence ≥ 85% are recommended.",
     "Strategy selection follows Trading_Strategies.md Table SH-4.",
