@@ -20,29 +20,45 @@ export function formatPct(value: number, decimals = 1): string {
   return `${(value * 100).toFixed(decimals)}%`;
 }
 
+const IST_TZ = "Asia/Kolkata";
+
+function istParts(
+  value: string | number | Date,
+  options: Intl.DateTimeFormatOptions,
+): Record<string, string> {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: IST_TZ,
+    hour12: false,
+    ...options,
+  }).formatToParts(new Date(value));
+  const out: Record<string, string> = {};
+  for (const part of parts) {
+    if (part.type !== "literal") out[part.type] = part.value;
+  }
+  return out;
+}
+
 /** Stable IST datetime for SSR + client (avoids hydration locale mismatch). */
 export function formatDateTime(value: string | number | Date): string {
-  return new Intl.DateTimeFormat("en-IN", {
-    timeZone: "Asia/Kolkata",
+  const p = istParts(value, {
     day: "2-digit",
     month: "2-digit",
     year: "numeric",
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
+  });
+  return `${p.day}/${p.month}/${p.year}, ${p.hour}:${p.minute}:${p.second} IST`;
 }
 
-/** Stable IST time-only for SSR + client. */
+/** Stable IST time-only for SSR + client. Always includes the IST suffix. */
 export function formatTime(value: string | number | Date): string {
-  return new Intl.DateTimeFormat("en-IN", {
-    timeZone: "Asia/Kolkata",
+  const p = istParts(value, {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-    hour12: false,
-  }).format(new Date(value));
+  });
+  return `${p.hour}:${p.minute}:${p.second} IST`;
 }
 
 export function formatGreek(value: number, decimals = 2): string {

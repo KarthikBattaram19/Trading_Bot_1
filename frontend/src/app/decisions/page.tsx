@@ -5,7 +5,7 @@ import { SituationalBar } from "@/components/dashboard/situational-bar";
 import { SharedKillConditions } from "@/components/dashboard/kill-conditions";
 import { Icon, StatusPill } from "@/components/ui/primitives";
 import { STRATEGY_LABELS, type DecisionStatus } from "@/types/decisions";
-import { formatPct } from "@/lib/utils";
+import { formatDateTime, formatPct } from "@/lib/utils";
 
 const STATUS_TONE: Record<
   DecisionStatus,
@@ -126,13 +126,7 @@ export default async function DecisionsPage() {
                         </StatusPill>
                       </td>
                       <td className="p-4 font-mono text-data-sm text-on-surface-variant">
-                        {new Date(d.created_at).toLocaleString("en-IN", {
-                          timeZone: "Asia/Kolkata",
-                          month: "short",
-                          day: "numeric",
-                          hour: "2-digit",
-                          minute: "2-digit",
-                        })}
+                        {formatDateTime(d.created_at)}
                       </td>
                       <td className="p-4 text-right">
                         <Link

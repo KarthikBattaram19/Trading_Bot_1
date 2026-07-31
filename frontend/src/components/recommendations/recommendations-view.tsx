@@ -57,7 +57,7 @@ export function RecommendationsView({
             <div className="mt-3 flex flex-wrap items-center gap-3 font-mono text-data-sm text-on-surface-variant opacity-80">
               <span className="flex items-center gap-1">
                 <Icon name="schedule" className="text-[14px]" />
-                Generated {formatTime(data.generated_at)} IST
+                Generated {formatTime(data.generated_at)}
               </span>
               <span>·</span>
               <span>{data.universe_scanned} scanned</span>
