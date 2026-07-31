@@ -33,10 +33,17 @@ def _icici_direct_feed_status() -> FeedSource:
                 feed_health = FeedHealth.fresh
                 last_fetch = now
             elif ws_connected:
-                detail = (
-                    "ICICI Direct WS connected — awaiting ticks "
-                    f"(subscriptions={ws.get('subscription_count', 0)})"
-                )
+                subs = int(ws.get("subscription_count", 0) or 0)
+                if subs <= 0:
+                    detail = (
+                        "ICICI Direct WS connected — no subscriptions yet "
+                        "(probe join pending)"
+                    )
+                else:
+                    detail = (
+                        "ICICI Direct WS connected — awaiting ticks "
+                        f"(subscriptions={subs})"
+                    )
                 feed_health = FeedHealth.fresh
                 last_fetch = now
             else:

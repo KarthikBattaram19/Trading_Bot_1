@@ -188,11 +188,39 @@ async def test_ensure_ws_connected_opens_when_authenticated():
     status = await adapter.ensure_ws_connected()
     assert status["connected"] is True
     assert transport.connect_calls == 1
+    # Probe joins so feed UI is not stuck at subscriptions=0
+    assert status["subscription_count"] >= 1
+    assert any(
+        e[0] == "join" and "4.1!NIFTY 50" in (e[1] if isinstance(e[1], list) else [e[1]])
+        for e in transport.emitted
+    )
 
-    # No-op when already connected
+    # No-op reconnect; probes already present
     again = await adapter.ensure_ws_connected()
     assert again["connected"] is True
     assert transport.connect_calls == 1
+    assert again["subscription_count"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_ensure_ws_connected_seeds_probes_when_already_connected():
+    adapter, transport = make_test_market_data_with_fake_ws()
+
+    class _Client:
+        session_token = _session_token()
+
+    adapter.session_manager.ensure_session = AsyncMock(return_value=_Client())  # type: ignore[method-assign]
+    await adapter.connect_ws()
+    assert adapter.ws_status()["subscription_count"] == 0
+
+    adapter.session_manager.health = lambda: {  # type: ignore[method-assign]
+        "authenticated": True,
+        "credentials_ready": True,
+    }
+    status = await adapter.ensure_ws_connected()
+    assert status["connected"] is True
+    assert status["subscription_count"] >= 1
+    assert "4.1!NIFTY 50" in adapter.stream.subscriptions
 
 
 @pytest.mark.asyncio
@@ -222,7 +250,46 @@ async def test_ensure_ws_connected_authenticates_when_credentials_ready():
     status = await adapter.ensure_ws_connected()
     assert status["connected"] is True
     assert transport.connect_calls == 1
+    assert status["subscription_count"] >= 1
     adapter.session_manager.ensure_session.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_ws_probe_tick_marks_feed_sub_second():
+    adapter, transport = make_test_market_data_with_fake_ws()
+
+    class _Client:
+        session_token = _session_token()
+
+    adapter.session_manager.ensure_session = AsyncMock(return_value=_Client())  # type: ignore[method-assign]
+    adapter.session_manager.health = lambda: {  # type: ignore[method-assign]
+        "authenticated": True,
+        "credentials_ready": True,
+    }
+    await adapter.ensure_ws_connected()
+    await transport.simulate_stock(
+        [
+            "4.1!NIFTY 50",
+            24748.7,
+            25006.2,
+            25029.5,
+            24671.45,
+            1.03,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        ]
+    )
+    status = adapter.ws_status()
+    assert status["sub_second_fresh"] is True
+    assert status["freshest_tick_age_sec"] is not None
+    assert status["freshest_tick_age_sec"] < 1.0
+    cached = adapter.get_cached_tick("NSE", "NIFTY 50")
+    assert cached is not None
+    assert cached.ltp == pytest.approx(25006.2)
 
 
 @pytest.mark.asyncio

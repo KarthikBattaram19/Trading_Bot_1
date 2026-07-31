@@ -28,6 +28,14 @@ logger = logging.getLogger(__name__)
 # Prefer WS cache when tick age is under this (sub-second freshness target).
 WS_PREFER_MAX_AGE_SEC = 1.0
 
+# Breeze NSE index Token values (NSEScripMaster / get_names) — small probe set so
+# feed health receives ticks after connect without waiting for a REST LTP call.
+# Tick symbols look like ``4.1!NIFTY 50`` (SDK cash subscribe for stock_code=NIFTY).
+WS_FEED_PROBES: tuple[tuple[str, str, str], ...] = (
+    ("NSE", "NIFTY", "NIFTY 50"),
+    ("NSE", "BANKNIFTY", "Nifty Bank"),
+)
+
 
 class IciciDirectMarketDataAdapter:
     """Data-only marks adapter — never places orders."""
@@ -98,12 +106,14 @@ class IciciDirectMarketDataAdapter:
         return self.ws_status()
 
     async def ensure_ws_connected(self) -> dict[str, Any]:
-        """Connect A2 WS when credentials/session allow; no-op if already connected.
+        """Connect A2 WS when credentials/session allow; seed probe joins for ticks.
 
         Used after broker auth and when the UI polls feed health / recommendations
         so Streaming 2.0 does not stay idle after REST-only session setup.
+        A bare connect without ``join`` never receives ticks (subscriptions=0).
         """
         if self.ws_connected:
+            await self._seed_ws_probe_subscriptions()
             return self.ws_status()
         session_health = self.session_manager.health()
         if not session_health.get("authenticated"):
@@ -118,13 +128,34 @@ class IciciDirectMarketDataAdapter:
                 status["ensure_error"] = str(exc)
                 return status
         try:
-            return await self.connect_ws()
+            await self.connect_ws()
+            await self._seed_ws_probe_subscriptions()
+            return self.ws_status()
         except Exception as exc:  # noqa: BLE001
             self.last_error = str(exc)
             logger.warning("Breeze WS ensure_ws_connected failed: %s", exc)
             status = self.ws_status()
             status["ensure_error"] = str(exc)
             return status
+
+    async def _seed_ws_probe_subscriptions(self) -> None:
+        """Best-effort join for index spot probes so A2 freshness can become active."""
+        if not self.ws_connected:
+            return
+        for exchange, tradingsymbol, symboltoken in WS_FEED_PROBES:
+            try:
+                stock = stock_token_for_quotes(exchange, symboltoken)
+                if stock in self._stream.subscriptions:
+                    continue
+                self._ws_meta[stock] = (exchange.upper(), tradingsymbol, str(symboltoken))
+                await self._stream.subscribe(stock)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug(
+                    "WS probe subscribe skipped %s:%s: %s",
+                    exchange,
+                    symboltoken,
+                    exc,
+                )
 
     async def disconnect_ws(self) -> dict[str, Any]:
         await self._stream.disconnect()
