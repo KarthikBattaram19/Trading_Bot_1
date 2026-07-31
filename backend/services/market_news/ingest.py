@@ -1,8 +1,11 @@
 """Ingest curated India headlines for Market_News pipeline.
 
-Default path: bundled fixture (offline / CI). Ops can drop a JSON file via
-``MARKET_NEWS_HEADLINES_PATH`` — sources must still map to Market_News.txt.
-No hard-coded vendor HTML scrapers (Architecture §8.8.3 non-goal).
+Priority (Architecture §8.8 — HTTPS / file, no HTML scrapers):
+1. Explicit ``path`` / ``MARKET_NEWS_HEADLINES_PATH`` JSON file (ops override)
+2. Live HTTPS RSS from Market_News.txt sources (``MARKET_NEWS_LIVE=1``, default)
+3. Bundled fixture fallback when live yields nothing (offline / CI)
+
+Sources must still map to Market_News.txt.
 """
 
 from __future__ import annotations
@@ -33,13 +36,14 @@ class RawHeadline:
     tickers_hint: list[str] = field(default_factory=list)
 
 
-def resolve_headlines_path(explicit: Path | str | None = None) -> Path:
+def resolve_headlines_path(explicit: Path | str | None = None) -> Path | None:
+    """Return an explicit JSON path when ops overrides live ingest; else None."""
     if explicit:
         return Path(explicit)
     env = os.getenv("MARKET_NEWS_HEADLINES_PATH", "").strip()
     if env:
         return Path(env)
-    return _FIXTURE_PATH
+    return None
 
 
 def load_raw_headlines(
@@ -54,8 +58,79 @@ def load_raw_headlines(
     When ``workflow_window`` is set, prefer window sources first, then fill from
     bot_priority (edge case S-09: wrong-window sources still allowed but ranked lower).
     """
-    headlines_path = resolve_headlines_path(path)
+    override = resolve_headlines_path(path)
+    if override is not None:
+        items, freshness, detail = _load_from_json_file(override, contract)
+        ranked = _rank_for_window(items, contract, workflow_window)
+        return ranked, freshness, f"{detail}; curation_loaded={contract.loaded}"
+
+    live_items: list[RawHeadline] = []
+    live_freshness: dict[str, datetime] = {}
+    live_detail = "mode=live; skipped=disabled"
+    if _live_enabled():
+        live_items, live_freshness, live_detail = _load_from_live(contract)
+        if live_items:
+            ranked = _rank_for_window(live_items, contract, workflow_window)
+            return (
+                ranked,
+                live_freshness,
+                f"{live_detail}; curation_loaded={contract.loaded}",
+            )
+
+    # Offline / CI / live-empty fallback
+    items, freshness, detail = _load_from_json_file(_FIXTURE_PATH, contract)
+    ranked = _rank_for_window(items, contract, workflow_window)
+    fallback = (
+        f"mode=fixture_fallback; headlines_path={_FIXTURE_PATH.name}; "
+        f"count={len(ranked)}; live={live_detail}; curation_loaded={contract.loaded}"
+    )
+    if not live_items and _live_enabled():
+        return ranked, freshness, fallback
+    return (
+        ranked,
+        freshness,
+        f"mode=fixture; headlines_path={_FIXTURE_PATH.name}; "
+        f"count={len(ranked)}; curation_loaded={contract.loaded}",
+    )
+
+
+def _live_enabled() -> bool:
+    from backend.services.market_news.feeds import live_ingest_enabled
+
+    return live_ingest_enabled()
+
+
+def _load_from_live(
+    contract: CurationContract,
+) -> tuple[list[RawHeadline], dict[str, datetime], str]:
+    from backend.services.market_news.feeds import fetch_live_headlines
+
+    wanted = set(contract.bot_priority) | set(contract.monitors)
+    for window_sources in contract.windows.values():
+        wanted.update(window_sources)
+    rows, freshness, detail = fetch_live_headlines(source_ids=wanted or None)
+    return _rows_to_headlines(rows), freshness, detail
+
+
+def _load_from_json_file(
+    headlines_path: Path,
+    contract: CurationContract,
+) -> tuple[list[RawHeadline], dict[str, datetime], str]:
     rows = _read_json_rows(headlines_path)
+    items, freshness = _rows_to_headlines_with_freshness(rows)
+    detail = f"headlines_path={headlines_path.name}; count={len(items)}"
+    _ = contract  # contract reserved for future source allow-lists
+    return items, freshness, detail
+
+
+def _rows_to_headlines(rows: list[dict[str, Any]]) -> list[RawHeadline]:
+    items, _ = _rows_to_headlines_with_freshness(rows)
+    return items
+
+
+def _rows_to_headlines_with_freshness(
+    rows: list[dict[str, Any]],
+) -> tuple[list[RawHeadline], dict[str, datetime]]:
     now = datetime.now(timezone.utc)
     freshness: dict[str, datetime] = {}
     items: list[RawHeadline] = []
@@ -63,7 +138,6 @@ def load_raw_headlines(
     for row in rows:
         source_raw = str(row.get("source") or "unknown")
         source_id = normalize_source_id(source_raw)
-        # Prefer display name from contract aliases when possible
         display = SOURCE_DISPLAY.get(source_id, source_raw)
         title = str(row.get("title") or "").strip()
         if not title:
@@ -71,24 +145,21 @@ def load_raw_headlines(
         hint = row.get("tickers_hint") or row.get("tickers") or []
         if not isinstance(hint, list):
             hint = []
+        time_published = str(row.get("time_published") or now.strftime("%Y%m%dT%H%M%S"))
         items.append(
             RawHeadline(
                 title=title,
                 summary=str(row.get("summary") or title).strip(),
                 source=display,
                 source_id=source_id,
-                time_published=str(row.get("time_published") or now.strftime("%Y%m%dT%H%M%S")),
+                time_published=time_published,
                 tickers_hint=[str(x).upper() for x in hint],
             )
         )
+        # File/fixture freshness = load time so refresh cycles update last_fetch_at.
         freshness[source_id] = now
 
-    ranked = _rank_for_window(items, contract, workflow_window)
-    detail = (
-        f"headlines_path={headlines_path.name}; count={len(ranked)}; "
-        f"curation_loaded={contract.loaded}"
-    )
-    return ranked, freshness, detail
+    return items, freshness
 
 
 def _read_json_rows(path: Path) -> list[dict[str, Any]]:

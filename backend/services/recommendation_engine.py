@@ -698,11 +698,13 @@ async def generate_recommendations(
             await get_market_data_adapter().ensure_ws_connected()
     except Exception:  # noqa: BLE001
         pass
+
+    # Refresh analysis must re-ingest Market_News (bypass TTL cache) so the
+    # NewsPanel / feed timestamps update with every recommendation cycle.
+    if news is None:
+        news = get_market_news(force_refresh=True)
     sources = get_feed_sources()
     learning = get_learning_service()
-
-    if news is None:
-        news = get_market_news()
 
     universe, feed_bindings, universe_source = await _build_universe()
     ranked: list[InstrumentRecommendation] = []

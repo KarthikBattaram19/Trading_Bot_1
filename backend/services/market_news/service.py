@@ -154,18 +154,25 @@ def market_news_feed_status() -> FeedSource:
         ages.append((now - moment.astimezone(timezone.utc)).total_seconds())
 
     threshold = _stale_threshold_sec()
+    detail_text = _last_detail or "Market_News ingest OK"
+    using_fixture = "mode=fixture" in detail_text or "sample_headlines.json" in detail_text
     if not summary.source_freshness:
         health = FeedHealth.stale
         status = FeedSourceStatus.stub
         detail = _last_detail or "No source freshness — mock or empty ingest"
+    elif using_fixture:
+        # Bundled sample is offline fallback — never report as live-fresh.
+        health = FeedHealth.stale
+        status = FeedSourceStatus.active
+        detail = detail_text
     elif ages and max(ages) > threshold:
         health = FeedHealth.stale
         status = FeedSourceStatus.active
-        detail = f"Stale vs {threshold:.0f}s threshold; {_last_detail}"
+        detail = f"Stale vs {threshold:.0f}s threshold; {detail_text}"
     else:
         health = FeedHealth.fresh
         status = FeedSourceStatus.active
-        detail = _last_detail or "Market_News ingest OK"
+        detail = detail_text
 
     last_fetch = None
     if summary.source_freshness:

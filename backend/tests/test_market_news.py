@@ -25,7 +25,10 @@ from backend.services.market_news.curation import (
 
 
 @pytest.fixture(autouse=True)
-def _clear_news_cache():
+def _clear_news_cache(monkeypatch: pytest.MonkeyPatch):
+    # Deterministic offline path for unit tests (live RSS exercised separately).
+    monkeypatch.setenv("MARKET_NEWS_LIVE", "0")
+    monkeypatch.delenv("MARKET_NEWS_HEADLINES_PATH", raising=False)
     reset_market_news_cache()
     yield
     reset_market_news_cache()
@@ -177,6 +180,38 @@ def test_recommendations_include_live_market_news(monkeypatch: pytest.MonkeyPatc
     assert news_feed["status"] in {"active", "stub"}
 
 
+def test_recommendations_refresh_bypasses_market_news_cache(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Refresh analysis must re-ingest news even when the TTL cache is warm."""
+    monkeypatch.setenv("EXECUTION_MODE", "shadow")
+    monkeypatch.setenv("MARKET_NEWS_CACHE_TTL_SEC", "3600")
+    reset_market_news_cache()
+
+    primed = get_market_news(force_refresh=True)
+    assert primed.source_freshness
+    primed_ts = max(v for v in primed.source_freshness.values() if v is not None)
+
+    # Warm-cache hit must still return the primed packet.
+    assert get_market_news() is primed
+
+    from backend.main import app
+
+    client = TestClient(app)
+    res = client.get("/api/v1/recommendations")
+    assert res.status_code == 200
+    news = res.json()["market_news"]
+    assert news["source_freshness"]
+    refreshed_ts = max(
+        datetime.fromisoformat(v.replace("Z", "+00:00"))
+        for v in news["source_freshness"].values()
+        if v is not None
+    )
+    assert refreshed_ts >= primed_ts
+    # After generate_recommendations, in-process cache is a new packet (not the primed one).
+    assert get_market_news() is not primed
+
+
 def test_mock_market_news_still_available():
     mock = mock_market_news()
     assert mock.headline_count == 2
@@ -197,3 +232,72 @@ def test_get_market_news_cached():
     b = get_market_news()
     assert a.headline_count == b.headline_count
     assert a.dominant_tone == b.dominant_tone
+
+
+def test_live_rss_ingest_mocked(monkeypatch: pytest.MonkeyPatch):
+    """Live HTTPS path maps curated RSS into MarketNewsSummary (no network)."""
+    from backend.services.market_news import feeds as feeds_mod
+
+    sample_rss = b"""<?xml version="1.0" encoding="UTF-8"?>
+    <rss version="2.0"><channel><title>t</title>
+      <item>
+        <title>Nifty jumps as RBI holds rates; FII buying returns - Moneycontrol.com</title>
+        <description>Benchmark rallies on policy pause.</description>
+        <pubDate>Fri, 31 Jul 2026 07:30:00 GMT</pubDate>
+      </item>
+      <item>
+        <title>Infosys quarterly earnings beat Street estimates</title>
+        <description>IT major posts strong guidance.</description>
+        <pubDate>Fri, 31 Jul 2026 06:00:00 GMT</pubDate>
+      </item>
+    </channel></rss>"""
+
+    class _FakeResponse:
+        content = sample_rss
+
+        def raise_for_status(self) -> None:
+            return None
+
+    class _FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def get(self, url: str):
+            return _FakeResponse()
+
+    monkeypatch.setenv("MARKET_NEWS_LIVE", "1")
+    monkeypatch.delenv("MARKET_NEWS_HEADLINES_PATH", raising=False)
+    monkeypatch.setattr(feeds_mod.httpx, "Client", _FakeClient)
+    reset_market_news_cache()
+
+    summary = refresh_market_news()
+    assert summary.headline_count >= 2
+    titles = " ".join(i.title for i in summary.items)
+    assert "Nifty" in titles or "Infosys" in titles
+    assert "Moneycontrol.com" not in titles  # Google suffix stripped
+    from backend.services.market_news.service import market_news_feed_status
+
+    feed = market_news_feed_status()
+    assert "mode=live" in (feed.detail or "")
+    assert "sample_headlines.json" not in (feed.detail or "")
+
+
+def test_parse_pubdate_formats():
+    from backend.services.market_news.feeds import parse_pubdate
+    from zoneinfo import ZoneInfo
+
+    rfc = parse_pubdate("Fri, 31 Jul 2026 07:30:00 GMT")
+    assert rfc is not None
+    assert rfc.year == 2026
+    sebi = parse_pubdate("30 Jul, 2026 +0530")
+    assert sebi is not None
+    assert sebi.astimezone(ZoneInfo("Asia/Kolkata")).day == 30
+    compact = parse_pubdate("20260731T073000")
+    assert compact is not None
+    assert compact.hour == 7
