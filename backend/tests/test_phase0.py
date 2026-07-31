@@ -65,7 +65,41 @@ def test_health_and_feeds(monkeypatch):
 
 def test_recommendation_uses_feed_sources(monkeypatch):
     monkeypatch.setenv("EXECUTION_MODE", "shadow")
+    from backend.integrations.icici_direct.instrument_master import (
+        InstrumentMaster,
+        reset_instrument_master_for_tests,
+    )
     from backend.main import app
+
+    reset_instrument_master_for_tests()
+    master = InstrumentMaster()
+    master.load_rows(
+        [
+            {
+                "exch_seg": "NFO",
+                "ShortName": "STABAN",
+                "Token": "1",
+                "InstrumentName": "OPTSTK",
+                "ExpiryDate": "28-Mar-2024",
+                "StrikePrice": "800",
+                "OptionType": "CE",
+                "ExchangeCode": "SBIN",
+                "LotSize": "1500",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "backend.services.recommendation_engine.get_instrument_master",
+        lambda: master,
+    )
+
+    async def _noop_ensure(self, *, max_age_sec=None):  # noqa: ANN001
+        return master.count
+
+    monkeypatch.setattr(
+        "backend.integrations.icici_direct.market_data.IciciDirectMarketDataAdapter.ensure_instruments",
+        _noop_ensure,
+    )
 
     client = TestClient(app)
     res = client.get("/api/v1/recommendations")
@@ -74,6 +108,7 @@ def test_recommendation_uses_feed_sources(monkeypatch):
     assert "feed_sources" in data
     assert "mcp_sources" not in data
     assert "market_news" in data
+    assert data["universe_scanned"] >= 1
 
 
 def test_place_order_disabled_in_shadow(monkeypatch):

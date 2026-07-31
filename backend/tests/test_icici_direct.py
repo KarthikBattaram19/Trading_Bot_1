@@ -105,6 +105,7 @@ def test_instrument_master_load_and_resolve():
     assert nifty is not None
     assert nifty.lotsize == 25
     assert nifty.strike == pytest.approx(22000.0)
+    assert "NIFTY" in master.list_fno_underlyings()
 
 
 @pytest.mark.asyncio
