@@ -61,6 +61,23 @@ export function formatCountdown(expiresAt: string): string {
   return `${min}:${sec.toString().padStart(2, "0")}`;
 }
 
+/**
+ * Mock UI data is opt-in for production.
+ * - Explicit `true` / `false` always wins.
+ * - If unset: mock only for local API (localhost / unset); remote API URLs use live data.
+ *   This avoids Vercel staying on mock when NEXT_PUBLIC_API_URL points at Railway
+ *   but NEXT_PUBLIC_USE_MOCK_DATA was left unset or not rebuilt as `"false"`.
+ */
 export function useMockData(): boolean {
-  return process.env.NEXT_PUBLIC_USE_MOCK_DATA !== "false";
+  const flag = (process.env.NEXT_PUBLIC_USE_MOCK_DATA ?? "").trim().toLowerCase();
+  if (flag === "true" || flag === "1") return true;
+  if (flag === "false" || flag === "0") return false;
+
+  const api = (process.env.NEXT_PUBLIC_API_URL ?? "").trim().toLowerCase();
+  if (!api) return true;
+  return (
+    api.includes("localhost") ||
+    api.includes("127.0.0.1") ||
+    api.startsWith("http://0.0.0.0")
+  );
 }

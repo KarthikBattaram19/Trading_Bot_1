@@ -37,8 +37,11 @@ export default async function DashboardPage() {
               Bot Overview
             </h1>
             <p className="mt-1 text-body-md text-on-surface-variant">
-              Phase 0 shell — ICICI Direct data-only marks · shadow mode ·
-              kill-switch placeholder · no place_order
+              Phase {apiHealth.phase ?? "—"} · {status.execution_mode} · ICICI
+              Direct data-only marks ·{" "}
+              {apiHealth.place_order_enabled
+                ? "place_order enabled"
+                : "no place_order"}
             </p>
           </div>
 
