@@ -330,12 +330,9 @@ class IciciDirectMarketDataAdapter:
             if change_pct is None and ltp is not None and previous_close and previous_close != 0:
                 change_pct = ((ltp - previous_close) / previous_close) * 100.0
 
-            # Overlay fresher WS last when available.
-            if (
-                cached is not None
-                and not cached.stale
-                and (_tick_age_sec(cached) or 999) <= self.ws_prefer_max_age_sec
-            ):
+            # Do not overlay WS LTP for global indices — some index tick shapes
+            # (esp. India VIX) can decode with bad scale and flash garbage %.
+            if ltp is None and cached is not None and not cached.stale:
                 ltp = cached.ltp
                 if previous_close and previous_close != 0:
                     change_pct = ((ltp - previous_close) / previous_close) * 100.0
