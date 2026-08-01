@@ -13,7 +13,6 @@ const NAV = [
   { href: "/decisions", label: "Decisions", icon: "psychology" },
   { href: "/positions", label: "Positions", icon: "format_list_bulleted" },
   { href: "/risk", label: "Risk", icon: "security" },
-  { href: "/chat", label: "AI Chat", icon: "forum" },
 ];
 
 export function AppShell({ children }: { children: React.ReactNode }) {

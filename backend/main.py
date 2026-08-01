@@ -15,13 +15,10 @@ from backend.integrations.registry import (
 )
 from backend.routers import (
     bot,
-    chat,
     decisions,
     integrations,
-    knowledge,
     learning,
     paper_sim,
-    quality,
     recommendations,
     risk,
 )
@@ -57,9 +54,6 @@ app.include_router(bot.router)
 app.include_router(decisions.router)
 app.include_router(recommendations.router)
 app.include_router(learning.router)
-app.include_router(chat.router)
-app.include_router(knowledge.router)
-app.include_router(quality.router)
 app.include_router(integrations.router)
 app.include_router(paper_sim.router)
 app.include_router(risk.router)

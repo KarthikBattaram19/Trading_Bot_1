@@ -186,7 +186,7 @@ C4Context
     System_Ext(news_sources, "India Market News", "Curated per Market_News.txt — Reuters, Moneycontrol, ET, NSE, SEBI")
     System_Ext(broker, "ICICI Direct Breeze API", "NSE / BSE / NFO — quotes, orders, positions")
     System_Ext(llm_api, "Groq API", "LLM reasoning via Groq (e.g. Llama 3.3 70B)")
-    System_Ext(embed_api, "Embedding / Reranker", "bge-m3, bge-reranker-large, or OpenAI")
+    System_Ext(embed_api, "Embedding / Reranker", "Vertex AI — gemini-embedding-001 + Ranking API")
 
     Rel(trader, bot, "Monitors, configures, kill-switch", "HTTPS / WSS")
     Rel(bot, kb_docs, "Ingests at build/refresh time")
@@ -543,11 +543,15 @@ The backend lives in the standalone `backend/` folder and is organized as a **mo
 backend/
 ├── api/                    # FastAPI routers (REST + WebSocket)
 ├── scheduler/              # Bot loop, market-hours orchestration
-├── knowledge/              # RAG ingestion + retrieval
-│   ├── ingestion/          # Markdown knowledge-doc pipeline stages 1–8
-│   ├── vectorstore/        # ChromaDB client, collections, BM25 index
-│   ├── retrieval/          # Hybrid search + reranking (stages 9–10)
-│   └── evaluation/         # Ragas / DeepEval + golden_qa.jsonl (stage 14)
+├── knowledge/              # RAG ingestion + retrieval (rebuilt in B0–B9)
+│   ├── corpus/             # PDF extraction, normalization, structural parse (stages 2–4)
+│   ├── chunking/           # Parent/child semantic chunking (stage 5)
+│   ├── enrich/             # Metadata taxonomy + tagging (stage 6)
+│   ├── index/              # Vertex embeddings, ChromaDB, BM25 artifact (stages 7–8)
+│   ├── retrieval/          # Query understanding, hybrid search, rerank, parent expansion (stages 9–10b)
+│   ├── generation/         # Prompt profiles, answer, citation verification (stages 11–13)
+│   ├── memory/             # failure_memory + trade_insights writers (B8)
+│   └── evaluation/         # Golden set, retrieval metrics, judge, fixtures, baselines (stage 14)
 ├── market_data/            # Live feed URL registry, poll scheduler, normalize, cache
 │   ├── adapters/           # Per-provider feed parsers (§8.7)
 │   └── replay/             # Parquet snapshot recorder + replay driver
@@ -1126,6 +1130,10 @@ Candidates that pass retail gates and strategy selection but fall below this flo
 
 > **Core insight:** For this project, ingestion pipeline quality—not LLM choice—determines RAG effectiveness. The knowledge base is built from **four domain PDFs** (`Volatility Trading.pdf`, `Gamma Scalping.pdf`, `Vega Scalping.pdf`, `Trading_Strategies.pdf`). Equations, tables, Greeks, diagrams, and domain terminology must be preserved accurately.
 
+> **Build status:** the first Track B1 implementation was un-implemented and is being rebuilt across phases **B0–B9**. `Docs/implementation_plan.md` §9 is the authority for sequencing, exit gates, and the root-cause analysis that drove the rebuild; this section remains the authority for the target design. Model pins in Stages 7 and 10 and the chunking strategy in Stage 5 were revised during that rebuild — the superseded values are noted in place.
+
+> **Global rule — no silent fallbacks.** Wherever a model, index, metadata filter, or re-ranker call fails, the request must **fail or be flagged degraded on the response**. No component may substitute a lower-quality path unannounced. The first implementation violated this in three places (a semantics-free hash embedding fallback, a re-ranker that never existed, and a hardcoded faithfulness flag), and each violation was invisible in production.
+
 
 
 ### 7.1 Pipeline Overview
@@ -1162,7 +1170,7 @@ PDF Documents (4 RAG sources — §3.2)
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
-│ 6. Semantic Chunking│  400–800 tokens, 10–20% overlap
+│ 6. Semantic Chunking│  Parent sections + child chunks ≤ 450 tok, 15% overlap
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
@@ -1170,7 +1178,7 @@ PDF Documents (4 RAG sources — §3.2)
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
-│ 8. Embedding Gen    │  bge-m3 or text-embedding-3-large
+│ 8. Embedding Gen    │  Vertex AI gemini-embedding-001 (3072-d)
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
@@ -1184,11 +1192,15 @@ PDF Documents (4 RAG sources — §3.2)
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
-│11. Re-ranking       │  bge-reranker-large → top 5
+│11. Re-ranking       │  Vertex AI Ranking API → top 8 children
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
-│12. Prompt Build     │  Context + citations + question
+│11b. Parent Expansion│  Children → parent sections, deduped, budgeted
+└─────────┬───────────┘
+          ▼
+┌─────────────────────┐
+│12. Prompt Build     │  Context + [S1] markers + question
 └─────────┬───────────┘
           ▼
 ┌─────────────────────┐
@@ -1267,12 +1279,20 @@ Document
 #### Stage 5: Semantic Chunking
 
 
-| Parameter   | Value                                      | Rationale                                        |
-| ----------- | ------------------------------------------ | ------------------------------------------------ |
-| Strategy    | Meaning-based splits                       | Avoid arbitrary 500-char cuts through equations  |
-| Target size | 400–800 tokens                             | Balance context richness vs. retrieval precision |
-| Overlap     | 10–20%                                     | Preserve continuity across chunk boundaries      |
-| Boundaries  | Definition, derivation, example, procedure | Each becomes a coherent retrieval unit           |
+**Strategy: small-to-big (parent/child).** Child chunks are what get embedded and re-ranked; the **parent section** a child belongs to is what reaches the LLM. This is driven by a hard vendor limit — the Stage 10 re-ranker truncates each record at **512 tokens**, so a 400–800-token chunk would be scored on partial text. Small-to-big also resolves the context-richness vs. retrieval-precision tradeoff directly: retrieve precisely on small units, generate from large ones.
+
+
+| Parameter          | Value                                      | Rationale                                                        |
+| ------------------ | ------------------------------------------ | ---------------------------------------------------------------- |
+| Strategy           | Meaning-based splits, parent/child          | Avoid arbitrary character cuts through equations                 |
+| **Child size**     | **≤ 450 tokens**                            | Fits inside the re-ranker's 512-token window with headroom       |
+| **Parent size**    | **A whole section, split at ~1800 tokens**  | Gives the LLM enough surrounding context to reason               |
+| Overlap (children) | 15%                                        | Preserve continuity across chunk boundaries                      |
+| Boundaries         | Definition, derivation, example, procedure | Each becomes a coherent retrieval unit                           |
+| Atomic units       | Equations and table rows                   | Never split; a half-equation is worse than no equation           |
+
+
+> **Superseded:** an earlier revision specified flat 400–800-token chunks with 10–20% overlap and no parent/child split. Retained here only to explain why re-chunking invalidates any index built against it.
 
 
 **Anti-patterns to avoid:**
@@ -1280,6 +1300,7 @@ Document
 - Splitting mid-equation or mid-table row
 - Merging unrelated topics from adjacent sections
 - Fixed-size chunking without structural awareness
+- **Hardcoding a per-document chapter/page table.** Chapter attribution must come from each PDF's own outline, with font-size heading detection as the fallback. The first implementation hardcoded one book's chapter map and applied it to every document by default, which would have mislabelled every chapter of the other three PDFs.
 
 
 
@@ -1334,24 +1355,32 @@ Each chunk carries **filterable, trading-specific metadata** enabling precise re
 
 #### Stage 7: Embedding Generation
 
-**Pinned production stack** (do not use small/base BGE variants for this corpus):
+**Pinned production stack — managed Vertex AI models.** These are ordinary HTTPS calls authenticated by a service account, so they work from a local Windows machine and from Railway. **They do not require GCP infrastructure**; Cloud Run and the rest of the §17.8 inventory remain deferred to Phase 5 / B9.
 
 
-| Role                     | Model                           | Notes                                                  |
-| ------------------------ | ------------------------------- | ------------------------------------------------------ |
-| **Embedding (primary)**  | `bge-m3`                        | Dense + sparse support; strong on technical literature |
-| **Re-ranker**            | `bge-reranker-large`            | Cross-encoder on top-50 candidates → top-5             |
-| **Embedding (fallback)** | `bge-large-en-v1.5`             | English-only fallback if m3 unavailable                |
-| **Cloud alternative**    | OpenAI `text-embedding-3-large` | Optional; not default                                  |
+| Role                   | Model                                          | Notes                                                                     |
+| ---------------------- | ---------------------------------------------- | ------------------------------------------------------------------------- |
+| **Embedding**          | Vertex AI `gemini-embedding-001`               | 3072-d default (Matryoshka-truncatable to 1536 / 768); 2048-token input cap |
+| **Re-ranker**          | Vertex AI Ranking API, `semantic-ranker-default@latest` | Cross-encoder; see Stage 10 for its hard limits                  |
+| **Judge (evaluation)** | Any model **other than** the generation model  | A generator cannot grade its own grounding — see Stage 14                 |
 
 
+| Parameter              | Value                                                                        |
+| ---------------------- | ---------------------------------------------------------------------------- |
+| `output_dimensionality` | **3072** — pre-normalized at this size; smaller sizes require manual L2 normalization |
+| `task_type` (chunks)   | `RETRIEVAL_DOCUMENT`, with `title` set to the chunk's `heading_path`          |
+| `task_type` (queries)  | `RETRIEVAL_QUERY`                                                             |
+| Region                 | `asia-south1` where regional                                                  |
 
-| Model                  | Use Case                                         |
-| ---------------------- | ------------------------------------------------ |
-| **jina-embeddings-v3** | Alternative for technical literature (eval only) |
+
+> **Superseded:** earlier revisions pinned `bge-m3` (primary), `bge-large-en-v1.5` (fallback), OpenAI `text-embedding-3-large` (cloud alternative), and `jina-embeddings-v3` (eval only). Self-hosted BGE was dropped to avoid ~3.5 GB of model files in the container image, slow CPU inference, and Cloud Run cold starts.
 
 
 **Embedding payload:** chunk text + structural prefix (e.g., `[Gamma Scalping > Chapter 5 > Dynamic Hedging]`) to improve retrieval context.
+
+**Provider must fail closed.** There is **no fallback embedding backend**. An auth error, quota error, or timeout raises; it never silently substitutes another model. The first implementation's bare `except: pass` fell back to a semantics-free SHA-256 hash function that happened to share MiniLM's 384 dimensions, so Chroma raised no error and dense retrieval may have been pure noise for the life of the index.
+
+**Provenance is recorded and asserted.** Every collection stores `embedding_model`, `embedding_version`, `dimension`, `corpus_checksum`, and `built_at`. The service asserts these against its config at startup and **refuses to serve on mismatch** rather than querying an index built by a different model.
 
 #### Stage 8: Vector Database
 
@@ -1368,19 +1397,26 @@ Each chunk carries **filterable, trading-specific metadata** enabling precise re
 
 **Storage schema per vector:**
 
-- Dense embedding vector (stored in Chroma collection)
+- Dense embedding vector of the **child** chunk (stored in Chroma collection)
 - Full metadata payload (§7.2 Stage 6) — filterable via Chroma `where` / `where_document`
-- Raw chunk text (document field)
-- BM25 keyword index maintained in application layer (`rank_bm25` over chunk corpus) for hybrid retrieval (§7.3)
+- Raw chunk text (document field) plus the `parent_id` needed for Stage 11b expansion
+- BM25 keyword index built by the **ingest job** and serialized to disk; the server loads it **read-only** at boot
+
+**BM25 must not be rebuilt per worker.** The first implementation held BM25 in a module-level singleton rebuilt from a full collection scan inside each Uvicorn worker, so every worker paid the scan independently and retrieval returned empty results until it finished — degrading silently to "insufficient context" answers.
+
+**Index builds are atomic.** Write into `knowledge_base__<build_id>`, verify counts and provenance, then flip the alias. Chunks from a superseded build are **deleted, not flagged** — the first implementation only set `deprecated=true`, so every re-ingest grew the collection permanently and slowed every scan.
 
 **Collections:**
 
 
-| Collection       | Purpose                             |
-| ---------------- | ----------------------------------- |
-| `knowledge_base` | Primary chunks from the four RAG PDFs |
-| `failure_memory` | Losing trade contexts for avoidance |
-| `trade_insights` | Post-trade RAG analysis summaries   |
+| Collection       | Purpose                             | Built in |
+| ---------------- | ----------------------------------- | -------- |
+| `knowledge_base` | Primary chunks from the four RAG PDFs | B3     |
+| `failure_memory` | Losing trade contexts for avoidance | B8       |
+| `trade_insights` | Post-trade RAG analysis summaries   | B8       |
+
+
+Retrieval across `knowledge_base` and the two memory collections must keep **provenance strictly separated** — a memory record describing one past trade must never be presentable as playbook doctrine.
 
 
 
@@ -1388,17 +1424,22 @@ Each chunk carries **filterable, trading-specific metadata** enabling precise re
 
 ```mermaid
 flowchart LR
-    Q[Query] --> QE[Query Expansion]
-    QE --> HF[Metadata Filters]
+    Q[Query] --> QR[Query Rewrite]
+    QR --> IC[Intent Classification]
+    IC -->|out_of_scope| REF[Refuse, no retrieval]
+    IC --> HF[Metadata Filters]
     HF --> HS[Hybrid Search]
-    HS --> V[Vector Search]
-    HS --> B[BM25 Search]
+    HS --> V[Dense: top 50]
+    HS --> B[BM25: top 50]
     V --> F[Reciprocal Rank Fusion]
     B --> F
-    F --> RR[Re-ranker: bge-reranker-large]
-    RR --> TOP[Top 5 Chunks]
-    TOP --> PB[Prompt Builder]
+    F --> RR[Vertex Ranking API]
+    RR --> TOP[Top 8 children]
+    TOP --> PE[Parent Expansion]
+    PE --> PB[Prompt Builder + S-markers]
     PB --> LLM[LLM Reasoning]
+    LLM --> VF[Citation Verification]
+    VF --> ANS[Answer or refusal]
 ```
 
 
@@ -1414,46 +1455,77 @@ flowchart LR
 | **Sparse (BM25)**  | Exact terminology     | "theta decay", "z-score", "Ornstein-Uhlenbeck" |
 
 
-**Fusion strategy:** Reciprocal Rank Fusion (RRF) or weighted linear combination.
+**Fusion strategy:** Reciprocal Rank Fusion (RRF, `k=60`) over dense top-50 and sparse top-50, weighted **equally**. Do not double-count either arm — the first implementation fused `[sparse, sparse, dense]` whenever dense looked empty, quietly turning a hybrid system into a keyword system.
 
 **Metadata filtering (pre-retrieval):**
 
-- Filter by `strategy`, `concepts`, `difficulty` when query intent is classified
+- Filter by `strategy`, `concepts`, `content_type`, `difficulty` when query intent is classified
 - Example: "gamma scalping retail limitations" → `strategy=Gamma Scalping`, `risk_category=Execution Risk`
+- **A filter error fails the request.** The first implementation caught filter exceptions and retried unfiltered, which could surface deprecated chunks while appearing to succeed.
+- **`comparison` intent fans out** into one sub-query per document, fused before re-ranking, so cross-document questions actually retrieve from more than one book.
+
+The taxonomy in Stage 6 exists to be used. The first implementation computed and stored `concepts`, `difficulty`, `risk_category`, `math_models`, and `content_type`, then filtered on none of them — and the one filter it did plumb through, `strategy`, was never sent by the UI.
 
 
 
 #### Stage 10: Re-ranking
 
 ```
-User Question → Top 50 candidates → Cross-encoder reranker → Top 5 → LLM
+User Question → Top 50 candidates → Vertex Ranking API → Top 8 children → parents → LLM
 ```
 
 
-| Component | Recommendation                       |
-| --------- | ------------------------------------ |
-| Re-ranker | `bge-reranker-large`                 |
-| Input     | Query + chunk text pairs             |
-| Output    | Relevance score; top-5 passed to LLM |
+| Component | Specification                                                                 |
+| --------- | ----------------------------------------------------------------------------- |
+| Re-ranker | Vertex AI Ranking API, `semantic-ranker-default@latest`                       |
+| Endpoint  | `discoveryengine.googleapis.com` → `rankingConfigs.rank`, location `global`   |
+| Input     | Query + `RankingRecord{id, title, content}` per candidate                     |
+| Output    | Relevance score per record; top 8 children expand to parents for the LLM      |
 
 
+**Hard vendor limits — both are design constraints, not tuning knobs:**
+
+
+| Limit                        | Value    | Consequence                                                                    |
+| ---------------------------- | -------- | -------------------------------------------------------------------------------- |
+| Tokens per record            | **512**  | Title + content combined, **silently truncated** beyond. This is why Stage 5 caps children at 450 tokens. Verify length before sending. |
+| Records per request          | **200**  | The 50-candidate pool fits comfortably; larger pools must be batched.          |
+
+
+**Failure behavior:** on timeout or error, fall back to RRF ordering **and set `degraded.rerank=true` on the response**. Never degrade silently.
+
+> **Superseded:** an earlier revision pinned the self-hosted cross-encoder `bge-reranker-large` over top-50 → top-5. Note that the first implementation shipped *no* re-ranker at all — it substituted `final_score = rrf_score + 0.01 × token_overlap`, which is a tiebreaker, not relevance modelling.
+
+
+
+
+#### Stage 10b: Parent Expansion (small-to-big)
+
+The re-ranker returns **children**; the LLM receives **parents**. Between the two:
+
+1. Deduplicate the top-8 children by `parent_id` — several children of one section collapse to a single parent.
+2. Fetch each parent section in full.
+3. Assemble in re-ranked order within a fixed context token budget, truncating the tail rather than the head.
+
+This is what buys both precision and context: scoring happens on 450-token units the cross-encoder can read whole, while generation happens on complete sections.
 
 
 #### Stage 11: Prompt Construction
 
-Every prompt includes structured context blocks:
+Every prompt includes structured context blocks, each tagged with a **source marker** the model must cite by:
 
 ```
 ## Context
 
-### Source 1
+### [S1]
 - Document: Gamma Scalping
 - Chapter: Chapter 5
 - Section: Dynamic Hedging
 - Page: 132
-- Content: [chunk text]
+- Chunk ID: doc-gamma_ch5_dynamic-hedging_c003
+- Content: [parent section text]
 
-### Source 2
+### [S2]
 ...
 
 ## Question
@@ -1461,24 +1533,40 @@ Every prompt includes structured context blocks:
 
 ## Instructions
 - Answer using retrieved context only
+- Mark every factual sentence with the source it came from, e.g. [S1]
 - Cite document, chapter/section, and page when available
 - State clearly if information is unavailable
 - Explain equations step by step when relevant
 ```
 
+**Markers are machine-parseable on purpose.** Stage 12 maps each `[Sn]` back to its `chunk_id` and verifies the claim against that chunk. Without them, faithfulness cannot be checked at all — which is precisely why the first implementation ended up hardcoding its faithfulness flag to `true`.
+
 
 
 #### Stage 12: LLM Reasoning Requirements (Groq)
 
-Responses are generated via the **Groq API** using the model configured in `GROQ_MODEL`. The LLM must:
+Responses are generated via the **Groq API** using the model configured in `GROQ_MODEL`, at temperature 0.1, behind a provider interface. The LLM must:
 
 - Ground answers in retrieved context
+- Mark every factual sentence with its `[Sn]` source (Stage 11)
 - Explain equations clearly
 - Compare concepts across documents when asked
 - Cite source document, section, and page
 - **Refuse to guess** when context is insufficient
 
-**Dual consumers:** The same retrieval stack serves (1) the **user chatbot** and (2) the AI Decision Engine during signal validation.
+**Post-generation citation verification** (this is a hard requirement, not a nicety):
+
+1. Parse every `[Sn]` marker and map it to the `chunk_id` it was assigned.
+2. **Reject any marker pointing at a chunk that was not retrieved** — a fabricated citation is worse than none.
+3. Check each claim against the text of the chunk it cites.
+4. Compute `faithfulness_ok` from the result. It **must be able to return `false`**.
+5. Below the grounding threshold, strip the unsupported claims or refuse outright.
+
+**There is no extractive fallback.** If the LLM is unavailable, return HTTP 503 with `degraded.generation=true`. The first implementation concatenated the top three chunks, truncated them to 520 characters each, wrapped them in boilerplate engineered to satisfy its own completeness validator, and presented the result as an answer — and because `GROQ_API_KEY` was empty in CI, this was the path every CI run exercised.
+
+**Dual consumers:** The same retrieval stack serves (1) the **user chatbot** and (2) the AI Decision Engine during signal validation, through **separate prompt profiles** (§10.7). A chat request must not be able to reach the decision profile or its data.
+
+**Retrieved content is data, never instructions.** Text extracted from a PDF must not be able to issue directives to the model; prompt-injection defence applies to corpus chunks, not just user input.
 
 
 
@@ -1497,27 +1585,52 @@ High-quality responses include:
 #### Stage 14: RAG Evaluation
 
 
-| Metric            | Purpose                       | Tool             | CI Gate (initial) |
-| ----------------- | ----------------------------- | ---------------- | ----------------- |
-| Context Precision | Retrieved chunks are relevant | Ragas            | ≥ 0.80            |
-| Context Recall    | Important chunks not missed   | Ragas            | ≥ 0.75            |
-| Faithfulness      | Answer grounded in context    | Ragas / DeepEval | ≥ 0.85            |
-| Answer Relevance  | Addresses the question        | Ragas            | ≥ 0.80            |
-| Citation Accuracy | Correct doc/section/page refs | Custom eval      | ≥ 0.90            |
+**The evaluation harness is built before the pipeline it measures** (phase B1, ahead of ingestion and retrieval). Without a working ruler there is no way to show a rebuild beat its predecessor.
+
+Metrics split into two tiers. **Retrieval metrics need no LLM**, so they run free, deterministically, and on every push:
 
 
-**Golden evaluation dataset** (`backend/knowledge/evaluation/golden_qa.jsonl`):
+| Metric            | Purpose                            | Tier      | CI Gate |
+| ----------------- | ---------------------------------- | --------- | ------- |
+| Recall@50         | Correct chunk reaches the re-ranker | Retrieval | ≥ 0.95  |
+| Recall@5          | Correct chunk survives re-ranking   | Retrieval | ≥ 0.85  |
+| Precision@5       | Retrieved chunks are relevant       | Retrieval | ≥ 0.80  |
+| MRR@10            | Correct chunk ranks near the top    | Retrieval | ≥ 0.75  |
+| Citation Accuracy | Correct doc/section/page refs       | Retrieval | ≥ 0.90  |
+| Refusal Recall    | Out-of-corpus questions are refused | Retrieval | ≥ 0.95  |
+| Faithfulness      | Answer grounded in cited chunks     | Judge     | ≥ 0.85  |
+| Answer Relevance  | Addresses the question              | Judge     | ≥ 0.80  |
+| Completeness      | Covers the reference answer         | Judge     | ≥ 0.75  |
 
-- **50–100 curated Q&A pairs** sourced from the four RAG PDFs
-- Categories: definitions, equations, cross-document comparisons, retail-limitation scenarios
-- Each row: `question`, `expected_chunk_ids[]`, `expected_citations[]`, `strategy_filter` (optional)
+
+**The judge model must differ from the generation model.** A generator grading its own grounding measures nothing.
+
+**Golden evaluation dataset** (`backend/knowledge/evaluation/golden/golden_qa.yaml`):
+
+- **≥ 60 curated Q&A pairs** (target 50–100) sourced from **all four** RAG PDFs
+- Categories: definition, derivation, procedure, risk_note, **cross-document comparison (≥ 10)**, numeric, and **out-of-corpus refusal (≥ 8)**
+- Ground truth is stored as `document_id` + `page_range` + `expected_quote` — **not** `chunk_id`s — so the set survives re-chunking. A resolver maps quotes to `chunk_id`s after each index build, and **an unresolvable quote fails the run**, which is how extraction gaps get caught.
+- Each row: `question`, `document_id`, `page_range`, `expected_quote`, `must_include_terms`, `must_not_include_terms`, `reference_answer`, `category`, `difficulty`, `expected_filters`
 - Run on every ingest and in CI; **block RAG-gated trading** if faithfulness falls below gate
+
+**Anti-circularity tests are mandatory.** The harness must FAIL on each of these, and these tests are what prove the gate can fail at all:
+
+1. An answer that is the retrieved context pasted back verbatim
+2. A confident answer to a question the corpus does not cover
+3. Citations pointing at chunks that were never retrieved
+4. A plausible answer containing fabricated numbers
+
+> The first implementation's gate satisfied none of these. With `GROQ_API_KEY=""` in CI, the "answer" was the retrieved chunks concatenated, then scored for token overlap against those same chunks — a measurement that could not fail. Treat any faithfulness number produced without these four tests as unverified.
+
+**CI runs keyless on recorded fixtures.** Vertex embedding, rerank, and judge responses are recorded and replayed; a **cache miss is a hard failure**, never a substituted backend. CI's need to run without credentials is exactly what produced the hash-embedding fallback the first time.
 
 **Chunk regression tests** (`backend/tests/knowledge/`):
 
 - Assert equations and Greek symbols survive PDF extraction and chunking
 - Assert tables retain row/column structure after chunking
 - Assert no mid-equation or mid-table splits across chunk boundaries
+- Assert no child chunk exceeds 450 tokens (the Stage 10 truncation guard)
+- Assert page-coverage is 100% per document before an index build is allowed
 - Golden-file fixtures for known sections (e.g., gamma scalping hedge rules, vol smile definitions)
 
 
@@ -1527,8 +1640,8 @@ High-quality responses include:
 
 | Consumer               | Query Type                                   | Retrieval Profile                           |
 | ---------------------- | -------------------------------------------- | ------------------------------------------- |
-| **User Chatbot (UI)**  | Operator / trader Q&A                        | Full hybrid + rerank; top-5 chunks          |
-| **AI Decision Engine** | Validate signal against playbook methodology | Filter by strategy + concepts; top-3 chunks |
+| **User Chatbot (UI)**  | Operator / trader Q&A                        | Full hybrid + rerank; top-8 children → parents |
+| **AI Decision Engine** | Validate signal against playbook methodology | Filter by strategy + concepts; top-3 children → parents |
 | **Learning Engine**    | Post-trade failure analysis                  | Filter by strategy + risk_category          |
 | **Failure Memory**     | Store losing trade context                   | Write to `failure_memory` collection        |
 
@@ -1554,19 +1667,22 @@ High-quality responses include:
 #### Re-ingest versioning
 
 
-| Event              | Action                                                                                |
-| ------------------ | ------------------------------------------------------------------------------------- |
-| Document version bump | Tag old chunks `deprecated=true` in metadata; ingest new version with `version` field |
-| Re-ingest complete | Rebuild BM25 index from active (non-deprecated) chunks                                |
-| Rollback           | Re-enable prior version collection; deprecate failed ingest                           |
+| Event                 | Action                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------ |
+| Document version bump | Build a new `knowledge_base__<build_id>` collection; verify counts and provenance; flip the alias |
+| Re-ingest complete    | Rebuild the BM25 artifact from the new build; **delete** the superseded collection                |
+| Rollback              | Flip the alias back to the prior build, which is still intact until explicitly deleted            |
 
 
-**BM25 ↔ Chroma sync:** The application-layer BM25 corpus must be rebuilt atomically after every ingest job. Ingest job emits `ingest.complete` event; retrieval layer refuses queries until BM25 rebuild finishes.
+Retaining superseded chunks in place with a `deprecated=true` flag is **not** acceptable — it grows the collection without bound and slows every scan. Keep whole builds and swap between them instead.
+
+**BM25 ↔ Chroma sync:** BM25 is built by the **ingest job**, serialized alongside the collection it indexes, and loaded read-only by the server. The two are versioned together by `build_id`, so they cannot drift and no runtime rebuild window exists.
 
 #### Faithfulness enforcement
 
-- Decision and chat prompts require **citation blocks** in structured output
-- Post-generation check: every factual claim must map to a retrieved `chunk_id`
+- Decision and chat prompts require **`[Sn]` source markers** on every factual sentence (Stage 11)
+- Post-generation check: every claim must map to a `chunk_id` that was **actually retrieved**; markers pointing elsewhere are rejected
+- `faithfulness_ok` is **computed, never assumed** — a value that cannot be `false` is a bug, not a passing grade
 - Unfaithful or uncited responses downgrade confidence and block autonomous execution
 
 
@@ -1595,11 +1711,17 @@ The **user chatbot** is a permanent product surface in the final frontend—not 
 
 #### Backend contract
 
+The frozen contract lives in `Docs/RAG_Contract.md` (written in phase B0.11, before implementation).
+
+
 | Endpoint | Role |
 | --- | --- |
 | `POST /api/v1/chat` | Accept user message (+ optional filters / decision context); return grounded answer + citations |
-| `POST /api/v1/knowledge/ingest` | Operator-triggered re-ingest of the four PDFs |
-| `GET /api/v1/knowledge/status` | Ingest version, chunk counts per `doc_id`, last eval scores |
+| `POST /api/v1/chat/stream` | Same, as Server-Sent Events; `ttft_ms` measured at the **genuine** first token |
+| `POST /api/v1/knowledge/ingest` | **Admin-authenticated, enqueue-only.** The actual work is the CLI job `scripts/knowledge/ingest.py` |
+| `GET /api/v1/knowledge/status` | Ingest version, chunk counts per `doc_id`, index provenance, last eval scores |
+
+Re-ingest must never run inline in an HTTP request, and the ingest endpoint must never be reachable unauthenticated — the first implementation allowed anyone to trigger an unbounded full re-index.
 
 **Request shape (illustrative):**
 
@@ -1616,25 +1738,33 @@ The **user chatbot** is a permanent product surface in the final frontend—not 
 
 ```json
 {
-  "answer": "...",
+  "answer": "Rebalance when net delta drifts beyond your hedge band [S1]...",
   "citations": [
     {
+      "marker": "S1",
       "document_id": "doc-gamma",
       "document": "Gamma Scalping",
+      "chapter": "Chapter 5",
       "section": "Dynamic Hedging",
       "page": 132,
       "chunk_id": "doc-gamma_ch5_dynamic-hedging_c003"
     }
   ],
-  "faithfulness_ok": true
+  "faithfulness": { "ok": true, "score": 0.91, "unsupported_claims": [] },
+  "degraded": { "rerank": false, "generation": false },
+  "ttft_ms": 412
 }
 ```
 
+**Conversation state:** history is persisted per `session_id` over an N-turn window and feeds query rewriting, so follow-ups resolve their own pronouns. The first implementation was stateless — `session_id` keyed nothing but a consistency memo — which made every follow-up question retrieve against a fragment.
+
 #### UX requirements
 
-- Stream or return complete answers with **visible citations** (document + section + page)
-- Optional **strategy filter** chips (Volatility / Gamma / Vega / Trading Strategies)
-- Clear empty and error states when retrieval is empty or faithfulness check fails
+- **Stream** answers token-by-token with **visible citations** (document + section + page) resolved from `[Sn]` markers
+- Optional **strategy filter** chips (Volatility / Gamma / Vega / Trading Strategies) — and the UI must actually **send** the selected filter
+- Four states must be distinguishable: normal answer, **refusal** (nothing relevant in the corpus, naming what was searched), **degraded** (re-ranker or generator unavailable), and error
+- Multi-turn conversation with follow-up questions
+- Retrieval-debug drawer behind a feature flag for operator diagnosis
 - Do **not** expose broker credentials, order submission, or kill-switch controls through chat
 - Chat never executes trades; it explains and educates only
 
@@ -2748,15 +2878,18 @@ Fast-path orders still pass pre-trade risk gate (§11.4) and transaction cost ga
 
 ### 10.7 Prompt Profiles
 
-Separate prompt templates in `backend/llm/prompts/` — do not share chat and decision prompts.
+Separate prompt templates in `backend/knowledge/generation/prompts/` — do not share chat and decision prompts.
+
+**These must be files on disk, not inline Python strings.** Eval gate EB-F requires demonstrable isolation: a chat request must not be able to reach the decision profile or its data. The first implementation kept both as inline strings in `chat_service.py`, so the gate could not be evidenced at all.
 
 
-| Profile        | File                     | Output                     | Constraints                         |
-| -------------- | ------------------------ | -------------------------- | ----------------------------------- |
-| **Decision**   | `decision_validate.json` | Strict JSON schema (§10.5) | Max 512 tokens; citations required  |
-| **Chat**       | `chat_answer.json`       | Markdown with citations    | Verbose allowed; faithfulness check |
-| **Enrichment** | `metadata_classify.json` | Label JSON                 | Batch offline only                  |
-| **Post-trade** | `failure_analysis.json`  | Structured failure summary | Writes to `failure_memory`          |
+| Profile        | File                     | Output                       | Constraints                             |
+| -------------- | ------------------------ | ---------------------------- | --------------------------------------- |
+| **Decision**   | `decision.json`          | Strict JSON schema (§10.5)   | Max 512 tokens; citations required      |
+| **Chat**       | `chat.json`              | Markdown with `[Sn]` markers | Verbose allowed; faithfulness verified  |
+| **Judge**      | `judge.json`             | Grounding verdict per claim  | Model must differ from the generator    |
+| **Enrichment** | `metadata_classify.json` | Label JSON                   | Batch offline only                      |
+| **Post-trade** | `failure_analysis.json`  | Structured failure summary   | Writes to `failure_memory`              |
 
 
 ---
@@ -4401,17 +4534,17 @@ Use **Option A or B** for Phase 1a vertical slice; migrate to **Option C** when 
 | **Bot scheduler**       | APScheduler or Celery Beat                                               |
 | **Orchestration**       | LangChain or LlamaIndex                                                  |
 | **Markdown parsing**    | Python-Markdown (AST) + custom table splitter                            |
-| **Embeddings**          | `bge-m3` (primary); `bge-large-en-v1.5` fallback                         |
+| **Embeddings**          | Vertex AI `gemini-embedding-001` (3072-d); no fallback backend           |
 | **Vector DB**           | **ChromaDB** (`chromadb` client; embedded or HTTP server)                |
-| **Keyword search**      | BM25 (`rank_bm25` in application layer, fused with Chroma dense results) |
-| **Re-ranker**           | `bge-reranker-large`                                                     |
+| **Keyword search**      | BM25 (`rank_bm25`, built at ingest, loaded read-only, fused with Chroma dense results) |
+| **Re-ranker**           | Vertex AI Ranking API — `semantic-ranker-default@latest`                 |
 | **Historical data**     | Parquet (replay/OHLCV) + PostgreSQL metadata                             |
 | **Orchestration**       | Direct `chromadb` / `groq` clients; LangChain optional for chains only   |
 | **LLM**                 | **Groq API** (`groq` SDK) — `llama-3.3-70b-versatile` (primary)          |
 | **Quant / ML**          | pandas, numpy, scipy, statsmodels, scikit-learn, Optuna                  |
 | **Broker**              | ICICI Direct Breeze API (`breeze-connect` / REST + WS)                   |
 | **Persistence**         | PostgreSQL + Redis                                                       |
-| **RAG evaluation**      | Ragas + DeepEval                                                         |
+| **RAG evaluation**      | In-house harness (retrieval metrics + independent judge model) — §7.2 Stage 14 |
 | **Frontend deployment** | **Paper: Vercel** · **Live: Cloud Run** (Buildpacks from `frontend/`)    |
 | **Backend deployment**  | **Paper: Railway Nixpacks** · **Live: Cloud Run** (Buildpacks) + Cloud SQL + Memorystore |
 | **CI/CD**               | **Paper:** Vercel + Railway Git · **Live:** Cloud Buildpacks → Artifact Registry → Cloud Run |
@@ -4496,7 +4629,7 @@ Project root/
 | Repo layout                  | Standalone `frontend/` + `backend/` folders                               | Independent builds, clear deploy boundaries, separate env configs          |
 | Monolith vs. microservices   | Modular monolith in `backend/`; split into API + worker **processes** at Phase 1  | Faster MVP; clear module boundaries; 99% uptime without microservice sprawl (§17.7)                |
 | ChromaDB vs. Pinecone/Qdrant | **ChromaDB**                                                                      | Native Python integration, metadata filtering, embedded or server mode, no external vendor lock-in |
-| bge-m3 vs. OpenAI embeddings | **bge-m3** + **bge-reranker-large**                                               | Strong on technical text; cost control; pinned stack                                               |
+| Embedding / re-ranker stack  | **Vertex AI** `gemini-embedding-001` + Ranking API                                | Managed; no multi-GB model files, cold starts, or memory tier bump. Reached by **API only** until Phase 5 — no GCP infrastructure. Supersedes the earlier self-hosted `bge-m3` + `bge-reranker-large` pin. |
 | Autonomous vs. manual      | **Graduated supervision** (`supervised` → `semi_autonomous` → `fully_autonomous`) + kill-switch | Phase 2 default on paper is supervised; autonomy earned via promotion checklist (§6.2.2, §21) |
 | Quant vs. LLM authority      | **Quant leads**                                                                   | Rules for mechanical hedges; LLM gates discretionary entries                                       |
 | Embedded vs. HTTP Chroma     | Embedded local / HTTP prod                                                        | Same `chromadb` API; GCE persistent disk or Chroma Cloud for MVP; Filestore for production (§17.8) |
@@ -4519,7 +4652,8 @@ Project root/
 | 3   | Historical data storage                    | **Parquet** (replay/OHLCV) + PostgreSQL (metadata)                                     | **Resolved**                     |
 | 4   | Regime classifier (initial)                | **Rule-based** (VIX percentile, HV/IV ratio, trend); ML/HMM Phase 4                    | **Resolved**                     |
 | 5   | Multi-leg option orders                    | **Phase 1 paper_sim** auto-complete without consent (same open rules); live sequential + rollback Phase 5 | **Resolved**                     |
-| 6   | Embedding / reranker stack                 | **bge-m3** + **bge-reranker-large**                                                    | **Resolved**                     |
+| 6   | Embedding / reranker stack                 | **Vertex AI** `gemini-embedding-001` + Ranking API (`semantic-ranker-default@latest`); API-only until Phase 5 | **Resolved** — revised; supersedes `bge-m3` + `bge-reranker-large` |
+| 6a  | Track B1 rebuild                           | First implementation un-implemented; rebuilt across phases B0–B9 with the evaluation harness built first | **Resolved** — `implementation_plan.md` §9 |
 | 7   | Primary broker (Phase 2+)                  | ICICI Direct remains sole broker; deepen multi-leg / NFO coverage                         | **Resolved**                     |
 | 8   | Regime classifier (advanced)               | HMM vs. ML classifier                                                                  | Open                             |
 | 9   | Process topology for production            | API + worker split (`PROCESS_ROLE`); MVP stays `all`                                   | **Resolved** — §6.1.4, §17.7     |
@@ -4814,11 +4948,22 @@ flowchart LR
 
 RAG powers explanations and LLM validation. It **must not delay** Phase 0–1 paper rehearsal. Start after scaffold exists; **complete before** Groq gates discretionary entries in Phase 2+.
 
+The original B1/B2/B3 steps are **retired**. The first implementation was un-implemented and is being rebuilt across ten phases. `Docs/implementation_plan.md` §9 carries the full work-item breakdown and per-phase exit gates; the summary below is for sequencing only.
+
 | Step | Deliverable | When |
 | ---- | ----------- | ---- |
-| **B1** | One PDF → ChromaDB → `POST /api/v1/chat` → `/chat` UI + golden eval CI | Parallel with Phase 0–1 |
-| **B2** | Remaining three PDFs + faithfulness ≥ 0.85 | Before LLM-gated trading |
-| **B3** | Ask AI from decision cards | Phase 2 cockpit |
+| **B0** | Teardown of the first implementation; frozen chat contract; Vertex AI API access (no GCP infrastructure) | Parallel with Phase 0 |
+| **B1** | Evaluation harness **first** — golden set, retrieval metrics, judge, anti-circularity tests, merge-blocking CI | Parallel with Phase 0 |
+| **B2** | Ingestion of all four PDFs: extraction coverage gate, structural parse, parent/child chunking, enrichment | Parallel with Phase 1 |
+| **B3** | Index + hybrid retrieval + Vertex re-ranking; provenance assertions | Parallel with Phase 1 |
+| **B4** | Query rewriting, intent classification, metadata filters actually applied | Parallel with Phase 1 |
+| **B5** | Grounded generation with verified citations; faithfulness ≥ 0.85 measured for real | Parallel with Phase 1 |
+| **B6** | Chat surface rebuild — streaming, multi-turn, async correctness | **Gates Phase 2** |
+| **B7** | Ask AI from decision cards | Phase 2 cockpit |
+| **B8** | `failure_memory` + `trade_insights` collections | After Phase 1 closed trades |
+| **B9** | GCP productionization — Chroma on Cloud Run + Filestore, Workload Identity, ingest as a Cloud Run Job | With Phase 5 |
+
+**GCP boundary:** B0–B8 reach Vertex AI by **API call only**, authenticated by a service account key, which works from a local machine and from Railway. GCP **infrastructure** (Cloud Run, Cloud SQL, Memorystore, VPC, static egress IP) remains deferred to Phase 5 / B9 per §17.8.
 
 ### Phase 0: Paper Scaffold & ICICI Direct Data-Only (Weeks 1–2)
 
@@ -4921,7 +5066,9 @@ Maps to ICICI Direct phases **A4–A6** (§11.15) + GCP §17.8. Do **not** flip 
 | ------------------ | ------------------------------------------------------- | ---------------------------------------- | --------------------------------------------------- |
 | **Unit**           | BSM pricing, Greeks, z-score, chunking, cost model      | `backend/tests/unit/`                    | Every push                                          |
 | **Integration**    | Chroma retrieve, Groq mock, feed parser, paper-sim fills | `backend/tests/integration/`             | Every push                                          |
-| **RAG regression** | Golden queries → expected `chunk_id`s + faithfulness    | `backend/tests/knowledge/`               | Every push; **blocks merge** if faithfulness < 0.85 |
+| **RAG retrieval eval** | Golden queries → recall / precision / MRR / citations. **No LLM**, replayed fixtures | `backend/knowledge/evaluation/`      | Every push; **blocks merge** on regression vs. committed baseline |
+| **RAG faithfulness eval** | Judge-scored grounding + anti-circularity tests      | `backend/knowledge/evaluation/`          | Every push; **blocks merge** if faithfulness < 0.85 |
+| **Chunk regression** | Equation/table preservation; child ≤ 450 tokens        | `backend/tests/knowledge/`               | Every push                                          |
 | **OSS parity**     | Pricing/Greeks vs OSS fixtures                          | `backend/tests/quant/test_oss_parity.py` | Every push                                          |
 | **Replay E2E**     | Parquet replay day → decision log (no live broker)      | `backend/tests/e2e/`                     | Nightly                                             |
 | **Shadow run**     | Full decision path; zero broker submits                 | Staging                                  | ≥ 1 week before `EXECUTION_MODE=paper`              |
@@ -4942,10 +5089,15 @@ Push / PR
               ├── ruff / mypy lint
               ├── pytest unit + integration
               ├── OSS parity tests
-              ├── RAG golden eval (faithfulness ≥ 0.85)
+              ├── RAG golden eval — separate job, replayed fixtures
+              │     ├── retrieval metrics vs. committed baseline
+              │     ├── faithfulness ≥ 0.85 (independent judge)
+              │     └── anti-circularity tests must fail the gate
               ├── (optional) Nixpacks / Buildpacks smoke on CI runners
               └── (nightly) replay E2E
 ```
+
+The RAG eval is a **separate job from the unit-test step**, so a green `pytest` run can never be mistaken for a green quality gate. It runs keyless on recorded Vertex fixtures; a **fixture cache miss fails the build** rather than falling back to a substitute model.
 
 
 
@@ -4955,7 +5107,9 @@ Push / PR
 | Fixture             | Path                                           | Purpose                     |
 | ------------------- | ---------------------------------------------- | --------------------------- |
 | OSS reference JSON  | `backend/tests/fixtures/oss/`                  | BSM parity                  |
-| Golden Q&A          | `backend/knowledge/evaluation/golden_qa.jsonl` | RAG regression              |
+| Golden Q&A          | `backend/knowledge/evaluation/golden/golden_qa.yaml` | RAG regression        |
+| Eval baselines      | `backend/knowledge/evaluation/baselines/`      | Regression comparison       |
+| Vertex call fixtures | `backend/knowledge/evaluation/fixtures/`      | Keyless deterministic CI    |
 | Chunk golden files  | `backend/tests/fixtures/chunks/`               | Equation/table preservation |
 | Replay Parquet      | `backend/tests/fixtures/replay/`               | Deterministic E2E           |
 | Market data samples | `backend/tests/fixtures/feeds/`                | Feed adapter tests          |
@@ -4968,8 +5122,8 @@ Push / PR
 
 | Phase  | Gate                                                                                  |
 | ------ | ------------------------------------------------------------------------------------- |
-| **1a** | Chat returns cited answers; RAG faithfulness ≥ 0.85 on golden set                     |
-| **1b** | OSS parity tests pass; both knowledge docs ingested                                   |
+| **1a** | Chat returns cited answers whose `[Sn]` markers resolve to retrieved `chunk_id`s; RAG faithfulness ≥ 0.85 on the golden set, measured by an independent judge, with anti-circularity tests passing |
+| **1b** | OSS parity tests pass; **all four** knowledge docs ingested at 100% page coverage      |
 | **2**  | Replay E2E produces decision log; ICICI Direct shadow order mapping + paper-sim round-trip |
 | **3**  | Bot runs one full market day in `supervised` with Approve/Reject; kill-switch works |
 | **4**  | 2–4 week soak meets ≥ 1 of 4 success metrics (§2.2); `semi_autonomous` checklist passable |
@@ -5189,7 +5343,7 @@ Research question #4 shifted from *"Can AI-assisted decision support improve und
 | -------------- | ------------------------ | ------------------------------------------------- |
 | LLM            | GPT-5.5 (generic API)    | **Groq** — `llama-3.3-70b-versatile`              |
 | Vector DB      | Qdrant or Chroma (local) | **ChromaDB** (embedded dev / HTTP prod)           |
-| Embeddings     | bge-m3 or OpenAI         | **bge-m3** + **bge-reranker-large**               |
+| Embeddings     | bge-m3 or OpenAI         | **Vertex AI** `gemini-embedding-001` + Ranking API |
 | Orchestration  | LangChain or LlamaIndex  | Direct clients; LangChain optional                |
 | Frontend       | Streamlit or Next.js     | **Next.js** — Vercel (paper) / Cloud Run (live)   |
 | Backend deploy | Railway (mentioned)      | **Railway** (paper) · **GCP Cloud Run** (live, `infra/cloud-inventory.yaml`) |

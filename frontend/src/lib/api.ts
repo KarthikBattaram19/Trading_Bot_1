@@ -32,7 +32,6 @@ import type {
 } from "@/types/paper-sim";
 import type { MarketIndicesResponse } from "@/types/market";
 import type { RiskSnapshot } from "@/types/risk";
-import type { ChatRequest, ChatResponse } from "@/types/chat";
 import { mockRiskSnapshot } from "@/lib/risk-mock";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -370,83 +369,3 @@ export async function recordTradeOutcome(
   return res.json() as Promise<TradeOutcomeRecord>;
 }
 
-function mockChatAnswer(message: string): ChatResponse {
-  const tokens = new Set(message.toLowerCase().match(/[a-z0-9]+/g) ?? []);
-  if (tokens.has("gamma") || tokens.has("scalp") || tokens.has("rebalance")) {
-    return {
-      answer:
-        "Rebalance a gamma scalp when the net delta drifts beyond your hedge threshold (commonly driven by underlying moves and remaining gamma). In practice, retail traders should widen rebalance bands to limit transaction costs and slippage. Risks and assumptions: hedge frequency must stay retail-realistic; stale quotes and wide spreads can erase scalping edge.",
-      citations: [
-        {
-          document_id: "doc-gamma",
-          document: "Gamma Scalping",
-          section: "Dynamic Hedging",
-          page: 132,
-          chunk_id: "doc-gamma_ch5_dynamic-hedging_c003",
-        },
-      ],
-      faithfulness_ok: true,
-      quality_action: "pass_through",
-      metadata: { mock: true },
-    };
-  }
-  if (tokens.has("vega") || tokens.has("implied") || tokens.has("volatility")) {
-    return {
-      answer:
-        "Vega scalping seeks to monetize changes in implied volatility while managing directional exposure. Therefore, entries typically favor mispriced IV relative to a forecast, with hedges for delta. Practical trading implications for retail include capital limits and bid-ask costs on options. Risks and assumptions: IV can remain mispriced longer than expected; liquidity may vanish in stress.",
-      citations: [
-        {
-          document_id: "doc-vega",
-          document: "Vega Scalping",
-          section: "Vega Trading Framework",
-          page: 48,
-          chunk_id: "doc-vega_ch3_framework_c012",
-        },
-      ],
-      faithfulness_ok: true,
-      quality_action: "pass_through",
-      metadata: { mock: true },
-    };
-  }
-  if (tokens.has("theta") || tokens.has("decay") || tokens.has("delta") || tokens.has("garch")) {
-    return {
-      answer:
-        "Theta measures time decay of option premium in a long-premium delta hedge; gamma and vega gains must beat theta. A delta hedge removes direction so you trade volatility. Entry often favors implied volatility below a GARCH(1,1) forecast on liquid ATM options. Practical trading implications for retail include margin and liquidity. Risks and assumptions: calm markets and model error can erase edge.",
-      citations: [
-        {
-          document_id: "doc-vol-trading",
-          document: "Volatility Trading",
-          section: "Option Greeks",
-          page: 19,
-          chunk_id: "doc-vol-trading_option-greeks_mock",
-        },
-      ],
-      faithfulness_ok: true,
-      quality_action: "pass_through",
-      metadata: { mock: true },
-    };
-  }
-  return {
-    answer:
-      "I do not have enough grounded context in the knowledge base for that question yet. Try asking about gamma scalping rebalances, vega/IV trades, or theta decay. Risks and assumptions: without retrieved citations the answer should not gate trades.",
-    citations: [],
-    faithfulness_ok: false,
-    quality_action: "pass_through",
-    metadata: { mock: true },
-  };
-}
-
-export async function postChat(request: ChatRequest): Promise<ChatResponse> {
-  if (useMockData()) return mockChatAnswer(request.message);
-
-  const res = await fetch(`${API_URL}/api/v1/chat`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(request),
-  });
-  if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`Chat failed: ${res.status} ${text}`);
-  }
-  return res.json() as Promise<ChatResponse>;
-}

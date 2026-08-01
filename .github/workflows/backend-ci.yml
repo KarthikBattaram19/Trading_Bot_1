@@ -21,9 +21,6 @@ jobs:
       EXECUTION_MODE: paper
       ALLOW_LIVE_PLACE_ORDER: "false"
       PYTHONPATH: ${{ github.workspace }}
-      EMBEDDING_BACKEND: hash
-      RAG_AUTO_INGEST: "1"
-      GROQ_API_KEY: ""
 
     steps:
       - uses: actions/checkout@v4

@@ -213,12 +213,6 @@ export function ApprovalCard({
           <Icon name="close" className="text-[18px]" />
           {loading === "reject" ? "Rejecting…" : "Reject"}
         </Button>
-        <Link href={`/chat?decision=${decision.decision_id}`}>
-          <Button variant="ghost">
-            <Icon name="auto_awesome" className="text-[18px]" />
-            Ask AI
-          </Button>
-        </Link>
         <Button
           variant="primary"
           disabled={!canApprove || loading !== null}

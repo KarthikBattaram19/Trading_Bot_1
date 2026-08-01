@@ -167,7 +167,7 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 
 **Goal:** Operator approves discretionary paper entries; mechanical hedges auto.  
 **Modes:** `EXECUTION_MODE=paper`, `SUPERVISION_MODE=supervised`.  
-**Prerequisite:** Track B golden eval **green** before enabling Groq discretionary gate (AI-06, plan 2.5).
+**Prerequisite:** Track B phases **B0–B6 complete** and the golden eval **green** before enabling the Groq discretionary gate (AI-06, plan 2.5). "Green" means EB-A through EB-H, including the EB-G anti-circularity tests — a faithfulness number recorded without those is not evidence.
 
 ### 4.1 Work-item checklist
 
@@ -177,7 +177,7 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 | 2.2 | Approve / Reject APIs; no auto-submit on timeout | Integration (SU-01) | Yes |
 | 2.3 | Supervised cockpit (decision queue) | Manual vs `UI_Dashboard.md` | Yes |
 | 2.4 | One-trade gate, circuit breakers, auto-pause, kill-switch | Integration + Manual | Yes |
-| 2.5 | AI validator only if Track B PASS | CI faithfulness ≥ 0.85 | Yes |
+| 2.5 | AI validator only if Track B **B6** PASS | CI faithfulness ≥ 0.85 with EB-G green | Yes |
 | 2.6 | Live-path multi-leg builder polish; ICICI Direct multi-leg dry-run only (paper auto-complete = Phase 1.1a) | Integration | Yes |
 
 Also required (architecture §21 Phase 2):
@@ -399,22 +399,37 @@ Confirm drafted and reviewed:
 
 ### 8.1 Steps
 
+> The original B1/B2/B3 steps are **retired**. The first implementation was un-implemented and is being rebuilt across ten phases; `Docs/implementation_plan.md` §9 is the authority for work items and per-phase exit criteria.
+
 | Step | Deliverable | Timing | Must before |
 | ---- | ----------- | ------ | ----------- |
-| **B1** | One PDF → Chroma → `POST /chat` + UI + golden eval CI | With Phase 0–1 | LLM gate off until B2 |
-| **B2** | Remaining PDFs; faithfulness ≥ 0.85 | Before LLM trading | Phase 2.5 / AI validator |
-| **B3** | Ask AI from decision cards | Phase 2 cockpit | Optional UX; still no secret leak |
+| **B0** | Teardown; frozen chat contract; Vertex AI API access (no GCP infrastructure) | With Phase 0 | — |
+| **B1** | **Evaluation harness first** — golden set, retrieval metrics, judge, anti-circularity tests, merge-blocking CI | With Phase 0 | Any claim that the rebuild is better |
+| **B2** | Ingestion of all four PDFs; coverage gate; parent/child chunking | With Phase 1 | B3 |
+| **B3** | Index + hybrid retrieval + Vertex re-ranking; provenance assertions | With Phase 1 | B4 |
+| **B4** | Query rewriting, intent classification, metadata filters applied | With Phase 1 | B5 |
+| **B5** | Grounded generation with verified citations; faithfulness ≥ 0.85 measured for real | With Phase 1 | LLM-gated trading |
+| **B6** | Chat surface — streaming, multi-turn, async correctness | With Phase 1 | **Phase 2.5 / AI validator** |
+| **B7** | Ask AI from decision cards | Phase 2 cockpit | Optional UX; still no secret leak |
+| **B8** | `failure_memory` + `trade_insights` | After Phase 1 closed trades | — |
+| **B9** | GCP productionization | With Phase 5 | Live LLM-gated decisions |
+
+**Retired step mapping:** old B1 → B0–B6 (with all four PDFs from B2); old B2 → B2 + B5; old B3 → B7.
 
 ### 8.2 Exit gates
 
-| Gate | Pass when |
-| ---- | --------- |
-| **EB-A** | Chat returns cited answers; citations map to retrieved `chunk_id`s (AI-14) |
-| **EB-B** | Golden eval CI faithfulness ≥ 0.85 (AI-05, CH-07) |
-| **EB-C** | Empty Chroma / Chroma down → chat degrade; discretionary RAG gate fails closed (AI-13) |
-| **EB-D** | Chatbot refuses API keys / broker secrets (A-07) |
-| **EB-E** | Ask AI on stale packet warns / recomputes (SU-12) |
-| **EB-F** | Separate chat vs decision prompt profiles (AI-12) |
+| Gate | Pass when | Closes in |
+| ---- | --------- | --------- |
+| **EB-A** | Chat returns cited answers; every `[Sn]` marker maps to a `chunk_id` that was actually retrieved (AI-14) | B5 |
+| **EB-B** | Golden eval CI faithfulness ≥ 0.85, scored by a judge model **different from the generator** (AI-05, CH-07) | B5 |
+| **EB-C** | Empty Chroma / Chroma down → chat degrades explicitly; discretionary RAG gate fails closed (AI-13) | B5 |
+| **EB-D** | Chatbot refuses API keys / broker secrets (A-07) | B5, extended in B7 |
+| **EB-E** | Ask AI on stale packet warns / recomputes (SU-12) | B7 |
+| **EB-F** | Separate chat vs decision prompt profiles, loaded from files, with an isolation test (AI-12) | B5 |
+| **EB-G** | **Anti-circularity:** the harness FAILS on a context-pasted answer, a confident out-of-corpus answer, citations to un-retrieved chunks, and fabricated numbers | B1 |
+| **EB-H** | **No silent fallbacks:** an induced embedding, re-ranker, or filter failure produces an error or a `degraded.*` flag — never a quietly lower-quality answer | B3, B5 |
+
+> **EB-G exists because the previous gate was unfalsifiable.** With `GROQ_API_KEY=""` in CI, the answer was the retrieved chunks concatenated and then scored for overlap against those same chunks, so EB-B passed without measuring anything. A faithfulness number recorded without EB-G green should be treated as unverified.
 
 ### 8.3 Sign-off (required before Groq entry gating)
 
