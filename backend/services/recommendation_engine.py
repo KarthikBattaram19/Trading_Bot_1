@@ -44,6 +44,7 @@ from backend.services.candle_history import fetch_daily_closes, fetch_realized_v
 from backend.services.earnings_calendar import EarningsCalendarStore, session_date_ist
 from backend.services.feed_health import get_feed_sources
 from backend.services.iv_history_store import IvHistoryStore
+from backend.services.confidence_calibrator import ConfidenceCalibrator
 from backend.services.learning_service import get_learning_service
 from backend.services.market_news import get_market_news
 from backend.services.quant_snapshot import (
@@ -754,6 +755,7 @@ async def generate_recommendations(
         news = get_market_news(force_refresh=True)
     sources = get_feed_sources()
     learning = get_learning_service()
+    calibrator = ConfidenceCalibrator()
 
     universe, feed_bindings, universe_source, enrich_stats, snapshots = await _build_universe()
     scanned = len(snapshots) if snapshots else len(universe)
@@ -851,7 +853,31 @@ async def generate_recommendations(
         else:
             draft.complete_logic.append(f"12. Learning: {insight.learning_note}")
 
-        draft.confidence = insight.confidence_after
+        raw_after = insight.confidence_after
+        conf, cal_status, conf_source = calibrator.apply(
+            raw_after, strategy.selected_strategy.value
+        )
+        draft.raw_confidence = raw_after
+        draft.confidence = conf
+        draft.calibration_status = cal_status
+        draft.confidence_source = conf_source
+        insight.confidence_after = conf
+        insight.calibration_status = cal_status
+        insight.confidence_source = conf_source
+        if cal_status == "calibrated":
+            draft.complete_logic.append(
+                f"13. Confidence calibration: P(win)={conf:.0%} via outcome map "
+                f"(raw after learning={raw_after:.0%})."
+            )
+            score_bd.components.append(
+                f"Calibrated confidence {conf:.3f} (source=outcome_map; "
+                f"raw={raw_after:.3f})"
+            )
+        else:
+            draft.complete_logic.append(
+                "13. Confidence calibration: uncalibrated heuristic "
+                f"(min(0.95, score+0.05) after learning) = {conf:.0%}."
+            )
         draft.learning = insight
         draft.score_breakdown = score_bd
         ranked.append(draft)
@@ -869,6 +895,7 @@ async def generate_recommendations(
     for rec in top3:
         rec.why_this_rank = _why_this_rank(rec.rank, rec, top3)
 
+    calibrated_n = sum(1 for r in top3 if r.calibration_status == "calibrated")
     notes = [
         f"Scanned {scanned} instruments from feed-bound universe (G11–G12).",
         (
@@ -884,6 +911,12 @@ async def generate_recommendations(
         f"Live-ranked candidates: {len(universe)}.",
         f"{passing} passed all options-only retail gates (I21).",
         f"Confidence floor: only candidates with confidence ≥ {min_confidence:.0%} are recommended.",
+        (
+            f"Confidence calibration: {calibrated_n}/{len(top3)} top recommendations use "
+            "outcome-calibrated P(win); others use uncalibrated heuristic."
+            if top3
+            else "Confidence calibration: no recommendations this cycle."
+        ),
         "Strategy selection follows Trading_Strategies.md Table SH-4 with Market_News overlay.",
         "Parameter gates sourced from Trading_Parameters.md Parts G, H, I, T, U.",
         "Each recommendation includes a complete P1 insight packet for operator review.",

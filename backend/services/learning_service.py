@@ -402,6 +402,7 @@ class LearningService:
             primary_signal=rec.strategy.primary_signal,
             score=rec.score,
             confidence=rec.confidence,
+            raw_confidence_at_entry=rec.raw_confidence,
             recommendation_snapshot=rec.model_dump(mode="json"),
             opened_at=_now(),
             config_snapshot_id="defaults",
@@ -469,6 +470,7 @@ class LearningService:
             primary_signal=opened.primary_signal,
             score_at_entry=opened.score,
             confidence_at_entry=opened.confidence,
+            raw_confidence_at_entry=opened.raw_confidence_at_entry,
             outcome=request.outcome,
             realized_pnl_inr=request.realized_pnl_inr,
             exit_reason=request.exit_reason,
@@ -501,7 +503,19 @@ class LearningService:
             )
 
         self._write(store)
+        self._maybe_refit_confidence_calibration(store.get("outcomes") or [])
         return outcome
+
+    def _maybe_refit_confidence_calibration(self, outcomes: list[dict[str, Any]]) -> None:
+        """Attempt score→P(win) refit; swap artifact only if walk-forward passes."""
+        try:
+            from analytics.confidence_calibration import fit_and_maybe_deploy
+            from backend.services.confidence_calibrator import DEFAULT_ARTIFACT
+
+            fit_and_maybe_deploy(outcomes, artifact_path=DEFAULT_ARTIFACT)
+        except Exception:  # noqa: BLE001
+            # Calibration must never break trade close / learning loop
+            return
 
     def _derive_lesson(self, opened: OpenTradeRecord, request: CloseTradeRequest) -> str:
         if request.notes:

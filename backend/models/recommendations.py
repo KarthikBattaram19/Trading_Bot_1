@@ -125,6 +125,9 @@ class InstrumentRecommendation(BaseModel):
     underlying_symbol: str
     score: float
     confidence: float
+    calibration_status: str = "uncalibrated"  # calibrated | uncalibrated
+    confidence_source: str = "heuristic"  # outcome_map | heuristic
+    raw_confidence: float | None = None  # pre-map confidence after failure-memory
     strategy: StrategySelectionLogic
     parameters: ParameterSnapshot
     parameter_gates: list[GateResult]

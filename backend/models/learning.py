@@ -35,6 +35,8 @@ class LearningInsight(BaseModel):
     confidence_penalty: float = 0.0
     confidence_before: float
     confidence_after: float
+    calibration_status: str = "uncalibrated"
+    confidence_source: str = "heuristic"
     module_win_rate: float | None = None
     module_trade_count: int = 0
     module_expectancy_inr: float | None = None
@@ -53,6 +55,7 @@ class OpenTradeRecord(BaseModel):
     primary_signal: str
     score: float
     confidence: float
+    raw_confidence_at_entry: float | None = None
     recommendation_snapshot: dict[str, Any]
     opened_at: datetime
     config_snapshot_id: str = "defaults"
@@ -71,6 +74,7 @@ class TradeOutcomeRecord(BaseModel):
     primary_signal: str
     score_at_entry: float
     confidence_at_entry: float
+    raw_confidence_at_entry: float | None = None
     outcome: TradeOutcomeLabel
     realized_pnl_inr: float
     exit_reason: str
