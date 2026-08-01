@@ -24,7 +24,6 @@ from backend.integrations.icici_direct.market_data import (
     IciciDirectMarketDataAdapter,
     get_market_data_adapter,
 )
-from backend.quant.signals.garch import forecast_garch_11, log_returns_from_prices
 from backend.services.atm_liquidity_history import (
     DEFAULT_STORE_PATH as ATM_HISTORY_STORE_PATH,
     AtmLiquidityHistoryStore,
@@ -619,50 +618,36 @@ def reset_universe_enricher_for_tests() -> None:
 def live_marks_to_candidate_fields(
     marks: LiveMarks,
     cfg: dict[str, Any],
+    *,
+    price_history_daily: list[float] | None = None,
+    iv_series_intraday: list[float] | None = None,
+    days_to_earnings: int | None = None,
+    realized_vol_intraday: float | None = None,
 ) -> dict[str, Any]:
-    """Map LiveMarks → InstrumentCandidate constructor kwargs (partial)."""
-    history = [marks.und_price] * 5 if marks.und_price > 0 else [1.0] * 5
-    g = cfg.get("garch_forecast") or {}
-    result = forecast_garch_11(
-        log_returns_from_prices(history),
-        gamma=float(g.get("gamma_weight", 0.05)),
-        alpha=float(g.get("alpha_weight", 0.05)),
-        beta=float(g.get("beta_weight", 0.9)),
-        annualization_factor=int(g.get("annualization_factor", 252)),
-        min_observations=int(g.get("min_observations", 20)),
-    )
-    if result.usable and result.sigma_annual is not None:
-        garch = float(result.sigma_annual)
-        distorted = bool(result.garch_distorted)
-    else:
-        # Short series — mark distorted so cheap-vol is not trusted blindly.
-        garch = max(marks.iv_annualized * 1.05, 0.20)
-        distorted = True
+    """Map LiveMarks → InstrumentCandidate kwargs via live-clean QuantSnapshot.
 
-    return {
-        "symbol": marks.symbol,
-        "und_price": marks.und_price,
-        "iv_annualized": marks.iv_annualized,
-        "garch_forecast": garch,
-        "iv_z_score": None,
-        "days_to_earnings": None,
-        "atm_premium_inr": marks.atm_premium_inr,
-        "volume": marks.volume,
-        "open_interest": marks.open_interest,
-        "spread_pct": marks.spread_pct,
-        "dte": marks.dte,
-        "realized_vol_intraday": None,
-        "garch_distorted": distorted,
-        "price_history": history,
-        "expiry_key": str(marks.expiry) if marks.expiry else None,
-        "atm_history_prior": (
-            AtmLiquidityHistoryStore(ATM_HISTORY_STORE_PATH).prior_points(
-                underlying=marks.symbol,
-                expiry_key=str(marks.expiry),
-                before_date=_session_date_ist(),
-                lookback_days=20,
-            )
-            if marks.expiry
-            else None
-        ),
-    }
+    Does **not** invent flat spot history or synthetic GARCH (0.28 / IV×1.05).
+    Pass real ``price_history_daily`` / IV series for usable GARCH / IV z.
+    """
+    from backend.services.quant_snapshot import build_quant_snapshot, snapshot_to_candidate_fields
+
+    snap = build_quant_snapshot(
+        marks=marks,
+        price_history_daily=list(price_history_daily or []),
+        iv_series_intraday=list(iv_series_intraday or []),
+        days_to_earnings=days_to_earnings,
+        realized_vol_intraday=realized_vol_intraday,
+        cfg=cfg,
+    )
+    fields = snapshot_to_candidate_fields(snap)
+    fields["symbol"] = marks.symbol
+    if marks.expiry:
+        fields["atm_history_prior"] = AtmLiquidityHistoryStore(ATM_HISTORY_STORE_PATH).prior_points(
+            underlying=marks.symbol,
+            expiry_key=str(marks.expiry),
+            before_date=_session_date_ist(),
+            lookback_days=20,
+        )
+    else:
+        fields["atm_history_prior"] = None
+    return fields

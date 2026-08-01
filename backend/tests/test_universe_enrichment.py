@@ -222,9 +222,38 @@ async def test_build_universe_prefers_live_marks(monkeypatch):
         lambda cfg=None: UniverseEnricher(instruments=master, min_interval_ms=1),
     )
 
-    universe, _bindings, source, stats = await eng._build_universe()
+    async def _fake_daily(symbol, stock_code=None, lookback_days=60, as_of_date=None, adapter=None):
+        return [100.0 * (1.0 + 0.001 * ((i % 5) - 2)) for i in range(40)]
+
+    async def _fake_rv(symbol, stock_code=None, as_of_date=None, adapter=None):
+        return 0.02
+
+    monkeypatch.setattr(
+        "backend.services.recommendation_engine.fetch_daily_closes",
+        _fake_daily,
+    )
+    monkeypatch.setattr(
+        "backend.services.recommendation_engine.fetch_realized_vol_intraday",
+        _fake_rv,
+    )
+    # Relax coverage for tiny fixture universes
+    real_load = eng._load_config
+
+    def _cfg():
+        cfg = real_load()
+        cfg["strategy_coverage"] = {
+            "min_coverage_ratio": 0.5,
+            "min_eligible_symbols": 1,
+            "abort_unavailable_strategies": True,
+        }
+        return cfg
+
+    monkeypatch.setattr(eng, "_load_config", _cfg)
+
+    universe, bindings, source, stats, snapshots = await eng._build_universe()
     assert source.startswith("icici_direct")
     assert len(universe) == 3  # NIFTY, RELIANCE, SBIN
     assert all(c.marks_source == "live" for c in universe)
+    assert len(snapshots) == 3
     assert stats is not None
     assert stats.live_ok == 3

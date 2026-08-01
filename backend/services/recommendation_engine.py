@@ -27,6 +27,7 @@ from backend.models.recommendations import (
     ParameterSnapshot,
     RecommendationResponse,
     ScoreBreakdown,
+    StrategyCoverageStatus,
     StrategySelectionLogic,
     StrategyType,
     TradeEconomicsInsight,
@@ -39,18 +40,27 @@ from backend.services.atm_liquidity import (
     live_from_aggregated,
 )
 from backend.services.atm_liquidity_history import AtmLiquidityHistoryStore
+from backend.services.candle_history import fetch_daily_closes, fetch_realized_vol_intraday
+from backend.services.earnings_calendar import EarningsCalendarStore, session_date_ist
 from backend.services.feed_health import get_feed_sources
+from backend.services.iv_history_store import IvHistoryStore
 from backend.services.learning_service import get_learning_service
 from backend.services.market_news import get_market_news
+from backend.services.quant_snapshot import (
+    QuantSnapshot,
+    build_quant_snapshot,
+    snapshot_to_candidate_fields,
+)
 from backend.services.signals import _liquidity_gate_results, seed_atm_history_prior
+from backend.services.strategy_coverage import evaluate_strategy_coverage
 from backend.services.strategy_selection import (
     QuantRegimeInputs,
     select_strategy_sh4,
 )
 from backend.services.universe_enrichment import (
     EnrichmentStats,
+    LiveMarks,
     get_universe_enricher,
-    live_marks_to_candidate_fields,
 )
 
 logger = logging.getLogger(__name__)
@@ -97,8 +107,8 @@ def _load_config() -> dict[str, Any]:
         return json.load(f)
 
 
-def _garch_forecast(log_returns: list[float], cfg: dict[str, Any]) -> tuple[float, bool]:
-    """GARCH(1,1) annualized vol per Trading_Parameters Part H (Phase 1.5 module)."""
+def _garch_forecast(log_returns: list[float], cfg: dict[str, Any]) -> tuple[float | None, bool]:
+    """GARCH(1,1) annualized vol — no silent 0.28 fallback (live-clean)."""
     g = cfg["garch_forecast"]
     result = forecast_garch_11(
         log_returns,
@@ -110,19 +120,17 @@ def _garch_forecast(log_returns: list[float], cfg: dict[str, Any]) -> tuple[floa
     )
     if result.usable and result.sigma_annual is not None:
         return result.sigma_annual, result.garch_distorted
-    # Fallback for demo universe when series too short — still mark distorted (Q-14)
-    return 0.28, True
+    return None, True
 
 
 def _iv_z_for_demo(iv: float, target_z: float | None, cfg: dict[str, Any]) -> float | None:
-    """Build a synthetic intraday IV series so packet z-scores come from Part N4 math."""
+    """Build a synthetic intraday IV series for offline fixture helpers only."""
     if target_z is None:
         return None
     zcfg = cfg.get("iv_zscore") or {}
     min_obs = int(zcfg.get("min_observations", 5))
     std = 0.02
     mean = iv - target_z * std
-    # Alternating mean±std → sample std ≈ std; current_iv=iv ⇒ z ≈ target_z
     series = [mean - std, mean + std] * max(min_obs, 15)
     result = compute_iv_zscore(
         series,
@@ -139,12 +147,16 @@ def _iv_z_for_demo(iv: float, target_z: float | None, cfg: dict[str, Any]) -> fl
 
 
 def _candidate_from_spec(row: tuple, cfg: dict[str, Any]) -> InstrumentCandidate:
+    """Test/offline fixture helper only — not used for production ranking."""
     symbol, price, iv, z, de, prem, vol, oi, spread, dte, rv, distorted = row
     history = [price * (1 + 0.01 * math.sin(i / 3)) for i in range(60)]
     log_returns = log_returns_from_prices(history)
     garch, garch_dist = _garch_forecast(log_returns, cfg)
+    if garch is None:
+        garch = 0.0
+        garch_dist = True
     if iv == 0:
-        iv = garch * 0.92
+        iv = garch * 0.92 if garch else 0.0
     iv_z = _iv_z_for_demo(iv, z, cfg)
     return InstrumentCandidate(
         symbol=symbol,
@@ -167,14 +179,12 @@ def _candidate_from_spec(row: tuple, cfg: dict[str, Any]) -> InstrumentCandidate
 
 
 def _stub_candidate(symbol: str, cfg: dict[str, Any]) -> InstrumentCandidate:
-    """Universe member without enriched marks — fails retail gates until live LTP/IV land."""
-    history = [1.0 for _ in range(5)]
-    garch, garch_dist = _garch_forecast(log_returns_from_prices(history), cfg)
+    """Non-ranking placeholder — not added to production recommendation candidates."""
     return InstrumentCandidate(
         symbol=symbol,
         und_price=0.0,
         iv_annualized=0.0,
-        garch_forecast=garch,
+        garch_forecast=0.0,
         iv_z_score=None,
         days_to_earnings=None,
         atm_premium_inr=999.0,
@@ -183,17 +193,19 @@ def _stub_candidate(symbol: str, cfg: dict[str, Any]) -> InstrumentCandidate:
         spread_pct=99.0,
         dte=0,
         realized_vol_intraday=None,
-        garch_distorted=True or garch_dist,
-        price_history=history,
+        garch_distorted=True,
+        price_history=[1.0],
         marks_source="stub",
     )
 
 
 def _candidate_from_live(symbol: str, fields: dict[str, Any]) -> InstrumentCandidate:
-    return InstrumentCandidate(**{**fields, "symbol": symbol, "marks_source": "live"})
+    src = fields.pop("marks_source", "live")
+    return InstrumentCandidate(**{**fields, "symbol": symbol, "marks_source": src})
 
 
 def _demo_universe(cfg: dict[str, Any] | None = None) -> list[InstrumentCandidate]:
+    """Offline fixture helper for unit tests — never used by production ranking."""
     cfg = cfg or _load_config()
     return [_candidate_from_spec(row, cfg) for row in _DEMO_SPECS]
 
@@ -219,7 +231,8 @@ async def _ensure_fno_underlyings() -> tuple[list[str], str]:
     underlyings = master.list_fno_underlyings()
     if underlyings:
         return underlyings, "icici_direct_fonsescripmaster"
-    return [row[0] for row in _DEMO_SPECS], "demo_fallback"
+    # No demo symbol fallback for ranking — empty universe + coverage abort.
+    return [], "empty_fno_master"
 
 
 async def _build_universe() -> tuple[
@@ -227,21 +240,21 @@ async def _build_universe() -> tuple[
     dict[str, dict[str, str]],
     str,
     EnrichmentStats | None,
+    list[QuantSnapshot],
 ]:
-    """Feed-bound universe (G11–G12): all NSE F&O underlyings from ICICI Direct master.
-
-    When ``recommendation_universe_enrichment.enabled`` is true, each underlying is
-    marked with live NSE LTP + NFO option-chain ATM metrics (rate-limited).
-    """
+    """Feed-bound universe with live-clean QuantSnapshots (no demo/stub ranking)."""
     cfg = _load_config()
     symbols, source = await _ensure_fno_underlyings()
     master = get_instrument_master()
     candidates: list[InstrumentCandidate] = []
+    snapshots: list[QuantSnapshot] = []
     bindings: dict[str, dict[str, str]] = {}
     enrich_cfg = cfg.get("recommendation_universe_enrichment") or {}
     enrich_enabled = bool(enrich_cfg.get("enabled", True))
+    snap_cfg = cfg.get("quant_snapshot") or {}
+    lookback = int(snap_cfg.get("daily_lookback_days", 60))
     enrich_stats: EnrichmentStats | None = None
-    live_by_symbol: dict[str, Any] = {}
+    live_by_symbol: dict[str, LiveMarks] = {}
 
     if enrich_enabled and symbols and source.startswith("icici_direct"):
         try:
@@ -252,35 +265,76 @@ async def _build_universe() -> tuple[
             enrich_stats = EnrichmentStats(requested=len(symbols), failed=len(symbols))
             enrich_stats.errors.append(str(exc))
 
+    iv_store = IvHistoryStore()
+    earn_cal = EarningsCalendarStore()
+    as_of = session_date_ist()
+    now_iso = datetime.now(timezone.utc).isoformat()
+
     for symbol in symbols:
-        bindings[symbol] = master.feed_bindings_for(symbol) if master.count else data_feed_bindings_for(
-            symbol
+        bindings[symbol] = (
+            master.feed_bindings_for(symbol)
+            if master.count
+            else data_feed_bindings_for(symbol)
         )
         live = live_by_symbol.get(symbol.upper()) if live_by_symbol else None
-        if live is not None:
-            fields = live_marks_to_candidate_fields(live, cfg)
-            candidates.append(_candidate_from_live(symbol, fields))
+        if live is None:
+            snapshots.append(
+                build_quant_snapshot(
+                    marks=None,
+                    symbol=symbol,
+                    price_history_daily=[],
+                    iv_series_intraday=[],
+                    days_to_earnings=None,
+                    cfg=cfg,
+                )
+            )
             continue
 
-        demo = _DEMO_BY_SYMBOL.get(symbol)
-        enrichment_total_fail = (
-            enrich_enabled
-            and enrich_stats is not None
-            and enrich_stats.delivered == 0
+        if live.iv_annualized > 0:
+            iv_store.append(
+                symbol=symbol,
+                session_date=as_of,
+                ts_iso=now_iso,
+                iv=float(live.iv_annualized),
+            )
+        iv_series = iv_store.series(symbol=symbol, session_date=as_of)
+        stock_code = live.stock_code or master.stock_code_for_underlying(symbol)
+        history = await fetch_daily_closes(
+            symbol=symbol,
+            stock_code=stock_code,
+            lookback_days=lookback,
+            as_of_date=as_of,
         )
-        # Demo fixtures only when enrichment is off, or the whole live pass failed.
-        if demo is not None and (not enrich_enabled or enrichment_total_fail):
-            candidates.append(_candidate_from_spec(demo, cfg))
-        else:
-            candidates.append(_stub_candidate(symbol, cfg))
+        rv = await fetch_realized_vol_intraday(
+            symbol=symbol,
+            stock_code=stock_code,
+            as_of_date=as_of,
+        )
+        days_earn = earn_cal.days_to_earnings(symbol, as_of_date=as_of)
+        snap = build_quant_snapshot(
+            marks=live,
+            price_history_daily=history,
+            iv_series_intraday=iv_series,
+            days_to_earnings=days_earn,
+            realized_vol_intraday=rv,
+            cfg=cfg,
+        )
+        snapshots.append(snap)
+        fields = snapshot_to_candidate_fields(snap)
+        if snap.expiry_key:
+            fields["atm_history_prior"] = AtmLiquidityHistoryStore().prior_points(
+                underlying=symbol,
+                expiry_key=snap.expiry_key,
+                before_date=as_of,
+                lookback_days=int(
+                    (cfg.get("option_universe_filters") or {}).get(
+                        "atm_history_lookback_days", 20
+                    )
+                ),
+            )
+        candidates.append(_candidate_from_live(symbol, fields))
 
-    if not candidates:
-        demo_cands = _demo_universe(cfg)
-        for c in demo_cands:
-            bindings[c.symbol] = data_feed_bindings_for(c.symbol)
-        return demo_cands, bindings, "demo_fallback", enrich_stats
-
-    return candidates, bindings, source, enrich_stats
+    return candidates, bindings, source, enrich_stats, snapshots
 
 
 def _structure_uses_underlying(strategy: StrategySelectionLogic, cfg: dict[str, Any]) -> bool:
@@ -381,6 +435,8 @@ def _select_strategy(
     c: InstrumentCandidate,
     news: MarketNewsSummary,
     cfg: dict[str, Any],
+    *,
+    available_strategies: set[StrategyType] | None = None,
 ) -> StrategySelectionLogic:
     """Cross-strategy decision matrix — Trading_Strategies.md Table SH-4 + news overlay."""
     return select_strategy_sh4(
@@ -395,6 +451,7 @@ def _select_strategy(
         ),
         news,
         cfg,
+        available_strategies=available_strategies,
     )
 
 
@@ -698,7 +755,15 @@ async def generate_recommendations(
     sources = get_feed_sources()
     learning = get_learning_service()
 
-    universe, feed_bindings, universe_source, enrich_stats = await _build_universe()
+    universe, feed_bindings, universe_source, enrich_stats, snapshots = await _build_universe()
+    scanned = len(snapshots) if snapshots else len(universe)
+    coverage_report = evaluate_strategy_coverage(
+        snapshots,
+        scanned=scanned if scanned > 0 else len(feed_bindings) or 0,
+        cfg=cfg,
+    )
+    available = coverage_report.available_strategies
+
     ranked: list[InstrumentRecommendation] = []
     passing = 0
     learning_hits = 0
@@ -708,7 +773,9 @@ async def generate_recommendations(
     demo_count = sum(1 for c in universe if c.marks_source == "demo")
 
     for c in universe:
-        strategy = _select_strategy(c, news, cfg)
+        strategy = _select_strategy(
+            c, news, cfg, available_strategies=available
+        )
         strategy, force_options_only = _prefer_options_only_for_high_spot(c, strategy, cfg)
         includes_underlying = _structure_uses_underlying(strategy, cfg) and not force_options_only
         gates = _evaluate_gates(c, cfg, includes_underlying=includes_underlying)
@@ -803,7 +870,7 @@ async def generate_recommendations(
         rec.why_this_rank = _why_this_rank(rec.rank, rec, top3)
 
     notes = [
-        f"Scanned {len(universe)} instruments from feed-bound universe (G11–G12).",
+        f"Scanned {scanned} instruments from feed-bound universe (G11–G12).",
         (
             "Universe source: ICICI Direct FONSEScripMaster "
             f"({universe_source}) — all NSE F&O underlyings with auto G12 bindings."
@@ -812,15 +879,23 @@ async def generate_recommendations(
         ),
         (
             f"Marks coverage: live={live_count}, stub={stub_count}, demo={demo_count} "
-            "(live = NSE LTP + NFO option-chain ATM)."
+            "(live = NSE LTP + NFO option-chain ATM; demo/stub not used for ranking)."
         ),
+        f"Live-ranked candidates: {len(universe)}.",
         f"{passing} passed all options-only retail gates (I21).",
         f"Confidence floor: only candidates with confidence ≥ {min_confidence:.0%} are recommended.",
         "Strategy selection follows Trading_Strategies.md Table SH-4 with Market_News overlay.",
         "Parameter gates sourced from Trading_Parameters.md Parts G, H, I, T, U.",
         "Each recommendation includes a complete P1 insight packet for operator review.",
         "Continual learning: failure memory + module weights applied (§12).",
+        "Live-clean quant: no synthetic GARCH / flat-history fills in ranking.",
     ]
+    notes.extend(coverage_report.note_lines())
+    if not available:
+        top3 = []
+        notes.append(
+            "STRATEGY_COVERAGE cycle: all strategies aborted — no recommendations published."
+        )
     if enrich_stats is not None:
         notes.extend(enrich_stats.note_lines())
     if feed_bindings:
@@ -856,15 +931,19 @@ async def generate_recommendations(
             "no recommendations surfaced."
         )
 
+    coverage_rows = [
+        StrategyCoverageStatus.model_validate(r) for r in coverage_report.api_rows()
+    ]
     return RecommendationResponse(
         generated_at=now,
         feed_as_of=now,
         feed_sources=sources,
         market_news=news,
-        universe_scanned=len(universe),
+        universe_scanned=scanned,
         candidates_passing_gates=passing,
         recommendations=top3,
         analysis_notes=notes,
+        coverage_by_strategy=coverage_rows,
     )
 
 

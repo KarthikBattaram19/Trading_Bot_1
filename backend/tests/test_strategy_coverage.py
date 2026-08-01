@@ -1,0 +1,116 @@
+"""Unit tests for per-strategy coverage gate."""
+
+from __future__ import annotations
+
+from backend.models.recommendations import StrategyType
+from backend.services.quant_snapshot import QuantSnapshot, SignalField
+from backend.services.strategy_coverage import evaluate_strategy_coverage
+
+
+def _sf(value, usable: bool = True, reason: str | None = None) -> SignalField:
+    return SignalField(value=value, usable=usable, reason=reason)
+
+
+def _snap(
+    symbol: str,
+    *,
+    live: bool = True,
+    garch_ok: bool = True,
+    iv_ok: bool = True,
+    iv_z_ok: bool = False,
+    rv_ok: bool = False,
+    earnings_ok: bool = False,
+    days_to_earnings: int | None = None,
+    garch_distorted: bool = False,
+) -> QuantSnapshot:
+    return QuantSnapshot(
+        symbol=symbol,
+        marks_live=live,
+        und_price=_sf(100.0, live),
+        iv_annualized=_sf(0.22 if iv_ok else None, iv_ok, None if iv_ok else "missing_iv"),
+        garch_forecast=_sf(
+            0.28 if garch_ok else None,
+            garch_ok and not garch_distorted,
+            None if garch_ok else "insufficient_history",
+        ),
+        garch_distorted=garch_distorted,
+        iv_z_score=_sf(-2.1 if iv_z_ok else None, iv_z_ok, None if iv_z_ok else "insufficient_iv_history"),
+        realized_vol_intraday=_sf(0.02 if rv_ok else None, rv_ok, None if rv_ok else "missing_rv"),
+        days_to_earnings=_sf(
+            days_to_earnings if earnings_ok else None,
+            earnings_ok,
+            None if earnings_ok else "no_calendar_row",
+        ),
+        atm_premium_inr=50.0,
+        volume=5000,
+        open_interest=25000,
+        spread_pct=0.4,
+        dte=21,
+        price_history=[100.0 + i * 0.1 for i in range(30)] if garch_ok else [100.0],
+        expiry_key="2026-03-28",
+    )
+
+
+def test_coverage_fails_when_ratio_below_80():
+    # 79 eligible of 100 → 0.79 < 0.80
+    snaps = [_snap(f"S{i}", iv_z_ok=True, rv_ok=True) for i in range(79)]
+    snaps += [_snap(f"B{i}", live=False, garch_ok=False, iv_ok=False) for i in range(21)]
+    report = evaluate_strategy_coverage(snaps, scanned=100, cfg={
+        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+    })
+    simple = report.by_strategy[StrategyType.simple_volatility]
+    assert simple.eligible == 79
+    assert simple.published is False
+    assert StrategyType.simple_volatility not in report.available_strategies
+
+
+def test_coverage_passes_at_80_percent_and_50_eligible():
+    snaps = [_snap(f"S{i}", iv_z_ok=True, rv_ok=True) for i in range(80)]
+    snaps += [_snap(f"B{i}", live=False, garch_ok=False, iv_ok=False) for i in range(20)]
+    report = evaluate_strategy_coverage(snaps, scanned=100, cfg={
+        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+    })
+    assert report.by_strategy[StrategyType.simple_volatility].published is True
+    assert StrategyType.simple_volatility in report.available_strategies
+
+
+def test_coverage_fails_when_eligible_under_50():
+    snaps = [_snap(f"S{i}") for i in range(49)]
+    report = evaluate_strategy_coverage(snaps, scanned=49, cfg={
+        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+    })
+    assert report.by_strategy[StrategyType.simple_volatility].eligible == 49
+    assert report.by_strategy[StrategyType.simple_volatility].published is False
+
+
+def test_vega_requires_iv_z():
+    snaps = [_snap(f"S{i}", iv_z_ok=False) for i in range(80)]
+    report = evaluate_strategy_coverage(snaps, scanned=80, cfg={
+        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+    })
+    assert report.by_strategy[StrategyType.simple_volatility].published is True
+    assert report.by_strategy[StrategyType.vega_scalping].published is False
+
+
+def test_gamma_earnings_gap_without_garch_when_dte_leq_1():
+    snaps = [
+        _snap(
+            f"S{i}",
+            garch_ok=False,
+            earnings_ok=True,
+            days_to_earnings=1,
+        )
+        for i in range(80)
+    ]
+    report = evaluate_strategy_coverage(snaps, scanned=80, cfg={
+        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+    })
+    assert report.by_strategy[StrategyType.gamma_scalping].published is True
+
+
+def test_warning_lines_on_abort():
+    snaps = [_snap("ONLY")]
+    report = evaluate_strategy_coverage(snaps, scanned=1, cfg={
+        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+    })
+    assert any("STRATEGY_COVERAGE_ABORT" in w for w in report.warnings)

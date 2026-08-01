@@ -164,6 +164,14 @@ class MarketNewsSummary(BaseModel):
     items: list[NewsItem]
 
 
+class StrategyCoverageStatus(BaseModel):
+    strategy: str
+    scanned: int
+    eligible: int
+    coverage: float
+    published: bool
+
+
 class RecommendationResponse(BaseModel):
     generated_at: datetime
     feed_as_of: datetime
@@ -173,4 +181,5 @@ class RecommendationResponse(BaseModel):
     candidates_passing_gates: int
     recommendations: list[InstrumentRecommendation]
     analysis_notes: list[str]
+    coverage_by_strategy: list[StrategyCoverageStatus] = Field(default_factory=list)
     autonomous_execution: AutonomousExecutionResult | None = None

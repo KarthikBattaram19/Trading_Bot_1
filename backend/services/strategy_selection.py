@@ -163,10 +163,26 @@ def select_strategy_sh4(
     quant: QuantRegimeInputs,
     news: MarketNewsSummary,
     cfg: dict[str, Any] | None = None,
+    *,
+    available_strategies: set[StrategyType] | None = None,
 ) -> StrategySelectionLogic:
-    """Cross-strategy decision matrix — Trading_Strategies.md Table SH-4 + news overlay."""
+    """Cross-strategy decision matrix — Trading_Strategies.md Table SH-4 + news overlay.
+
+    ``available_strategies`` restricts which strategies may be selected this cycle
+    (coverage gate). ``None`` means all strategies are allowed.
+    """
     cfg = cfg or load_trading_config()
     rejected: list[str] = []
+
+    def _allowed(st: StrategyType) -> bool:
+        if st == StrategyType.blocked:
+            return True
+        if available_strategies is None:
+            return True
+        return st in available_strategies
+
+    def _coverage_reject(st: StrategyType) -> None:
+        rejected.append(f"{st.value} — strategy_coverage_abort")
 
     # --- Kill / block row (post-shock, H11/K4, regulatory) ---
     if quant.garch_distorted or news_blocks_model_trades(news):
@@ -194,6 +210,20 @@ def select_strategy_sh4(
             ),
         )
 
+    if available_strategies is not None and not available_strategies:
+        return StrategySelectionLogic(
+            selected_strategy=StrategyType.blocked,
+            scenario_tag="Strategy coverage abort — no strategies published",
+            cross_strategy_matrix_ref="Table SH-4 / strategy_coverage gate",
+            primary_signal="strategy_coverage_abort: no available strategies",
+            rejected_strategies=[
+                "simple_volatility — strategy_coverage_abort",
+                "gamma_scalping — strategy_coverage_abort",
+                "vega_scalping — strategy_coverage_abort",
+            ],
+            news_impact=news_impact_for_symbol(quant.symbol, news),
+        )
+
     event_imminent = earnings_or_company_event(quant, news)
     vega_cfg = cfg["strategies"]["vega_scalping"]["iv_signal"]
     z_thresh = float(vega_cfg["entry_z_threshold"])
@@ -206,23 +236,25 @@ def select_strategy_sh4(
             rejected.append(
                 "vega_scalping — earnings/event overrides IV flush (news overlay)"
             )
-        cal = (
-            f"days_to_earnings={quant.days_to_earnings}"
-            if quant.days_to_earnings is not None and quant.days_to_earnings <= 1
-            else "news_event_imminent / earnings topic"
-        )
-        return StrategySelectionLogic(
-            selected_strategy=StrategyType.gamma_scalping,
-            entry_mode="earnings_gap_mode",
-            scenario_tag="Scenario A: Earnings Gap",
-            cross_strategy_matrix_ref="Table SH-4: Earnings gap → Gamma scalping",
-            primary_signal=cal,
-            rejected_strategies=rejected,
-            news_impact=(
-                news_impact_for_symbol(quant.symbol, news)
-                or "Earnings/company event — prefer gamma earnings_gap_mode"
-            ),
-        )
+        if _allowed(StrategyType.gamma_scalping):
+            cal = (
+                f"days_to_earnings={quant.days_to_earnings}"
+                if quant.days_to_earnings is not None and quant.days_to_earnings <= 1
+                else "news_event_imminent / earnings topic"
+            )
+            return StrategySelectionLogic(
+                selected_strategy=StrategyType.gamma_scalping,
+                entry_mode="earnings_gap_mode",
+                scenario_tag="Scenario A: Earnings Gap",
+                cross_strategy_matrix_ref="Table SH-4: Earnings gap → Gamma scalping",
+                primary_signal=cal,
+                rejected_strategies=rejected,
+                news_impact=(
+                    news_impact_for_symbol(quant.symbol, news)
+                    or "Earnings/company event — prefer gamma earnings_gap_mode"
+                ),
+            )
+        _coverage_reject(StrategyType.gamma_scalping)
 
     # --- Vega only when IV flush AND news not blocking (N-12) ---
     if iv_flush:
@@ -231,7 +263,7 @@ def select_strategy_sh4(
                 "vega_scalping — IV z ≤ threshold but news_not_blocking=false (N-12)"
             )
             # Fall through to other rows; do not enter vega.
-        else:
+        elif _allowed(StrategyType.vega_scalping):
             rejected.append("simple_volatility — intraday IV flush favors vega scalp (SH-4)")
             rejected.append("gamma_scalping — no earnings/high-RV override")
             return StrategySelectionLogic(
@@ -243,6 +275,8 @@ def select_strategy_sh4(
                 rejected_strategies=rejected,
                 news_impact=news_impact_for_symbol(quant.symbol, news),
             )
+        else:
+            _coverage_reject(StrategyType.vega_scalping)
 
     cheap_vol = quant.iv_annualized < quant.garch_forecast
     high_rv = (
@@ -254,22 +288,21 @@ def select_strategy_sh4(
     # --- IV high + large realized moves (+ news agitation confirm) → gamma ---
     if iv_elevated and high_rv:
         rejected.append("simple_volatility — IV already rich vs GARCH")
-        if iv_flush and not news.news_not_blocking:
-            # already recorded vega reject above
-            pass
-        return StrategySelectionLogic(
-            selected_strategy=StrategyType.gamma_scalping,
-            entry_mode="high_realized_vol_mode",
-            scenario_tag="Scenario B: High Volatility, Big Intraday Swings",
-            cross_strategy_matrix_ref="Table SH-4: IV high + large realized moves → Gamma",
-            primary_signal=(
-                f"IV={quant.iv_annualized:.1%} > GARCH; "
-                f"RV={quant.realized_vol_intraday:.1%}"
-                + ("; news confirms agitation" if agitation else "")
-            ),
-            rejected_strategies=rejected,
-            news_impact=news_impact_for_symbol(quant.symbol, news),
-        )
+        if _allowed(StrategyType.gamma_scalping):
+            return StrategySelectionLogic(
+                selected_strategy=StrategyType.gamma_scalping,
+                entry_mode="high_realized_vol_mode",
+                scenario_tag="Scenario B: High Volatility, Big Intraday Swings",
+                cross_strategy_matrix_ref="Table SH-4: IV high + large realized moves → Gamma",
+                primary_signal=(
+                    f"IV={quant.iv_annualized:.1%} > GARCH; "
+                    f"RV={quant.realized_vol_intraday:.1%}"
+                    + ("; news confirms agitation" if agitation else "")
+                ),
+                rejected_strategies=rejected,
+                news_impact=news_impact_for_symbol(quant.symbol, news),
+            )
+        _coverage_reject(StrategyType.gamma_scalping)
 
     # --- Adverse symbol news without designed event → stand aside / kill prefer ---
     if symbol_has_adverse_news(quant.symbol, news) and not news.news_not_blocking:
@@ -297,41 +330,73 @@ def select_strategy_sh4(
                 "simple_volatility — IV < GARCH but news_not_blocking=false"
             )
             rejected.append("vega_scalping — no clean news-cleared IV flush")
-            return StrategySelectionLogic(
-                selected_strategy=StrategyType.gamma_scalping,
-                entry_mode="cheap_vol_mode",
-                scenario_tag="News overlay — defer plain long-vega; gamma if path uncertain",
-                cross_strategy_matrix_ref="Table SH-4: news gates cheap-vol row",
-                primary_signal=(
-                    f"IV={quant.iv_annualized:.1%} < GARCH={quant.garch_forecast:.1%} "
-                    "but news blocking — gamma preferred"
-                ),
-                rejected_strategies=rejected,
-                news_impact=news_impact_for_symbol(quant.symbol, news)
-                or "news_not_blocking=false",
-            )
-        rejected.append("vega_scalping — no intraday −2σ IV signal (or news blocked)")
-        return StrategySelectionLogic(
-            selected_strategy=StrategyType.simple_volatility,
-            entry_mode="cheap_vol_mode",
-            scenario_tag="Scenario A: Normal Cheap-Vol Setup",
-            cross_strategy_matrix_ref="Table SH-4: IV < GARCH → Simple vol (1st choice)",
-            primary_signal=(
-                f"IV={quant.iv_annualized:.1%} < GARCH={quant.garch_forecast:.1%}"
-            ),
-            rejected_strategies=rejected,
-            news_impact=news_impact_for_symbol(quant.symbol, news),
-        )
+            if _allowed(StrategyType.gamma_scalping):
+                return StrategySelectionLogic(
+                    selected_strategy=StrategyType.gamma_scalping,
+                    entry_mode="cheap_vol_mode",
+                    scenario_tag="News overlay — defer plain long-vega; gamma if path uncertain",
+                    cross_strategy_matrix_ref="Table SH-4: news gates cheap-vol row",
+                    primary_signal=(
+                        f"IV={quant.iv_annualized:.1%} < GARCH={quant.garch_forecast:.1%} "
+                        "but news blocking — gamma preferred"
+                    ),
+                    rejected_strategies=rejected,
+                    news_impact=news_impact_for_symbol(quant.symbol, news)
+                    or "news_not_blocking=false",
+                )
+            _coverage_reject(StrategyType.gamma_scalping)
+        else:
+            rejected.append("vega_scalping — no intraday −2σ IV signal (or news blocked)")
+            if _allowed(StrategyType.simple_volatility):
+                return StrategySelectionLogic(
+                    selected_strategy=StrategyType.simple_volatility,
+                    entry_mode="cheap_vol_mode",
+                    scenario_tag="Scenario A: Normal Cheap-Vol Setup",
+                    cross_strategy_matrix_ref="Table SH-4: IV < GARCH → Simple vol (1st choice)",
+                    primary_signal=(
+                        f"IV={quant.iv_annualized:.1%} < GARCH={quant.garch_forecast:.1%}"
+                    ),
+                    rejected_strategies=rejected,
+                    news_impact=news_impact_for_symbol(quant.symbol, news),
+                )
+            _coverage_reject(StrategyType.simple_volatility)
+            if _allowed(StrategyType.gamma_scalping):
+                return StrategySelectionLogic(
+                    selected_strategy=StrategyType.gamma_scalping,
+                    entry_mode="cheap_vol_mode",
+                    scenario_tag="IV path uncertain — gamma preferred over plain long-vega",
+                    cross_strategy_matrix_ref=(
+                        "Table SH-4: Simple vol 2nd → Gamma if IV path uncertain"
+                    ),
+                    primary_signal=(
+                        "simple_volatility coverage abort; gamma as hedge to IV direction"
+                    ),
+                    rejected_strategies=rejected,
+                    news_impact=news_impact_for_symbol(quant.symbol, news),
+                )
+            _coverage_reject(StrategyType.gamma_scalping)
 
     # --- IV path uncertain — gamma second choice ---
     rejected.append("vega_scalping — IV not 2σ below intraday mean (or news blocked)")
     rejected.append("simple_volatility — IV not cheap vs GARCH")
+    if _allowed(StrategyType.gamma_scalping):
+        return StrategySelectionLogic(
+            selected_strategy=StrategyType.gamma_scalping,
+            entry_mode="cheap_vol_mode",
+            scenario_tag="IV path uncertain — gamma preferred over plain long-vega",
+            cross_strategy_matrix_ref="Table SH-4: Simple vol 2nd → Gamma if IV path uncertain",
+            primary_signal=(
+                "No clean cheap-vol or vega-scalp signal; gamma as hedge to IV direction"
+            ),
+            rejected_strategies=rejected,
+            news_impact=news_impact_for_symbol(quant.symbol, news),
+        )
+    _coverage_reject(StrategyType.gamma_scalping)
     return StrategySelectionLogic(
-        selected_strategy=StrategyType.gamma_scalping,
-        entry_mode="cheap_vol_mode",
-        scenario_tag="IV path uncertain — gamma preferred over plain long-vega",
-        cross_strategy_matrix_ref="Table SH-4: Simple vol 2nd → Gamma if IV path uncertain",
-        primary_signal="No clean cheap-vol or vega-scalp signal; gamma as hedge to IV direction",
+        selected_strategy=StrategyType.blocked,
+        scenario_tag="Strategy coverage abort — no remaining strategy",
+        cross_strategy_matrix_ref="Table SH-4 / strategy_coverage gate",
+        primary_signal="strategy_coverage_abort: no remaining strategy",
         rejected_strategies=rejected,
         news_impact=news_impact_for_symbol(quant.symbol, news),
     )

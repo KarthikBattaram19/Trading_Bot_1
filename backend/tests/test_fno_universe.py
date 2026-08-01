@@ -110,7 +110,53 @@ async def test_recommendation_universe_uses_fno_master(monkeypatch):
         lambda cfg=None: UniverseEnricher(instruments=master, min_interval_ms=1),
     )
 
-    universe, bindings, source, stats = await _build_universe()
+    async def _fake_daily(symbol, stock_code=None, lookback_days=60, as_of_date=None, adapter=None):
+        return [100.0 * (1.0 + 0.001 * ((i % 5) - 2)) for i in range(40)]
+
+    async def _fake_rv(symbol, stock_code=None, as_of_date=None, adapter=None):
+        return 0.02
+
+    monkeypatch.setattr(
+        "backend.services.recommendation_engine.fetch_daily_closes",
+        _fake_daily,
+    )
+    monkeypatch.setattr(
+        "backend.services.recommendation_engine.fetch_realized_vol_intraday",
+        _fake_rv,
+    )
+
+    from backend.services import recommendation_engine as eng
+
+    real_load = eng._load_config
+
+    def _cfg():
+        cfg = real_load()
+        cfg["strategy_coverage"] = {
+            "min_coverage_ratio": 0.5,
+            "min_eligible_symbols": 1,
+            "abort_unavailable_strategies": True,
+        }
+        # Seed enough IV samples via repeated append in engine — inject series via store
+        return cfg
+
+    monkeypatch.setattr(eng, "_load_config", _cfg)
+
+    # Pre-seed IV history so vega can be eligible in coverage
+    from backend.services.iv_history_store import IvHistoryStore
+    from backend.services.earnings_calendar import session_date_ist
+
+    store = IvHistoryStore()
+    as_of = session_date_ist()
+    for sym in ["INFY", "NIFTY", "RELIANCE", "SBIN"]:
+        for i, iv in enumerate([0.25, 0.24, 0.23, 0.22, 0.21, 0.20]):
+            store.append(
+                symbol=sym,
+                session_date=as_of,
+                ts_iso=f"2026-08-01T10:0{i}:00+05:30",
+                iv=iv,
+            )
+
+    universe, bindings, source, stats, snapshots = await _build_universe()
     assert source.startswith("icici_direct")
     assert len(universe) == 4
     symbols = {c.symbol for c in universe}
@@ -119,8 +165,10 @@ async def test_recommendation_universe_uses_fno_master(monkeypatch):
     assert stats is not None and stats.live_ok == 4
     assert "SBIN" in bindings
     assert bindings["SBIN"]["option_chain"].startswith("icici_direct:NFO:")
+    assert len(snapshots) == 4
 
     result = await generate_recommendations()
     assert result.universe_scanned == 4
     assert any("FONSEScripMaster" in n for n in result.analysis_notes)
     assert any("Marks coverage: live=4" in n for n in result.analysis_notes)
+    assert result.coverage_by_strategy

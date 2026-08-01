@@ -41,6 +41,19 @@
     "recommendation_universe_enrichment": {
       "$ref": "#/$defs/RecommendationUniverseEnrichment"
     },
+    "quant_snapshot": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "strategy_coverage": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "min_coverage_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "min_eligible_symbols": { "type": "integer", "minimum": 0 },
+        "abort_unavailable_strategies": { "type": "boolean" }
+      }
+    },
     "garch_forecast": {
       "$ref": "#/$defs/GarchForecastParams"
     },

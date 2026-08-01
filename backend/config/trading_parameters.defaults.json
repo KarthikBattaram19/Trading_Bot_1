@@ -38,6 +38,16 @@
     "prefer_dte_min": 10,
     "prefer_dte_max": 30
   },
+  "quant_snapshot": {
+    "daily_lookback_days": 60,
+    "cache_ttl_sec": 90,
+    "fetch_intraday_rv": true
+  },
+  "strategy_coverage": {
+    "min_coverage_ratio": 0.80,
+    "min_eligible_symbols": 50,
+    "abort_unavailable_strategies": true
+  },
   "oss_global_params": {
     "display_mode": "total",
     "default_stock_multiplier": 1,
