@@ -249,3 +249,42 @@ def test_post_signals_evaluate_endpoint():
     assert data["recommendation"] == "enter_long_vol"
     assert data["gates_passed"] is True
     assert all(g["gate_id"] != "T11" for g in data["gates"])
+
+
+def test_post_signals_evaluate_defaults_to_options_only_when_omitted():
+    from backend.main import app
+
+    client = TestClient(app)
+    body = {
+        "symbol": "SBIN",
+        "und_price": 812.0,
+        "option_iv_annual": 0.22,
+        "garch_forecast_annual": 0.30,
+        "atm_premium_inr": 95,
+        "volume": 22000,
+        "open_interest": 35000,
+        "spread_pct": 0.9,
+        "force_news": {
+            "dominant_tone": "neutral",
+            "news_not_blocking": True,
+            "news_event_imminent": False,
+            "news_post_shock": False,
+            "kill_event": False,
+            "news_impact": "none",
+            "macro_risk_flags": [],
+            "topics": [],
+            "symbol_tags": [],
+            "earnings_mentions": 0,
+            "items": [],
+            "interpretation": "dry-run",
+            "headline_count": 0,
+            "dominant_sentiment": "Neutral",
+        },
+    }
+    resp = client.post("/api/v1/paper-sim/signals/evaluate", json=body)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["includes_underlying"] is False
+    assert data["gates_passed"] is True
+    assert data["eligible"] is True
+    assert all(g["gate_id"] != "OPTIONS_ONLY_REQUIRED" for g in data["gates"])

@@ -206,8 +206,8 @@ class SignalEvaluateRequest(BaseModel):
     spread_pct: float = Field(default=1.0, ge=0)
     dte: int = Field(default=20, ge=0)
     includes_underlying: bool = Field(
-        default=True,
-        description="When true, T11 und_price ≤ ₹1000 applies (options+underlying)",
+        default=False,
+        description="When true, reject as a stock/underlying hard-lock violation",
     )
     force_news: dict | None = None
     setup_designed_for_event: bool = False
@@ -219,7 +219,10 @@ async def paper_signals(
     underlying: str = Query(..., description="e.g. SBIN, RELIANCE"),
     und_price: float | None = Query(default=None, gt=0),
     option_iv_annual: float | None = Query(default=None, gt=0),
-    includes_underlying: bool = Query(default=True),
+    includes_underlying: bool = Query(
+        default=False,
+        description="When true, marks the request as including stock/underlying legs",
+    ),
 ):
     """GARCH, IV, IV z-score, news flags, SH-4 recommendation (Phase 1.5)."""
     from backend.services.signals import signals_for_underlying
@@ -234,7 +237,7 @@ async def paper_signals(
 
 @router.post("/signals/evaluate")
 async def paper_signals_evaluate(body: SignalEvaluateRequest):
-    """Evaluate candidate vs playbook + news gates; T11 when options+underlying (Phase 1.5)."""
+    """Evaluate candidate vs playbook + news gates under the options-only hard lock."""
     from backend.models.recommendations import MarketNewsSummary
     from backend.services.market_news import get_market_news
     from backend.services.signals import SignalComputeInputs, evaluate_candidate
