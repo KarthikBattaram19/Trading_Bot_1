@@ -82,9 +82,9 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 | MD-10 | Gap in OHLCV / missing bars for GARCH | Mark `garch_distorted` or stand_aside; no blind GARCH entry | P0 | Paper_Simulator; §8.8 |
 | MD-11 | Instrument master stale (lotsize/token changed) | Daily refresh; reject unresolved symboltoken | P0 | §8.9.1, §11.8 |
 | MD-12 | Option chain incomplete (missing ATM strike) | Fail liquidity/ATM gates; no recommend | P1 | Part I / §6.4 |
-| MD-13 | Index underlying bound to options+stock strategy | Reject — index excluded when stock/underlying legs present | P0 | §2.3, §8.2 |
-| MD-14 | Spot ≤ ₹1000 gate when options+underlying; spot > ₹1000 | Reject (T11 / Part T) | P0 | §2.3; Paper_Simulator |
-| MD-15 | Options-only on high-priced / index underlying | Allowed if ATM/premium/liquidity pass | P1 | §2.3 |
+| MD-13 | Any candidate includes `type=stock`, `hedge_method=stock`, or cash-share hedge path | Reject with `OPTIONS_ONLY_REQUIRED` | P0 | §2.3, §8.2 |
+| MD-14 | High-priced underlying (`und_price` > ₹1000) | Do **not** reject solely on spot; continue ATM / premium / liquidity gates | P1 | §2.3; Paper_Simulator |
+| MD-15 | Index underlying with Call/Put-only structure | Allowed if ATM/premium/liquidity pass | P1 | §2.3 |
 | MD-16 | SSRF: feed URL to private IP / non-allowlisted host | Fetcher reject | P0 | §8.7 |
 | MD-17 | Feed response > 10 MB or timeout > 10s | Fail fetch; backoff | P1 | §8.7 |
 | MD-18 | >1000 token×mode WS subscriptions | Cap; prefer one mode per token; share one WS | P0 | §8.9.2, §11.9 |

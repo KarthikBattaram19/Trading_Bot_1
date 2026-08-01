@@ -50,7 +50,7 @@ Aligned with `Trading_Strategies.md` Capital Prerequisites:
 - Max investment to open a trade: ₹1,00,000  
 - Max investment per leg: ₹1,00,000  
 - Default slippage: 50 bps (0.50%)  
-- **Tradeable universe (mode-conditional):** When paper-sim trades **options and the underlying** (stock hedge / stock legs), spot ≤ **₹1,000** cash equities only. When trading **options only**, there is **no** underlying price cap. Same gate as live (`Trading_Parameters.md` Part T / `Trading_Strategies.md`).
+- **Tradeable universe (options-only hard lock):** paper-sim opens Call/Put option legs only. It rejects stock/underlying legs and cash-share hedge paths, has no ₹1,000 spot cap, and allows index underlyings when ATM / premium / liquidity / risk gates pass. Same gate as live (`Trading_Parameters.md` Part T / `Trading_Strategies.md`).
 - ATM + high-liquidity + premium gates per playbook / Part I
 
 ## API (v1)
@@ -68,16 +68,16 @@ Base: `/api/v1/paper-sim`
 | POST | `/positions/{id}/close` | Flatten position at current marks |
 | POST | `/positions/{id}/complete-multi-leg` | Retry auto-completion of intended opening legs (no consent; same open rules) |
 | POST | `/marks/refresh` | Re-mark open legs via ICICI Direct LTP |
-| GET | `/chain?underlying=SBIN` | Option chain for an underlying (+ optional LTP); spot ≤ ₹1000 required only if structure uses stock/underlying |
+| GET | `/chain?underlying=SBIN` | Option chain for an underlying (+ optional LTP); no spot cap under the options-only hard lock |
 | GET | `/news` | Current `MarketNewsSummary` from `Market_News.txt` pipeline |
 | GET | `/signals?underlying=…` | GARCH, IV, IV z-score, **news flags**, SH-4 recommendation |
-| POST | `/signals/evaluate` | Evaluate candidate vs playbook + news gates (T11 und price when options+underlying) |
+| POST | `/signals/evaluate` | Evaluate candidate vs playbook + news gates; stock/underlying structures fail `OPTIONS_ONLY_REQUIRED` |
 | POST | `/strategies/select` | Force or dry-run SH-4 selection given quant + news inputs |
 | POST | `/automation/start` | Start signal + γ–θ re-hedge (+ news kill) loop |
 | POST | `/automation/stop` | Stop the automation loop |
 | GET | `/automation/status` | Loop state, hedge points, last signal, news impact, last actions |
 
-Example open (simple_vol — long ATM CE + PE). **`quantity` must be a multiple of that contract’s ICICI Direct NFO `lotsize`** (never assume OSS US 100). Example uses a mock lot of 25; live lots come from instrument master (see `nfo_lot_sizing` in `trading_parameters.defaults.json`). `SBIN` is illustrative. If the structure adds a **stock** hedge, the underlying must pass the ≤ ₹1000 Part T gate; **options-only** has no underlying price cap.
+Example open (simple_vol — long ATM CE + PE). **`quantity` must be a multiple of that contract’s ICICI Direct NFO `lotsize`** (never assume OSS US 100). Example uses a mock lot of 25; live lots come from instrument master (see `nfo_lot_sizing` in `trading_parameters.defaults.json`). `SBIN` is illustrative; index underlyings are also allowed when the selected options pass gates. A **stock** hedge is rejected.
 
 ```json
 POST /api/v1/paper-sim/orders
@@ -151,7 +151,7 @@ After an entry fills, if the bot **intends** a multi-leg opening structure (`int
 - Fresh marks gate (reject if any completing leg is stale / missing LTP)
 - Quantity multiple of NFO `lotsize`
 - Pre-trade risk gate (kill-switch, buying power, drawdown)
-- Part T underlying price cap when the structure trades options **with** the cash underlying
+- Options-only hard lock (`OPTIONS_ONLY_REQUIRED` for stock/underlying legs or cash-share hedge paths)
 - Per-leg max investment ₹1,00,000
 - **Cumulative** max investment to open the trade ₹1,00,000 (`opening_investment_inr` across entry + completion legs)
 
@@ -167,7 +167,7 @@ Aligned with `Trading_Parameters.md` Part J and playbook management rules:
 4. Update `hedge_point_price`, `breakeven_paid_count`, and P&L attribution.  
 5. Enforce capital caps and Part I / Shared Kill flags on every re-hedge.  
 
-Re-hedge methods: `increase_hedge` \| `reduce_options` \| `adjust_call_put_mix`.
+Re-hedge methods: `adjust_call_put_mix` (default) \| `reduce_options` \| `increase_hedge`. All methods adjust Call/Put option legs only; no stock shares are added or removed.
 
 ## What v1 does / does not do
 

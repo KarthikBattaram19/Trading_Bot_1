@@ -90,7 +90,7 @@ The following capital limits apply to **all** strategies in this playbook. They 
 **Operating rules:**
 
 - Do not submit a new trade if total deployment at entry would exceed **INR 1,00,000**.
-- No single leg — option, stock hedge, or other — may exceed **INR 1,00,000** investment allocation.
+- No single option leg may exceed **INR 1,00,000** investment allocation; stock/underlying legs are rejected by the project hard lock.
 - Re-hedges, rolls, and position adjustments must respect the per-leg cap; split across legs if the structure requires more notional than one leg allows.
 - **INR 10,00,000** is the account capital base; portfolio diversification and hedge-reserve rules still apply even when individual trades stay within the per-trade cap.
 
@@ -106,7 +106,7 @@ The system should not generate or approve trades unless the following data is av
 - Greeks or a reliable pricing engine
 - earnings calendar
 - corporate actions calendar
-- borrow availability for short stock and short options where relevant
+- short-option margin / carry costs where relevant
 - margin estimate
 
 ### Execution Requirements
@@ -125,12 +125,10 @@ Manual legging is acceptable only for observation or paper rehearsal, not as the
 These strategies are institutionally inspired but must be filtered through retail reality:
 
 - total account capital is **INR 10,00,000**; maximum **INR 1,00,000** to open a trade; maximum **INR 1,00,000** per leg (see `Capital Prerequisites`)
-- **Tradeable universe — underlying price cap is mode-conditional:**
-  - **Options and its underlying** (any `stock` leg / cash-share hedge): select only instruments whose underlying `und_price` is ≤ **INR 1000**. Prefer liquid cash-equity NFO chains; exclude index underlyings in this mode — they cannot be stock-hedged the same way and would fail the spot cap.
-  - **Options only** (Call/Put legs only): **no cap** on the price of the underlying instrument. High-priced equities and index underlyings may be selected if they pass liquidity, ATM, and premium gates (`Trading_Parameters.md` Part T).
+- **Tradeable universe — options-only hard lock:** Call/Put option legs only. No stock/underlying trading, no cash-share hedge, and no T11 spot cap. Cash-equity and index underlyings may be selected when their options pass liquidity, ATM, premium, sizing, and risk gates (`Trading_Parameters.md` Part T).
 - only **high-liquidity** instruments may be traded (minimum volume, open interest, and spread gates)
 - contract granularity makes perfect hedging difficult
-- high-priced underlyings increase stock-hedge margin — which is why the ₹1000 spot cap is enforced **when** the bot trades the underlying alongside options
+- high-priced underlyings are allowed when the selected Call/Put options pass the gates; `und_price` remains a pricing and ATM-selection input, not a tradeable leg
 - low-liquidity options can erase edge through spread costs
 - short locates and borrow fees may invalidate otherwise attractive setups
 - frequent hedging can turn a mathematically attractive trade into a net loser after costs
@@ -140,12 +138,12 @@ No trade should be submitted unless all answers below are acceptable:
 
 1. Is the signal objective and reproducible?
 2. Is total entry deployment at or below **INR 1,00,000**, with no leg above **INR 1,00,000**?
-3. If trading **options and underlying**: is the cash-equity spot at or below **INR 1000**? (Skip this check for **options-only**.)
+3. Does the structure contain Call/Put legs only, with no stock/underlying leg or cash-share hedge path?
 4. Is the instrument **highly liquid** enough to enter and exit cleanly (volume, OI, spread)?
 5. Is the trade small enough to rebalance within the per-leg capital cap?
 6. Are event risks known and intentional?
 7. Does the strategy match the current regime instead of fighting it?
-8. Are margin, borrow, and cost assumptions still valid now?
+8. Are margin and cost assumptions still valid now?
 9. Is there a clear exit, stop, and time-based decommission rule?
 
 ### Shared Kill Conditions
@@ -251,20 +249,17 @@ Primary source rule:
 This is a "cheap volatility" signal.
 
 ### Position Construction
-The source books allow two delta-hedging paths:
+The source books allow two delta-hedging paths, but this project hard-locks execution to the options-only path:
 
-1. `long calls + short underlying`
-2. `long calls + long puts` in the proportions required to neutralize delta
+1. `long calls + short underlying` — source-only reference; rejected by bot execution
+2. `long calls + long puts` in the proportions required to neutralize delta — project path
 
 For options-only delta neutrality (same strike and expiration), define total option count `N`:
 
 - number of **call** contracts = `N × put delta`
 - number of **put** contracts = `N × call delta`
 
-Project interpretation:
-
-- use stock hedge if the stock is liquid and margin permits
-- use options-only hedge when capital efficiency is needed and the desk accepts larger Greek leverage
+Project interpretation: use Call/Put combinations only. Any stock/underlying leg or cash-share hedge request fails with `OPTIONS_ONLY_REQUIRED`.
 
 ### Greek Profile To Seek
 
@@ -361,9 +356,9 @@ Condition:
 
 Action:
 
-- do **not** trade options **and** the underlying on that name (T11 rejects)
-- prefer **options-only** delta hedge / construction if execution quality remains acceptable — **no underlying price cap** in that mode
-- otherwise reject the trade
+- allow the options-only structure if execution quality, liquidity, ATM, premium, and risk gates pass
+- there is no T11 spot cap and no index exclusion
+- reject only if the Call/Put structure itself fails a gate
 
 ### Failure Modes
 
@@ -371,7 +366,7 @@ Action:
 - GARCH is distorted after crisis periods
 - theta bleed outpaces gamma
 - liquidity is poor
-- stock hedge consumes too much capital
+- requested stock hedge is rejected; residual delta must be handled with Call/Put sizing or the trade is rejected
 - small contract count leaves large residual delta
 - execution is too slow to preserve neutrality
 
@@ -407,11 +402,13 @@ This strategy is especially useful when:
 - volatility is already high, making plain long-vega trades less attractive
 
 ### Instrument Design
-Source-aligned construction:
+Source construction includes a stock hedge, but project execution uses the options-only four-leg construction.
+
+Source-aligned reference (not executable in this bot):
 
 - buy short-dated calls
 - short longer-dated calls in a quantity that neutralizes vega
-- short stock to neutralize residual delta
+- short stock to neutralize residual delta — rejected by project hard lock
 
 Reason:
 
@@ -420,8 +417,8 @@ Reason:
 
 By selling fewer or differently sized longer-dated options against the near-dated long options, the portfolio can neutralize vega while keeping net gamma positive.
 
-### Options-Only Variant
-The source material also describes a four-leg options-only version:
+### Required Options-Only Construction
+The project uses the four-leg options-only version:
 
 - short-dated long calls
 - longer-dated short calls
@@ -430,7 +427,7 @@ The source material also describes a four-leg options-only version:
 
 Use case:
 
-- lower stock-margin dependence
+- no stock/underlying trading path
 - higher structural complexity
 - much stronger need for synchronized execution
 
@@ -451,11 +448,11 @@ The source books support three main reasons to open gamma scalping:
 
 ### Entry Rules
 
-#### Standard Entry
+#### Required Entry
 - choose same-strike short-dated and longer-dated options
 - buy the shorter-dated call(s)
 - short the longer-dated call(s) until vega is neutralized
-- short stock to neutralize resulting delta
+- add the matching short-dated put(s) and longer-dated put(s) needed to solve delta and vega neutrality
 
 #### Earnings Entry
 - open the trade one day before earnings
@@ -610,14 +607,14 @@ The source material is explicit:
 - never treat `2-sigma above mean` as a short-volatility entry
 
 ### Position Construction
-Two possible structures:
+Project structure:
 
-1. long option(s) plus stock hedge
-2. calls and puts combined to neutralize delta
+1. calls and puts combined to neutralize delta
+2. no stock/underlying hedge path
 
 Project preference:
 
-- choose the construction with the better combined score for liquidity, slippage, and margin
+- choose the Call/Put construction only when liquidity, slippage, and margin gates pass
 
 ### Exit Rules
 Primary exit:
@@ -884,7 +881,7 @@ This section preserves every execution-critical table and rule list from the thr
 | # | Rule | Bot Interpretation |
 |---|---|---|
 | 1 | Trade only high-liquidity options | Block illiquid chains; enforce min volume (1000), min OI (10000), spread cap (2%) |
-| 1a | Underlying price ≤ INR 1000 when options+underlying | Reject if spot > ₹1000 **only** when trading options with the underlying; **no spot cap** for options-only |
+| 1a | Options-only hard lock | Call/Put legs only; no stock/underlying trading, no T11 spot cap, and no index exclusion when other gates pass |
 | 2 | Choose ATM strike | Maximizes gamma symmetry and Greek magnitude |
 | 3 | Choose near expiry (~15–30 DTE) | More gamma/theta, less vega |
 | 4 | Avoid <10 DTE routinely | Black-Scholes distortions; extreme Greek risk |
@@ -896,8 +893,8 @@ This section preserves every execution-critical table and rule list from the thr
 | 3 | Enter when option **implied volatility (IV) is below** the GARCH(1,1) forecast | Primary cheap-vol signal; IV must be lower than GARCH |
 | 4 | Delta hedging is prerequisite, not the strategy | Must neutralize delta before managing gamma/vega/theta |
 | 5 | Always long options (positive gamma); never short vol for this strategy | Long calls or long call+put structures only |
-| 6 | Delta hedge via (a) long calls + short stock, or (b) long calls + long puts same strike/expiry | Choose path by margin and liquidity score |
-| 7 | Stock hedge: buy X calls ≈ long `X × call delta` shares; hedge by shorting that many shares | Default institutional path when stock is liquid |
+| 6 | Delta hedge via (a) long calls + short stock, or (b) long calls + long puts same strike/expiry | Project executes only path (b); path (a) is source-only and rejected |
+| 7 | Stock hedge: buy X calls ≈ long `X × call delta` shares; hedge by shorting that many shares | Source-only reference; rejected by project hard lock |
 | 8 | Options-only hedge: total contracts N; **calls = N × put delta**; **puts = N × call delta** | Lower margin; stronger Greek leverage |
 | 9 | Re-hedge when price moves away from last hedge point by gamma-theta breakeven (~1%) | Automated rebalance trigger |
 | 10 | Re-hedge by increasing or decreasing position | Track realized P/L and floating P/L separately |
@@ -979,7 +976,7 @@ This section preserves every execution-critical table and rule list from the thr
 | Theta | Inversely proportional | Higher (more decay) | Lower |
 | Vega | Directly proportional | Lower | Higher |
 
-**Interpretation:** Buy short-dated calls for gamma/theta; sell fewer long-dated calls to neutralize vega; short stock to neutralize delta. Result: delta neutral, vega neutral, gamma positive, theta negative.
+**Interpretation:** The source stock hedge is not executable in this project. Use the four-leg Call/Put construction to target delta neutral, vega neutral, gamma positive, theta negative.
 
 #### Table GS-2: Target Portfolio Profile
 
@@ -1002,7 +999,7 @@ This section preserves every execution-critical table and rule list from the thr
 
 | Step | Action | Bot Note |
 |---|---|---|
-| 1 | Select same-strike short-dated and long-dated calls | Prefer calls over puts (positive delta → short stock uses less margin) |
+| 1 | Select same-strike short-dated and long-dated calls | Pair with puts in the required four-leg project construction; no stock hedge |
 | 2 | Buy short-dated calls | Provides gamma and theta |
 | 3 | Short long-dated calls until portfolio vega ≈ 0 | Creates small negative gamma; net gamma stays positive |
 | 4 | Short underlying to neutralize delta | Stock hedge path |
@@ -1087,7 +1084,7 @@ This section preserves every execution-critical table and rule list from the thr
 | IV distance to mean | ~2 percentage points | Proxy for expected vega capture |
 | Position margin | $16,533 | Size reference |
 | Profit at mean reversion | $1,652 | ~10% return; excludes possible gamma add-on |
-| Leverage note | Options-only vs stock hedge | Stock hedge lowers leverage and risk |
+| Leverage note | Options-only hard lock | Stock hedge is source-only; project execution uses Call/Put structures |
 
 #### Table VS-5: Vega Scalping Failure And Antifragile Scenarios
 
@@ -1131,9 +1128,9 @@ This section preserves every execution-critical table and rule list from the thr
 
 | Method | Legs | Margin | Liquidity | Neutralization Quality |
 |---|---|---|---|---|
-| Long calls + short stock | 2 | Higher if stock expensive | Stock + option | Usually best for whole shares |
+| Long calls + short stock | 2 | Source-only | Not executable | Rejected by `OPTIONS_ONLY_REQUIRED` |
 | Long calls + long puts | 2+ | Lower | Option-only | Sensitive to contract granularity |
-| Gamma: calls spread + stock | 3+ | Medium–high | Needs long-dated liquidity | Must solve vega and delta jointly |
+| Gamma: calls spread + stock | 3+ | Source-only | Not executable | Rejected by `OPTIONS_ONLY_REQUIRED` |
 | Gamma: four-option box | 4 | Lower stock margin | Hardest execution | Requires algo |
 
 #### Table SH-3: Horizon And Carry Matrix
