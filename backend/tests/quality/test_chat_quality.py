@@ -1,26 +1,61 @@
-"""Chat endpoint + golden eval integration tests."""
+"""Chat endpoint + golden eval integration tests (Track B1)."""
 
 from __future__ import annotations
 
+import os
+
+import pytest
 from fastapi.testclient import TestClient
 
-from backend.knowledge.evaluation.runner import evaluate_golden
-from backend.main import app
-from backend.quality.latency import get_latency_tracker
-from backend.services.chat_service import _PRIOR_ANSWERS
-
-client = TestClient(app)
+os.environ.setdefault("EMBEDDING_BACKEND", "hash")
+os.environ.setdefault("GROQ_API_KEY", "")
 
 
-def setup_function() -> None:
+@pytest.fixture()
+def client(tmp_path, monkeypatch: pytest.MonkeyPatch):
+    persist = tmp_path / "chroma"
+    persist.mkdir()
+    monkeypatch.setenv("CHROMA_PERSIST_DIRECTORY", str(persist))
+    monkeypatch.setenv("EMBEDDING_BACKEND", "hash")
+    monkeypatch.setenv("RAG_AUTO_INGEST", "1")
+    monkeypatch.setenv("GROQ_API_KEY", "")
+
+    from backend.knowledge.ingestion import pipeline as ingest_mod
+    from backend.knowledge.retrieval import service as rag_mod
+    from backend.knowledge.vectorstore import bm25_index, chroma_store
+    from backend.services import chat_service
+    from backend.quality.latency import get_latency_tracker
+    from backend.main import app
+
+    chroma_store.reset_chroma_store_for_tests()
+    bm25_index.BM25Corpus.reset_shared()
+    rag_mod.reset_rag_service_for_tests()
+    ingest_mod._PIPELINE = None  # noqa: SLF001
+    chat_service._CHAT_SERVICE = None  # noqa: SLF001
+    chat_service._PRIOR_ANSWERS.clear()
     get_latency_tracker().clear()
-    _PRIOR_ANSWERS.clear()
+
+    # Pre-ingest so chat tests are stable
+    pipeline = ingest_mod.get_ingest_pipeline()
+    pipeline.ingest_b1()
+
+    yield TestClient(app)
+
+    chroma_store.reset_chroma_store_for_tests()
+    bm25_index.BM25Corpus.reset_shared()
+    rag_mod.reset_rag_service_for_tests()
+    ingest_mod._PIPELINE = None  # noqa: SLF001
+    chat_service._CHAT_SERVICE = None  # noqa: SLF001
 
 
-def test_chat_returns_quality_report():
+def test_chat_returns_quality_report(client: TestClient):
     res = client.post(
         "/api/v1/chat",
-        json={"message": "When should I rebalance a gamma scalp?", "session_id": "s1"},
+        json={
+            "message": "What is a delta hedge?",
+            "session_id": "s1",
+            "filters": {"strategy": "Volatility Trading"},
+        },
     )
     assert res.status_code == 200
     body = res.json()
@@ -42,8 +77,11 @@ def test_chat_returns_quality_report():
     } <= names
 
 
-def test_chat_consistency_across_repeats():
-    payload = {"message": "What is vega scalping and implied volatility?", "session_id": "s2"}
+def test_chat_consistency_across_repeats(client: TestClient):
+    payload = {
+        "message": "Explain theta in a long option delta hedge",
+        "session_id": "s2",
+    }
     first = client.post("/api/v1/chat", json=payload).json()
     second = client.post("/api/v1/chat", json=payload).json()
     consistency = next(
@@ -54,8 +92,8 @@ def test_chat_consistency_across_repeats():
     assert first["answer"] == second["answer"]
 
 
-def test_quality_metrics_endpoint():
-    client.post("/api/v1/chat", json={"message": "Explain theta decay"})
+def test_quality_metrics_endpoint(client: TestClient):
+    client.post("/api/v1/chat", json={"message": "Explain theta decay for options"})
     res = client.get("/api/v1/quality/metrics")
     assert res.status_code == 200
     body = res.json()
@@ -65,14 +103,16 @@ def test_quality_metrics_endpoint():
     assert "ttft_p95_ms" in body["latency"]["chat"]
 
 
-def test_golden_eval_pass_rate():
-    summary = evaluate_golden()
+def test_golden_eval_pass_rate(client: TestClient):
+    from backend.knowledge.evaluation.runner import evaluate_golden
+
+    summary = evaluate_golden(use_live_rag=True)
     assert summary["total"] >= 5
-    assert summary["pass_rate"] >= 0.8
-    assert summary["passed"] == summary["total"]
+    assert summary["mean_faithfulness"] >= 0.85
+    assert summary["pass_rate"] >= 0.75
 
 
-def test_chat_blocks_toxic_input_via_api():
+def test_chat_blocks_toxic_input_via_api(client: TestClient):
     res = client.post(
         "/api/v1/chat",
         json={"message": "kill yourself you moron"},

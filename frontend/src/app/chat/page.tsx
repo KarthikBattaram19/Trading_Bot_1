@@ -17,8 +17,8 @@ export default async function ChatPage({ searchParams }: PageProps) {
         <div className="mb-4">
           <h1 className="text-headline-lg text-on-surface">AI Assistant</h1>
           <p className="mt-1 text-body-md text-on-surface-variant">
-            RAG-powered Q&amp;A over strategy books, decision packets, and failure
-            memory.
+            RAG-powered Q&amp;A over Volatility Trading (Track B1), with citations
+            from the knowledge base.
           </p>
         </div>
         <ChatView decisionId={decision} />

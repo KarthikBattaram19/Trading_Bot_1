@@ -1,4 +1,4 @@
-"""Chat service: stub grounded answers + Core Metrics validation gate."""
+"""Chat service: RAG retrieval + Groq (or extractive fallback) + quality gate."""
 
 from __future__ import annotations
 
@@ -6,79 +6,25 @@ import re
 from collections import OrderedDict
 from threading import Lock
 
+from backend.knowledge.retrieval.service import build_prompt, get_rag_service
+from backend.llm.groq_client import get_groq_client
 from backend.models.chat import ChatRequest, ChatResponse
+from backend.quality.config import get_thresholds
 from backend.quality.latency import get_latency_tracker
 from backend.quality.models import CitationRef, ValidationAction, ValidationContext
 from backend.quality.pipeline import QualityPipeline
 from backend.quality.validators.toxicity import toxicity_raw
-from backend.quality.config import get_thresholds
 
-# Simple in-memory prior answers for consistency checks (session-scoped).
 _PRIOR_LOCK = Lock()
 _PRIOR_ANSWERS: OrderedDict[str, str] = OrderedDict()
 _PRIOR_MAX = 256
 
-_KNOWLEDGE: list[dict[str, object]] = [
-    {
-        "keywords": {"gamma", "scalp", "scalping", "rebalance", "hedge", "delta"},
-        "answer": (
-            "Rebalance a gamma scalp when the net delta drifts beyond your hedge "
-            "threshold (commonly driven by underlying moves and remaining gamma). "
-            "In practice, retail traders should widen rebalance bands to limit "
-            "transaction costs and slippage. Risks and assumptions: hedge frequency "
-            "must stay retail-realistic; stale quotes and wide spreads can erase "
-            "scalping edge."
-        ),
-        "citations": [
-            CitationRef(
-                document_id="doc-gamma",
-                document="Gamma Scalping",
-                section="Dynamic Hedging",
-                page=132,
-                chunk_id="doc-gamma_ch5_dynamic-hedging_c003",
-            )
-        ],
-    },
-    {
-        "keywords": {"vega", "implied", "volatility", "vol"},
-        "answer": (
-            "Vega scalping seeks to monetize changes in implied volatility while "
-            "managing directional exposure. Therefore, entries typically favor "
-            "mispriced IV relative to a forecast, with hedges for delta. "
-            "Practical trading implications for retail include capital limits and "
-            "bid-ask costs on options. Risks and assumptions: IV can remain "
-            "mispriced longer than expected; liquidity may vanish in stress."
-        ),
-        "citations": [
-            CitationRef(
-                document_id="doc-vega",
-                document="Vega Scalping",
-                section="Vega Trading Framework",
-                page=48,
-                chunk_id="doc-vega_ch3_framework_c012",
-            )
-        ],
-    },
-    {
-        "keywords": {"theta", "decay", "time"},
-        "answer": (
-            "Theta measures time decay of option premium. Long premium strategies "
-            "pay theta; short premium strategies collect it, all else equal. "
-            "In practice, theta interacts with gamma and vega, so isolated theta "
-            "views are incomplete. Risks and assumptions: overnight gaps and "
-            "volatility shocks can dominate decay P/L."
-        ),
-        "citations": [
-            CitationRef(
-                document_id="doc-vol",
-                document="Volatility Trading",
-                section="The Greeks",
-                page=61,
-                chunk_id="doc-vol_ch4_greeks_c008",
-            )
-        ],
-    },
-]
+_SYSTEM = (
+    "You are Bhale Bullodu's volatility trading desk assistant. "
+    "Ground every factual claim in the provided context. "
+    "Refuse to guess when context is insufficient. "
+    "Never execute or place trades. Educational answers only."
+)
 
 
 def _prior_key(req: ChatRequest) -> str:
@@ -99,35 +45,81 @@ def _store_prior(key: str, answer: str) -> None:
             _PRIOR_ANSWERS.popitem(last=False)
 
 
-def _retrieve_stub(message: str) -> tuple[str, list[CitationRef], bool]:
-    tokens = set(re.findall(r"[a-z0-9]+", message.lower()))
-    best: dict[str, object] | None = None
-    best_hits = 0
-    for entry in _KNOWLEDGE:
-        keywords = entry["keywords"]
-        assert isinstance(keywords, set)
-        hits = len(tokens & keywords)
-        if hits > best_hits:
-            best_hits = hits
-            best = entry
-
-    if best is None or best_hits == 0:
-        return (
-            (
-                "I do not have enough grounded context in the knowledge base for "
-                "that question yet. Try asking about gamma scalping rebalances, "
-                "vega/IV trades, or theta decay. Risks and assumptions: without "
-                "retrieved citations the answer should not gate trades."
-            ),
-            [],
-            False,
+def _extractive_answer(question: str, chunks: list, citations: list[CitationRef]) -> str:
+    """Offline / no-Groq fallback: stitch top chunks with required structure."""
+    excerpts: list[str] = []
+    for chunk in chunks[:3]:
+        excerpt = (chunk.text or "").strip()
+        if len(excerpt) > 520:
+            excerpt = excerpt[:520].rsplit(" ", 1)[0] + "…"
+        meta = chunk.metadata
+        label = meta.get("chapter") or meta.get("section") or "Context"
+        excerpts.append(f"({label}, p.{meta.get('page', '?')}) {excerpt}")
+    body = "\n\n".join(excerpts)
+    cite = citations[0] if citations else None
+    cite_line = ""
+    if cite:
+        cite_line = (
+            f"Source: {cite.document or cite.document_id}"
+            f"{f' · {cite.section}' if cite.section else ''}"
+            f"{f' · p.{cite.page}' if cite.page is not None else ''}."
         )
+    return (
+        f"Based on the retrieved Volatility Trading context for "
+        f"“{question.strip()}”:\n\n{body}\n\n"
+        f"Practical trading implications: treat this as educational desk knowledge; "
+        f"validate against live marks and risk gates before any action. "
+        f"Risks and assumptions: retrieval may miss nuance; confirm page citations. "
+        f"{cite_line}"
+    )
 
-    answer = best["answer"]
-    citations = best["citations"]
-    assert isinstance(answer, str)
-    assert isinstance(citations, list)
-    return answer, citations, True
+
+def _insufficient() -> tuple[str, list[CitationRef], bool]:
+    return (
+        (
+            "I do not have enough grounded context in the knowledge base for "
+            "that question yet. Track B1 currently indexes Volatility Trading.pdf — "
+            "try questions about option Greeks, delta hedge, GARCH vs implied "
+            "volatility, or volatility trading rules. Risks and assumptions: without "
+            "retrieved citations the answer should not gate trades."
+        ),
+        [],
+        False,
+    )
+
+
+def _generate_answer(
+    req: ChatRequest,
+) -> tuple[str, list[CitationRef], bool, dict]:
+    rag = get_rag_service()
+    strategy = req.filters.strategy if req.filters else None
+    chunks = rag.retrieve(req.message, top_k=5, strategy=strategy)
+    if not chunks:
+        answer, citations, ok = _insufficient()
+        return answer, citations, ok, {"retrieval": "empty"}
+
+    citations = [c.citation() for c in chunks]
+    prompt = build_prompt(req.message, chunks)
+    groq = get_groq_client()
+    meta: dict = {
+        "retrieval": "hybrid",
+        "chunk_ids": [c.chunk_id for c in chunks],
+        "llm": "groq" if groq.available else "extractive",
+    }
+    if groq.available:
+        try:
+            answer = groq.complete(system=_SYSTEM, user=prompt)
+            if not answer.strip():
+                answer = _extractive_answer(req.message, chunks, citations)
+                meta["llm"] = "extractive_empty_completion"
+        except Exception as exc:
+            answer = _extractive_answer(req.message, chunks, citations)
+            meta["llm"] = "extractive_groq_error"
+            meta["groq_error"] = str(exc)[:200]
+    else:
+        answer = _extractive_answer(req.message, chunks, citations)
+
+    return answer, citations, True, meta
 
 
 class ChatService:
@@ -139,7 +131,6 @@ class ChatService:
         with self.tracker.measure("chat") as timed:
             timed.mark_first_token()
 
-            # Input safety screen (query only)
             input_tox, _ = toxicity_raw(req.message)
             if input_tox > get_thresholds().toxicity_max:
                 answer = (
@@ -148,8 +139,6 @@ class ChatService:
                     "trading concepts. Risks and assumptions: safety filters are "
                     "conservative by design."
                 )
-                citations: list[CitationRef] = []
-                faithfulness_ok = False
                 ctx = ValidationContext(
                     query="[redacted unsafe input]",
                     answer=answer,
@@ -176,11 +165,10 @@ class ChatService:
                     metadata={"blocked_reason": "input_toxicity"},
                 )
 
-            answer, citations, faithfulness_ok = _retrieve_stub(req.message)
+            answer, citations, faithfulness_ok, rag_meta = _generate_answer(req)
             key = _prior_key(req)
             prior = _get_prior(key)
 
-            # First-pass validation
             ctx = ValidationContext(
                 query=req.message,
                 answer=answer,
@@ -194,7 +182,6 @@ class ChatService:
             )
             report = self.pipeline.evaluate(ctx)
 
-            # One regenerate attempt for quality gaps (deterministic stub rewrite)
             if report.action == ValidationAction.regenerate and faithfulness_ok:
                 answer = (
                     f"{answer} "
@@ -247,6 +234,7 @@ class ChatService:
                     "session_id": req.session_id,
                     "decision_id": req.decision_id,
                     "filters": req.filters.model_dump() if req.filters else None,
+                    **rag_meta,
                 },
             )
 

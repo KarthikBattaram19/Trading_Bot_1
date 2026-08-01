@@ -18,6 +18,7 @@ from backend.routers import (
     chat,
     decisions,
     integrations,
+    knowledge,
     learning,
     paper_sim,
     quality,
@@ -57,6 +58,7 @@ app.include_router(decisions.router)
 app.include_router(recommendations.router)
 app.include_router(learning.router)
 app.include_router(chat.router)
+app.include_router(knowledge.router)
 app.include_router(quality.router)
 app.include_router(integrations.router)
 app.include_router(paper_sim.router)
