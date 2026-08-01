@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.execution.options_only import OPTIONS_ONLY_REQUIRED
 from backend.integrations.icici_direct.models import InstrumentRecord, NormalizedTick
 from backend.paper_sim.config import PaperSimConfig
 from backend.paper_sim.engine import PaperEngine
@@ -375,37 +376,37 @@ async def test_engine_rejects_reset_with_open_positions():
 
 
 @pytest.mark.asyncio
-async def test_engine_rejects_index_underlying():
-    """Index underlyings are rejected only when the order includes cash/stock legs (T11)."""
+async def test_engine_allows_index_underlying_for_options_only_order():
     engine = get_paper_engine(feed=FakeFeed(), config=PaperSimConfig(slippage_bps=0), reset=True)
-    with pytest.raises(PaperLedgerError, match="index"):
-        await engine.submit_order(
-            PaperOrderRequest(
-                strategy_tag="simple_vol",
-                underlying="NIFTY",
-                legs=[
-                    PaperLegRequest(
-                        symbol="SBIN28MAR24500CE",
-                        side=PaperSide.buy,
-                        quantity=25,
-                        exchange="NFO",
-                        symbol_token="40123",
-                    ),
-                    PaperLegRequest(
-                        symbol="NIFTY",
-                        side=PaperSide.buy,
-                        quantity=1,
-                        exchange="NSE",
-                    ),
-                ],
-            )
+    result = await engine.submit_order(
+        PaperOrderRequest(
+            strategy_tag="simple_vol",
+            underlying="NIFTY",
+            legs=[
+                PaperLegRequest(
+                    symbol="SBIN28MAR24500CE",
+                    side=PaperSide.buy,
+                    quantity=25,
+                    exchange="NFO",
+                    symbol_token="40123",
+                ),
+                PaperLegRequest(
+                    symbol="SBIN28MAR24500PE",
+                    side=PaperSide.buy,
+                    quantity=25,
+                    exchange="NFO",
+                    symbol_token="40124",
+                ),
+            ],
         )
+    )
+    assert result["success"] is True
 
 
 @pytest.mark.asyncio
 async def test_engine_rejects_spot_above_cap_with_stock_leg():
     engine = get_paper_engine(feed=FakeFeed(), config=PaperSimConfig(slippage_bps=0), reset=True)
-    with pytest.raises(PaperLedgerError, match="Part T cap"):
+    with pytest.raises(PaperLedgerError, match=OPTIONS_ONLY_REQUIRED):
         await engine.submit_order(
             PaperOrderRequest(
                 strategy_tag="gamma_scalping",
@@ -431,8 +432,12 @@ async def test_engine_rejects_spot_above_cap_with_stock_leg():
 
 
 @pytest.mark.asyncio
-async def test_engine_allows_stock_leg_under_cap():
-    engine = get_paper_engine(feed=FakeFeed(), config=PaperSimConfig(slippage_bps=0), reset=True)
+async def test_engine_allows_options_only_when_legacy_spot_cap_is_low():
+    engine = get_paper_engine(
+        feed=FakeFeed(),
+        config=PaperSimConfig(slippage_bps=0, underlying_price_cap_inr=1),
+        reset=True,
+    )
     result = await engine.submit_order(
         PaperOrderRequest(
             strategy_tag="gamma_scalping",
@@ -446,11 +451,11 @@ async def test_engine_allows_stock_leg_under_cap():
                     symbol_token="40123",
                 ),
                 PaperLegRequest(
-                    symbol="SBIN",
+                    symbol="SBIN28MAR24500PE",
                     side=PaperSide.buy,
-                    quantity=1,
-                    exchange="NSE",
-                    symbol_token="3045",
+                    quantity=25,
+                    exchange="NFO",
+                    symbol_token="40124",
                 ),
             ],
         )

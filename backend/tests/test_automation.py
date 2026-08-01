@@ -70,7 +70,7 @@ async def test_open_sets_hedge_point_from_underlying():
     pos = result["position"]
     assert pos["hedge_point_price"] == pytest.approx(500.0)
     assert pos["breakeven_paid_count"] == 0
-    assert pos["rehedge_method"] == "increase_hedge"
+    assert pos["rehedge_method"] == "adjust_call_put_mix"
     assert result["broker_place_order"] is False
 
 
