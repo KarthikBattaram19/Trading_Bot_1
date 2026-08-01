@@ -50,7 +50,7 @@ def test_evaluate_cheap_vol_enter_long_vol():
         option_iv_annual=0.22,
         garch_forecast_annual=0.30,
         iv_z_score=None,
-        includes_underlying=True,
+        includes_underlying=False,
         atm_premium_inr=95,
         volume=22000,
         open_interest=35000,
@@ -67,29 +67,8 @@ def test_evaluate_cheap_vol_enter_long_vol():
     assert out["eligible"] is True
 
 
-def test_evaluate_t11_fail_when_options_and_underlying():
-    """MD-14 / T11: spot > ₹1000 with stock hedge → stand_aside."""
-    news = _neutral_news()
-    inp = SignalComputeInputs(
-        symbol="INFY",
-        und_price=1680.0,
-        option_iv_annual=0.20,
-        garch_forecast_annual=0.30,
-        includes_underlying=True,
-        atm_premium_inr=210,
-        volume=15200,
-        open_interest=28000,
-        spread_pct=1.1,
-    )
-    out = evaluate_candidate(inp, news=news)
-    assert out["gates_passed"] is False
-    t11 = next(g for g in out["gates"] if g["gate_id"] == "T11")
-    assert t11["passed"] is False
-    assert out["recommendation"] == "stand_aside"
-    assert out["eligible"] is False
-
-
-def test_evaluate_t11_skipped_options_only():
+def test_evaluate_high_spot_options_only_still_eligible():
+    """No T11: high spot is fine when premium/liquidity pass."""
     news = _neutral_news()
     inp = SignalComputeInputs(
         symbol="INFY",
@@ -103,10 +82,29 @@ def test_evaluate_t11_skipped_options_only():
         spread_pct=1.1,
     )
     out = evaluate_candidate(inp, news=news)
-    t11 = next(g for g in out["gates"] if g["gate_id"] == "T11")
-    assert t11["passed"] is True
-    assert "options-only" in (t11["detail"] or "").lower() or "N/A" in t11["label"]
+    assert all(g["gate_id"] != "T11" for g in out["gates"])
     assert out["recommendation"] == "enter_long_vol"
+    assert out["eligible"] is True
+
+
+def test_evaluate_rejects_includes_underlying_stock_path():
+    news = _neutral_news()
+    inp = SignalComputeInputs(
+        symbol="SBIN",
+        und_price=812.0,
+        option_iv_annual=0.22,
+        garch_forecast_annual=0.30,
+        includes_underlying=True,  # hard-lock violation
+        atm_premium_inr=95,
+        volume=22000,
+        open_interest=35000,
+        spread_pct=0.9,
+    )
+    out = evaluate_candidate(inp, news=news)
+    assert out["gates_passed"] is False
+    assert out["eligible"] is False
+    oo = next(g for g in out["gates"] if g["gate_id"] == "OPTIONS_ONLY_REQUIRED")
+    assert oo["passed"] is False
 
 
 def test_evaluate_q14_insufficient_history_stand_aside():
@@ -116,7 +114,7 @@ def test_evaluate_q14_insufficient_history_stand_aside():
         und_price=800.0,
         option_iv_annual=0.20,
         price_history=[800.0, 801.0, 799.0],  # too few bars
-        includes_underlying=True,
+        includes_underlying=False,
     )
     out = evaluate_candidate(inp, news=news)
     assert out["garch_insufficient_history"] is True
@@ -132,7 +130,7 @@ def test_evaluate_q15_rejects_vega_on_zero_std():
         option_iv_annual=0.26,
         garch_forecast_annual=0.25,
         intraday_iv_series=[0.26] * 20,  # σ=0
-        includes_underlying=True,
+        includes_underlying=False,
         atm_premium_inr=68,
         volume=31000,
         open_interest=42000,
@@ -155,7 +153,7 @@ def test_evaluate_vega_entry_when_z_flush():
         option_iv_annual=0.24,
         garch_forecast_annual=0.28,
         iv_z_score=-2.5,
-        includes_underlying=True,
+        includes_underlying=False,
         atm_premium_inr=185,
         volume=12500,
         open_interest=22000,
@@ -175,7 +173,7 @@ def test_evaluate_n03_garch_distorted_blocked():
         option_iv_annual=0.22,
         garch_forecast_annual=0.30,
         garch_distorted=True,
-        includes_underlying=True,
+        includes_underlying=False,
     )
     out = evaluate_candidate(inp, news=news)
     assert out["garch_distorted"] is True
@@ -222,7 +220,7 @@ def test_post_signals_evaluate_endpoint():
         "und_price": 812.0,
         "option_iv_annual": 0.22,
         "garch_forecast_annual": 0.30,
-        "includes_underlying": True,
+        "includes_underlying": False,
         "atm_premium_inr": 95,
         "volume": 22000,
         "open_interest": 35000,
@@ -250,4 +248,4 @@ def test_post_signals_evaluate_endpoint():
     assert data["evaluate"] is True
     assert data["recommendation"] == "enter_long_vol"
     assert data["gates_passed"] is True
-    assert any(g["gate_id"] == "T11" for g in data["gates"])
+    assert all(g["gate_id"] != "T11" for g in data["gates"])
