@@ -280,6 +280,30 @@ class IciciDirectClient:
         }
         return await self.request("GET", "quotes", json_body=body)
 
+    async def get_option_chain(
+        self,
+        *,
+        stock_code: str,
+        exchange_code: str = "NFO",
+        expiry_date: str = "",
+        product_type: str = "options",
+        right: str = "",
+        strike_price: str = "",
+    ) -> dict[str, Any]:
+        """Breeze GetOptionChain — full chain quotes for one expiry.
+
+        Authority: https://api.icicidirect.com/breezeapi/documents/index.html#optionchain
+        """
+        body = {
+            "stock_code": stock_code,
+            "exchange_code": exchange_code,
+            "expiry_date": expiry_date,
+            "product_type": product_type,
+            "right": right,
+            "strike_price": strike_price,
+        }
+        return await self.request("GET", "optionchain", json_body=body)
+
     async def get_historical_charts(self, params: dict[str, Any]) -> dict[str, Any]:
         return await self.request("GET", "historicalcharts", json_body=params)
 

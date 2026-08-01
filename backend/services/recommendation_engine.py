@@ -40,6 +40,11 @@ from backend.services.strategy_selection import (
     QuantRegimeInputs,
     select_strategy_sh4,
 )
+from backend.services.universe_enrichment import (
+    EnrichmentStats,
+    get_universe_enricher,
+    live_marks_to_candidate_fields,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +80,7 @@ class InstrumentCandidate:
     realized_vol_intraday: float | None
     garch_distorted: bool
     price_history: list[float]
+    marks_source: str = "stub"  # live | demo | stub
 
 
 def _load_config() -> dict[str, Any]:
@@ -146,6 +152,7 @@ def _candidate_from_spec(row: tuple, cfg: dict[str, Any]) -> InstrumentCandidate
         realized_vol_intraday=rv,
         garch_distorted=distorted or garch_dist,
         price_history=history,
+        marks_source="demo",
     )
 
 
@@ -168,7 +175,12 @@ def _stub_candidate(symbol: str, cfg: dict[str, Any]) -> InstrumentCandidate:
         realized_vol_intraday=None,
         garch_distorted=True or garch_dist,
         price_history=history,
+        marks_source="stub",
     )
+
+
+def _candidate_from_live(symbol: str, fields: dict[str, Any]) -> InstrumentCandidate:
+    return InstrumentCandidate(**{**fields, "symbol": symbol, "marks_source": "live"})
 
 
 def _demo_universe(cfg: dict[str, Any] | None = None) -> list[InstrumentCandidate]:
@@ -200,20 +212,54 @@ async def _ensure_fno_underlyings() -> tuple[list[str], str]:
     return [row[0] for row in _DEMO_SPECS], "demo_fallback"
 
 
-async def _build_universe() -> tuple[list[InstrumentCandidate], dict[str, dict[str, str]], str]:
-    """Feed-bound universe (G11–G12): all NSE F&O underlyings from ICICI Direct master."""
+async def _build_universe() -> tuple[
+    list[InstrumentCandidate],
+    dict[str, dict[str, str]],
+    str,
+    EnrichmentStats | None,
+]:
+    """Feed-bound universe (G11–G12): all NSE F&O underlyings from ICICI Direct master.
+
+    When ``recommendation_universe_enrichment.enabled`` is true, each underlying is
+    marked with live NSE LTP + NFO option-chain ATM metrics (rate-limited).
+    """
     cfg = _load_config()
     symbols, source = await _ensure_fno_underlyings()
     master = get_instrument_master()
     candidates: list[InstrumentCandidate] = []
     bindings: dict[str, dict[str, str]] = {}
+    enrich_cfg = cfg.get("recommendation_universe_enrichment") or {}
+    enrich_enabled = bool(enrich_cfg.get("enabled", True))
+    enrich_stats: EnrichmentStats | None = None
+    live_by_symbol: dict[str, Any] = {}
+
+    if enrich_enabled and symbols and source.startswith("icici_direct"):
+        try:
+            enricher = get_universe_enricher(cfg)
+            live_by_symbol, enrich_stats = await enricher.enrich_many(symbols)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Universe live enrichment failed: %s", exc)
+            enrich_stats = EnrichmentStats(requested=len(symbols), failed=len(symbols))
+            enrich_stats.errors.append(str(exc))
 
     for symbol in symbols:
         bindings[symbol] = master.feed_bindings_for(symbol) if master.count else data_feed_bindings_for(
             symbol
         )
+        live = live_by_symbol.get(symbol.upper()) if live_by_symbol else None
+        if live is not None:
+            fields = live_marks_to_candidate_fields(live, cfg)
+            candidates.append(_candidate_from_live(symbol, fields))
+            continue
+
         demo = _DEMO_BY_SYMBOL.get(symbol)
-        if demo is not None:
+        enrichment_total_fail = (
+            enrich_enabled
+            and enrich_stats is not None
+            and enrich_stats.delivered == 0
+        )
+        # Demo fixtures only when enrichment is off, or the whole live pass failed.
+        if demo is not None and (not enrich_enabled or enrichment_total_fail):
             candidates.append(_candidate_from_spec(demo, cfg))
         else:
             candidates.append(_stub_candidate(symbol, cfg))
@@ -222,9 +268,9 @@ async def _build_universe() -> tuple[list[InstrumentCandidate], dict[str, dict[s
         demo_cands = _demo_universe(cfg)
         for c in demo_cands:
             bindings[c.symbol] = data_feed_bindings_for(c.symbol)
-        return demo_cands, bindings, "demo_fallback"
+        return demo_cands, bindings, "demo_fallback", enrich_stats
 
-    return candidates, bindings, source
+    return candidates, bindings, source, enrich_stats
 
 
 def _structure_uses_underlying(strategy: StrategySelectionLogic, cfg: dict[str, Any]) -> bool:
@@ -706,10 +752,14 @@ async def generate_recommendations(
     sources = get_feed_sources()
     learning = get_learning_service()
 
-    universe, feed_bindings, universe_source = await _build_universe()
+    universe, feed_bindings, universe_source, enrich_stats = await _build_universe()
     ranked: list[InstrumentRecommendation] = []
     passing = 0
     learning_hits = 0
+
+    live_count = sum(1 for c in universe if c.marks_source == "live")
+    stub_count = sum(1 for c in universe if c.marks_source == "stub")
+    demo_count = sum(1 for c in universe if c.marks_source == "demo")
 
     for c in universe:
         strategy = _select_strategy(c, news, cfg)
@@ -814,6 +864,10 @@ async def generate_recommendations(
             if universe_source.startswith("icici_direct")
             else f"Universe source: {universe_source} (ICICI Direct FNO master unavailable)."
         ),
+        (
+            f"Marks coverage: live={live_count}, stub={stub_count}, demo={demo_count} "
+            "(live = NSE LTP + NFO option-chain ATM)."
+        ),
         f"{passing} passed all retail gates (T1–T16, I21).",
         f"Confidence floor: only candidates with confidence ≥ {min_confidence:.0%} are recommended.",
         "Strategy selection follows Trading_Strategies.md Table SH-4 with Market_News overlay.",
@@ -821,6 +875,8 @@ async def generate_recommendations(
         "Each recommendation includes a complete P1 insight packet for operator review.",
         "Continual learning: failure memory + module weights applied (§12).",
     ]
+    if enrich_stats is not None:
+        notes.extend(enrich_stats.note_lines())
     if feed_bindings:
         sample_sym = next(iter(feed_bindings))
         sample_bind = feed_bindings[sample_sym]

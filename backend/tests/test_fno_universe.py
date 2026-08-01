@@ -65,9 +65,15 @@ async def test_recommendation_universe_uses_fno_master(monkeypatch):
     master = InstrumentMaster()
     master.load_from_zip_bytes(_fonse_zip_bytes())
 
-    from backend.integrations import icici_direct as icici_pkg
     from backend.integrations.icici_direct import instrument_master as imod
+    from backend.services.universe_enrichment import (
+        EnrichmentStats,
+        LiveMarks,
+        UniverseEnricher,
+        reset_universe_enricher_for_tests,
+    )
 
+    reset_universe_enricher_for_tests()
     monkeypatch.setattr(imod, "_instrument_master", master)
     monkeypatch.setattr(
         "backend.services.recommendation_engine.get_instrument_master",
@@ -82,14 +88,39 @@ async def test_recommendation_universe_uses_fno_master(monkeypatch):
         _no_refresh,
     )
 
-    universe, bindings, source = await _build_universe()
+    async def _fake_enrich_many(self, symbols):  # noqa: ANN001
+        marks = {
+            s.upper(): LiveMarks(
+                symbol=s.upper(),
+                und_price=100.0,
+                atm_premium_inr=50.0,
+                volume=5000,
+                open_interest=20000,
+                spread_pct=1.0,
+                dte=21,
+                iv_annualized=0.22,
+            )
+            for s in symbols
+        }
+        return marks, EnrichmentStats(requested=len(symbols), live_ok=len(symbols))
+
+    monkeypatch.setattr(UniverseEnricher, "enrich_many", _fake_enrich_many)
+    monkeypatch.setattr(
+        "backend.services.recommendation_engine.get_universe_enricher",
+        lambda cfg=None: UniverseEnricher(instruments=master, min_interval_ms=1),
+    )
+
+    universe, bindings, source, stats = await _build_universe()
     assert source.startswith("icici_direct")
     assert len(universe) == 4
     symbols = {c.symbol for c in universe}
     assert symbols == {"INFY", "NIFTY", "RELIANCE", "SBIN"}
+    assert all(c.marks_source == "live" for c in universe)
+    assert stats is not None and stats.live_ok == 4
     assert "SBIN" in bindings
     assert bindings["SBIN"]["option_chain"].startswith("icici_direct:NFO:")
 
     result = await generate_recommendations()
     assert result.universe_scanned == 4
     assert any("FONSEScripMaster" in n for n in result.analysis_notes)
+    assert any("Marks coverage: live=4" in n for n in result.analysis_notes)

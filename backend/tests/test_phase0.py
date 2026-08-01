@@ -70,8 +70,15 @@ def test_recommendation_uses_feed_sources(monkeypatch):
         reset_instrument_master_for_tests,
     )
     from backend.main import app
+    from backend.services.universe_enrichment import (
+        EnrichmentStats,
+        LiveMarks,
+        UniverseEnricher,
+        reset_universe_enricher_for_tests,
+    )
 
     reset_instrument_master_for_tests()
+    reset_universe_enricher_for_tests()
     master = InstrumentMaster()
     master.load_rows(
         [
@@ -101,6 +108,28 @@ def test_recommendation_uses_feed_sources(monkeypatch):
         _noop_ensure,
     )
 
+    async def _fake_enrich_many(self, symbols):  # noqa: ANN001
+        marks = {
+            s.upper(): LiveMarks(
+                symbol=s.upper(),
+                und_price=800.0,
+                atm_premium_inr=50.0,
+                volume=5000,
+                open_interest=20000,
+                spread_pct=1.0,
+                dte=21,
+                iv_annualized=0.22,
+            )
+            for s in symbols
+        }
+        return marks, EnrichmentStats(requested=len(symbols), live_ok=len(symbols))
+
+    monkeypatch.setattr(UniverseEnricher, "enrich_many", _fake_enrich_many)
+    monkeypatch.setattr(
+        "backend.services.recommendation_engine.get_universe_enricher",
+        lambda cfg=None: UniverseEnricher(instruments=master, min_interval_ms=1),
+    )
+
     client = TestClient(app)
     res = client.get("/api/v1/recommendations")
     assert res.status_code == 200
@@ -109,6 +138,7 @@ def test_recommendation_uses_feed_sources(monkeypatch):
     assert "mcp_sources" not in data
     assert "market_news" in data
     assert data["universe_scanned"] >= 1
+    assert any("Marks coverage" in n for n in data.get("analysis_notes", []))
 
 
 def test_place_order_disabled_in_shadow(monkeypatch):

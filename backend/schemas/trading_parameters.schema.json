@@ -38,8 +38,15 @@
     "market_data": {
       "$ref": "#/$defs/MarketDataParams"
     },
+    "recommendation_universe_enrichment": {
+      "$ref": "#/$defs/RecommendationUniverseEnrichment"
+    },
     "garch_forecast": {
       "$ref": "#/$defs/GarchForecastParams"
+    },
+    "iv_zscore": {
+      "type": "object",
+      "additionalProperties": true
     },
     "execution_constraints": {
       "$ref": "#/$defs/ExecutionConstraints"
@@ -360,6 +367,20 @@
           },
           "uniqueItems": true
         }
+      }
+    },
+    "RecommendationUniverseEnrichment": {
+      "type": "object",
+      "description": "Live NSE LTP + NFO GetOptionChain enrichment for every G11 underlying.",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "cache_ttl_sec": { "type": "number", "minimum": 0 },
+        "max_concurrency": { "type": "integer", "minimum": 1 },
+        "min_interval_ms": { "type": "number", "minimum": 0 },
+        "fetch_spot_ltp": { "type": "boolean" },
+        "prefer_dte_min": { "type": "integer", "minimum": 0 },
+        "prefer_dte_max": { "type": "integer", "minimum": 0 }
       }
     },
     "GarchForecastParams": {

@@ -26,6 +26,14 @@ export default async function DashboardPage() {
   const feedSources: FeedSource[] = feeds;
   const supervision = status.supervision_mode ?? status.autonomy;
   const paperPass = String(paperHealth.status ?? "").toLowerCase() === "ready";
+  const mode = status.execution_mode.toLowerCase();
+  const executionPill =
+    mode === "paper"
+      ? { tone: "success" as const, text: "ACTIVE" }
+      : mode === "live"
+        ? { tone: "danger" as const, text: "LIVE" }
+        : { tone: "warning" as const, text: "SIM" };
+  const killArmed = Boolean(status.kill_switch_armed);
 
   return (
     <>
@@ -50,7 +58,8 @@ export default async function DashboardPage() {
             <StatCard
               label="Execution Mode"
               value={status.execution_mode.toUpperCase()}
-              pill={{ tone: "warning", text: "SIM" }}
+              tone={mode === "paper" ? "success" : mode === "live" ? "danger" : "warning"}
+              pill={executionPill}
             />
             <StatCard
               label="Supervision"
@@ -67,9 +76,9 @@ export default async function DashboardPage() {
             />
             <StatCard
               label="Kill Switch Status"
-              value={status.kill_switch_armed ? "ARMED" : "STANDBY"}
-              tone="warning"
-              icon="warning"
+              value={killArmed ? "ARMED" : "STANDBY"}
+              tone={killArmed ? "danger" : "default"}
+              icon={killArmed ? "warning" : undefined}
             />
           </section>
 
@@ -80,7 +89,13 @@ export default async function DashboardPage() {
                 <StatusPill tone={apiHealth.status === "ok" ? "success" : "danger"}>
                   {apiHealth.status === "ok" ? "ACTIVE" : apiHealth.status}
                 </StatusPill>
-                <StatusPill tone="neutral">
+                <StatusPill
+                  tone={
+                    String(apiHealth.execution_mode).toLowerCase() === "paper"
+                      ? "success"
+                      : "neutral"
+                  }
+                >
                   {apiHealth.execution_mode} mode
                 </StatusPill>
               </div>

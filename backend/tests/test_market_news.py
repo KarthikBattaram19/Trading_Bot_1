@@ -162,6 +162,32 @@ def test_paper_sim_news_endpoint(monkeypatch: pytest.MonkeyPatch):
 def test_recommendations_include_live_market_news(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("EXECUTION_MODE", "shadow")
     from backend.main import app
+    from backend.services.universe_enrichment import (
+        EnrichmentStats,
+        LiveMarks,
+        UniverseEnricher,
+        reset_universe_enricher_for_tests,
+    )
+
+    reset_universe_enricher_for_tests()
+
+    async def _fake_enrich_many(self, symbols):  # noqa: ANN001
+        marks = {
+            s.upper(): LiveMarks(
+                symbol=s.upper(),
+                und_price=100.0,
+                atm_premium_inr=40.0,
+                volume=2000,
+                open_interest=15000,
+                spread_pct=1.0,
+                dte=20,
+                iv_annualized=0.2,
+            )
+            for s in symbols
+        }
+        return marks, EnrichmentStats(requested=len(symbols), live_ok=len(symbols))
+
+    monkeypatch.setattr(UniverseEnricher, "enrich_many", _fake_enrich_many)
 
     client = TestClient(app)
     res = client.get("/api/v1/recommendations")
@@ -196,6 +222,32 @@ def test_recommendations_refresh_bypasses_market_news_cache(
     assert get_market_news() is primed
 
     from backend.main import app
+    from backend.services.universe_enrichment import (
+        EnrichmentStats,
+        LiveMarks,
+        UniverseEnricher,
+        reset_universe_enricher_for_tests,
+    )
+
+    reset_universe_enricher_for_tests()
+
+    async def _fake_enrich_many(self, symbols):  # noqa: ANN001
+        marks = {
+            s.upper(): LiveMarks(
+                symbol=s.upper(),
+                und_price=100.0,
+                atm_premium_inr=40.0,
+                volume=2000,
+                open_interest=15000,
+                spread_pct=1.0,
+                dte=20,
+                iv_annualized=0.2,
+            )
+            for s in symbols
+        }
+        return marks, EnrichmentStats(requested=len(symbols), live_ok=len(symbols))
+
+    monkeypatch.setattr(UniverseEnricher, "enrich_many", _fake_enrich_many)
 
     client = TestClient(app)
     res = client.get("/api/v1/recommendations")

@@ -7,6 +7,12 @@ import {
 } from "@/lib/mock-data";
 import { mockRecommendations } from "@/lib/recommendations-mock";
 import { mockLearningDashboard } from "@/lib/learning-mock";
+import {
+  mockAutomationStatus,
+  mockClosedPositions,
+  mockOpenPositions,
+  mockPaperAccount,
+} from "@/lib/positions-mock";
 import type { BotStatus, PendingDecision } from "@/types/decisions";
 import type { AutonomousExecutionResult } from "@/types/trades";
 import type {
@@ -18,6 +24,12 @@ import type {
   LearningDashboard,
   TradeOutcomeRecord,
 } from "@/types/learning";
+import type {
+  PaperAccountSnapshot,
+  PaperAutomationStatus,
+  PaperPosition,
+  PaperPositionsResponse,
+} from "@/types/paper-sim";
 import type { MarketIndicesResponse } from "@/types/market";
 import type { RiskSnapshot } from "@/types/risk";
 import { mockRiskSnapshot } from "@/lib/risk-mock";
@@ -217,6 +229,37 @@ export async function getPaperSimHealth(): Promise<Record<string, unknown>> {
     };
   }
   return fetchJson<Record<string, unknown>>("/api/v1/paper-sim/health");
+}
+
+export async function getPaperAccount(): Promise<PaperAccountSnapshot> {
+  if (useMockData()) return mockPaperAccount;
+  return fetchJson<PaperAccountSnapshot>("/api/v1/paper-sim/account");
+}
+
+export async function getPaperPositions(
+  status: "open" | "closed" | "all" = "open",
+): Promise<PaperPosition[]> {
+  if (useMockData()) {
+    if (status === "closed") return mockClosedPositions;
+    if (status === "all") return [...mockOpenPositions, ...mockClosedPositions];
+    return mockOpenPositions;
+  }
+  if (status === "all") {
+    const [open, closed] = await Promise.all([
+      fetchJson<PaperPositionsResponse>("/api/v1/paper-sim/positions?status=open"),
+      fetchJson<PaperPositionsResponse>("/api/v1/paper-sim/positions?status=closed"),
+    ]);
+    return [...(open.positions ?? []), ...(closed.positions ?? [])];
+  }
+  const data = await fetchJson<PaperPositionsResponse>(
+    `/api/v1/paper-sim/positions?status=${status}`,
+  );
+  return data.positions ?? [];
+}
+
+export async function getPaperAutomationStatus(): Promise<PaperAutomationStatus> {
+  if (useMockData()) return mockAutomationStatus;
+  return fetchJson<PaperAutomationStatus>("/api/v1/paper-sim/automation/status");
 }
 
 export async function getRiskSnapshot(): Promise<RiskSnapshot> {

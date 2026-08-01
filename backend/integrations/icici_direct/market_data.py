@@ -397,6 +397,34 @@ class IciciDirectMarketDataAdapter:
             error=error,
         )
 
+    async def get_option_chain(
+        self,
+        *,
+        stock_code: str,
+        expiry_date: str,
+        exchange_code: str = "NFO",
+        product_type: str = "options",
+        right: str = "",
+        strike_price: str = "",
+    ) -> list[dict[str, Any]]:
+        """Fetch Breeze option-chain rows for one stock_code + expiry."""
+        client = await self.session_manager.ensure_session()
+        payload = await client.get_option_chain(
+            stock_code=stock_code,
+            exchange_code=exchange_code,
+            expiry_date=expiry_date,
+            product_type=product_type,
+            right=right,
+            strike_price=strike_price,
+        )
+        self.last_error = None
+        success = payload.get("Success")
+        if isinstance(success, list):
+            return [row for row in success if isinstance(row, dict)]
+        if isinstance(success, dict):
+            return [success]
+        return []
+
     async def get_candles(
         self,
         *,

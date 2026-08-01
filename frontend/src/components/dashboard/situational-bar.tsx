@@ -84,7 +84,17 @@ export function SituationalBar({ status }: SituationalBarProps) {
           </div>
 
           <div className="ml-2 hidden items-center gap-3 border-l border-outline-variant pl-6 lg:flex">
-            <StatusPill tone="neutral">{status.execution_mode}</StatusPill>
+            <StatusPill
+              tone={
+                status.execution_mode === "paper"
+                  ? "success"
+                  : status.execution_mode === "live"
+                    ? "danger"
+                    : "neutral"
+              }
+            >
+              {status.execution_mode}
+            </StatusPill>
             {status.supervision_mode && (
               <StatusPill tone="neutral">{status.supervision_mode}</StatusPill>
             )}

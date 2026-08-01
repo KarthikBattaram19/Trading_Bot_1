@@ -151,3 +151,5 @@ Docs/Untitled
 *.orig
 *.rej
 .ipynb_checkpoints/
+.vercel
+.env*

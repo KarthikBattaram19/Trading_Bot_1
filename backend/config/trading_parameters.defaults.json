@@ -35,6 +35,15 @@
       "vega_scalping"
     ]
   },
+  "recommendation_universe_enrichment": {
+    "enabled": true,
+    "cache_ttl_sec": 90,
+    "max_concurrency": 4,
+    "min_interval_ms": 700,
+    "fetch_spot_ltp": true,
+    "prefer_dte_min": 10,
+    "prefer_dte_max": 30
+  },
   "oss_global_params": {
     "display_mode": "total",
     "default_stock_multiplier": 1,
