@@ -58,10 +58,8 @@ def _is_cash_underlying_leg(leg: Any) -> bool:
 def _is_option_leg(exchange: str, symbol: str, option_type: str | None = None) -> bool:
     if option_type is not None:
         return True
-    if exchange.upper() == "NFO":
-        return True
     upper = symbol.upper()
-    return upper.endswith("CE") or upper.endswith("PE")
+    return exchange.upper() == "NFO" and (upper.endswith("CE") or upper.endswith("PE"))
 
 
 class PaperEngine:
@@ -165,11 +163,17 @@ class PaperEngine:
                     f"cannot resolve paper instrument {leg.exchange}:{leg.symbol}"
                 )
 
-            tick = await self.feed.get_ltp(
-                record.exchange, record.tradingsymbol, record.symboltoken
-            )
             is_option = _is_option_leg(
                 record.exchange, record.tradingsymbol, leg.option_type
+            )
+            if not is_option:
+                raise PaperLedgerError(
+                    f"{OPTIONS_ONLY_REQUIRED}: Call/Put legs only; "
+                    "stock/underlying legs are not allowed"
+                )
+
+            tick = await self.feed.get_ltp(
+                record.exchange, record.tradingsymbol, record.symboltoken
             )
             threshold = self._leg_threshold(
                 exchange=record.exchange,
