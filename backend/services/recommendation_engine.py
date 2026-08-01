@@ -301,7 +301,7 @@ def _evaluate_gates(
     c: InstrumentCandidate,
     cfg: dict[str, Any],
     *,
-    includes_underlying: bool = True,
+    includes_underlying: bool = False,
 ) -> list[GateResult]:
     """Retail universe filters Part T + pre-trade gates I21."""
     f = cfg["option_universe_filters"]
@@ -620,7 +620,7 @@ def _build_logic_trail(
     gates: list[GateResult],
     cfg: dict[str, Any],
     *,
-    includes_underlying: bool = True,
+    includes_underlying: bool = False,
 ) -> list[str]:
     """Complete step-by-step logic for UI transparency."""
     steps = [
