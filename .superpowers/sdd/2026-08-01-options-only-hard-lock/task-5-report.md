@@ -37,3 +37,18 @@ Done.
 - Regression after fix: `python -m pytest backend/tests/test_paper_sim_options_only.py -v` -> 2 passed, 1 warning.
 - Full requested command: `python -m pytest backend/tests/test_paper_sim_options_only.py backend/tests/test_automation.py backend/tests/test_phase1_10_paper_stack.py backend/tests/test_paper_sim.py -v` -> 35 passed, 2 warnings.
 - Cursor lints: no linter errors found for `backend/paper_sim/engine.py` and `backend/tests/test_paper_sim_options_only.py`.
+
+## Review Fix: Caller `option_type` Cash Bypass
+
+### Changes
+
+- Added a regression test for an NSE cash equity leg (`SBIN` / token `3045`) submitted with `option_type="CE"`.
+- Updated resolved option classification to use resolved instrument identity: exchange must be `NFO`, and the instrument master type must start with `OPT` or the resolved trading symbol must end in `CE`/`PE`.
+- Removed trust in caller-supplied `option_type` when deciding whether a resolved instrument is allowed.
+
+### Verification
+
+- Red run before fix: `python -m pytest backend/tests/test_paper_sim_options_only.py -v` -> 1 failed, 2 passed. Failure: `test_open_rejects_cash_equity_even_when_option_type_is_set` did not raise `PaperLedgerError`.
+- Regression after fix: `python -m pytest backend/tests/test_paper_sim_options_only.py -v` -> 3 passed, 1 warning.
+- Full requested command: `python -m pytest backend/tests/test_paper_sim_options_only.py backend/tests/test_automation.py backend/tests/test_phase1_10_paper_stack.py backend/tests/test_paper_sim.py -v` -> 36 passed, 2 warnings.
+- Cursor lints: no linter errors found for `backend/paper_sim/engine.py` and `backend/tests/test_paper_sim_options_only.py`.

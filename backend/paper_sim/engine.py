@@ -55,11 +55,17 @@ def _is_cash_underlying_leg(leg: Any) -> bool:
     return not (symbol.endswith("CE") or symbol.endswith("PE"))
 
 
-def _is_option_leg(exchange: str, symbol: str, option_type: str | None = None) -> bool:
-    if option_type is not None:
+def _is_option_leg(
+    exchange: str,
+    symbol: str,
+    instrument_type: str | None = None,
+) -> bool:
+    if exchange.upper() != "NFO":
+        return False
+    if (instrument_type or "").upper().startswith("OPT"):
         return True
     upper = symbol.upper()
-    return exchange.upper() == "NFO" and (upper.endswith("CE") or upper.endswith("PE"))
+    return upper.endswith("CE") or upper.endswith("PE")
 
 
 class PaperEngine:
@@ -164,7 +170,9 @@ class PaperEngine:
                 )
 
             is_option = _is_option_leg(
-                record.exchange, record.tradingsymbol, leg.option_type
+                record.exchange,
+                record.tradingsymbol,
+                getattr(record, "instrumenttype", None),
             )
             if not is_option:
                 raise PaperLedgerError(
