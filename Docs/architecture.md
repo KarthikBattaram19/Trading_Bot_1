@@ -1,8 +1,8 @@
 # System Architecture: AI-Assisted Volatility Trading Bot
 
 > **Sources:** `context.md`, `Docs/Strategy_Ingestion_Pipeline.txt`, `Docs/Problem_Statement.txt`, `Docs/Volatility Trading.pdf`, `Docs/Gamma Scalping.pdf`, `Docs/Vega Scalping.pdf`, `Docs/Trading_Strategies.pdf`, `Docs/Trading_Strategies.md`, `Docs/Trading_Parameters.md`, `Docs/UI_Dashboard.md`, `Docs/Paper_Simulator.md`, `Docs/OSS (1).xlsm`, `Docs/OSS_Guide (1).pdf`, `Market_News.txt`, ICICI Direct Breeze API ([docs](https://api.icicidirect.com/breezeapi/documents/index.html))  
-> **Version:** 1.27  
-> **Last updated:** July 30, 2026 — Phase 1 post-entry multi-leg auto-complete without consent (same open-trade rules); prior: **No MCP registry** / ICICI Direct marks + orders; Market_News; spot ≤ INR 1000 for options+underlying
+> **Version:** 1.28
+> **Last updated:** August 1, 2026 — Options-only hard lock: Call/Put legs only; no stock/underlying trading; no T11 spot cap; index underlyings allowed when other gates pass
 
 ---
 
@@ -55,7 +55,7 @@ Observe → Analyze → Decide → (Approve if supervised) → Execute → Measu
 | **Market data**              | Fetches **live** instrument data from user-configured URL endpoints on schedule; binds feeds to OSS strategies                                  |
 | **Market sentiment**         | Curated India news per `Market_News.txt`; regime / event flags drive strategy choice via `Trading_Strategies.md` (§8.8)    |
 | **Third-party integrations** | Pluggable adapters for **ICICI Direct** (marks + live orders) and **data providers** (live feeds); credentials server-side                       |
-| **Trade inputs**             | Multi-leg strategies via **Macroption OSS** schema (`Docs/OSS (1).xlsm`) — global BSM params, call/put/stock legs, contract multipliers, Greeks |
+| **Trade inputs**             | Multi-leg strategies via **Macroption OSS** schema (`Docs/OSS (1).xlsm`) — global BSM params, Call/Put executable legs, contract multipliers, Greeks; stock legs remain OSS parity/test only |
 | **Quantitative analysis**    | Runs stat arb, volatility, gamma, vega, Greeks, and risk modules                                                                                |
 | **Graduated decisions**      | LLM validates and ranks signals; discretionary entries require operator approval in `supervised`, high-confidence auto-submit in `semi_autonomous`, and ranked fallback auto-execute in `fully_autonomous` (§6.2.2, §6.4) |
 | **Paper execution**          | In-house **`paper_sim`** — ICICI Direct LTP marks + local ledger fills; **no** Breeze API `place_order` (`Docs/Paper_Simulator.md`)                                                                        |
@@ -75,7 +75,7 @@ Observe → Analyze → Decide → (Approve if supervised) → Execute → Measu
 | **RAG as domain knowledge engine**     | Ingestion quality determines AI reasoning quality—not the LLM alone                                                                                |
 | **URL-decoupled live data**            | Strategies consume normalized live feeds, not hard-coded vendors; OSS marks refreshed from bound URLs                                              |
 | **Pluggable third-party integrations** | Brokers and data providers added via adapters + runtime config; no vendor logic in quant modules                                                   |
-| **Option-strategy trade inputs**       | All trades expressed as OSS multi-leg strategies: global BSM params, **unbounded legs** (call/put/stock) until trade closure, contract multipliers, flat or per-leg vol |
+| **Option-strategy trade inputs**       | All trades expressed as OSS multi-leg strategies: global BSM params, **unbounded executable Call/Put legs** until trade closure, contract multipliers, flat or per-leg vol; stock legs are rejected outside OSS parity tests |
 | **Paper trading first**                | Rehearse on in-house `paper_sim` (ICICI Direct marks + local ledger); promote to ICICI Direct `live` only after evidence (`Docs/Paper_Simulator.md`)                                                                    |
 | **Continuous learning as first-class** | Every trade feeds the adaptation loop (§12)                                                                                                        |
 | **Two graduated axes**                 | `EXECUTION_MODE` (`shadow` → `paper` via `paper_sim` → `live`) controls submit path; `SUPERVISION_MODE` controls who approves discretionary entries (§6.2.1–6.2.2, §20.4) |
@@ -148,7 +148,7 @@ Observe → Analyze → Decide → (Approve if supervised) → Execute → Measu
 All modules must explicitly account for:
 
 - Capital limitations and position sizing constraints (₹10L account / ₹1L per trade / ₹1L per leg — `Trading_Strategies.md`)
-- **Tradeable universe — underlying price cap is mode-conditional:** When the bot trades **options and its underlying** (any `stock` leg / cash-share hedge), it may only select instruments whose `und_price` is ≤ **₹1000** (cash equity; index underlyings excluded in this mode). When the bot trades **options only** (Call/Put legs only), there is **no cap** on underlying price — high-priced equities and index underlyings may qualify if ATM / premium / liquidity gates pass (`Trading_Parameters.md` Part T; `max_underlying_price_applies_when=options_and_underlying`).
+- **Tradeable universe — options-only hard lock:** The bot constructs, recommends, paper-trades, and live-submits Call/Put option legs only. Stock/underlying legs and cash-share hedges are rejected with `OPTIONS_ONLY_REQUIRED`. There is no T11 underlying price cap and no cash-equity-only / index-exclusion product rule; high-priced equities and index underlyings may qualify if ATM / premium / liquidity gates pass (`Trading_Parameters.md` Part T).
 - Transaction costs, bid-ask spreads, and slippage
 - Margin requirements
 - Limited market depth (data quality depends on supplied URLs)
@@ -1841,7 +1841,7 @@ flowchart TB
 }
 ```
 
-Register feeds for tradeable underlyings. For strategies that include **stock/underlying** legs, restrict to cash equities with spot ≤ ₹1000. For **options-only** strategies there is no underlying price cap (Part T). Index symbols in ICICI Direct’s instrument master may be bound only to options-only discretionary strategies.
+Register feeds for underlyings whose option chains may be traded. The options-only hard lock rejects stock/underlying legs, has no underlying price cap, and allows index symbols in ICICI Direct’s instrument master when their options pass ATM / premium / liquidity gates.
 
 **Auth:** Credentials referenced by `credential_ref` are stored encrypted server-side (env / secret manager)—never in the frontend or strategy JSON.
 
@@ -1851,7 +1851,7 @@ Register feeds for tradeable underlyings. For strategies that include **stock/un
 | Data Type         | Fields                                                 | Consumers                               |
 | ----------------- | ------------------------------------------------------ | --------------------------------------- |
 | **OHLCV**         | symbol, timestamp, open, high, low, close, volume      | Stat arb, vol analysis                  |
-| **Quote**         | symbol, timestamp, bid, ask, last, volume              | OSS `und_price`, stock leg marks        |
+| **Quote**         | symbol, timestamp, bid, ask, last, volume              | OSS `und_price`, ATM selection, scenario marks |
 | **Option chain**  | symbol, expiry, strike, type, bid, ask, IV, OI, greeks | Gamma, vega, vol surface, OSS leg marks |
 | **Vol surface**   | symbol, expiry, strike, IV, moneyness                  | Volatility module                       |
 | **Index/futures** | symbol, timestamp, price, volume                       | Hedging, stat arb                       |
@@ -1994,7 +1994,7 @@ Top-level inputs for the entire strategy (OSS Area 1). Dividend yield and intere
 | Flat Volatility             | `flat_volatility`             | boolean | Q3      | One σ for all legs vs per-leg override          | `true`       |
 | Volatility                  | `volatility`                  | percent | O4      | Annualized σ (std dev); used when flat vol on   | `28.40`      |
 | Display Mode                | `display_mode`                | enum    | L4      | `per_share` or `total` for Value/P/L/Greeks     | `total`      |
-| Underlying Symbol           | `underlying_symbol`           | string  | —       | Ticker; spot ≤ ₹1000 required if strategy includes stock/underlying | `SBIN`       |
+| Underlying Symbol           | `underlying_symbol`           | string  | —       | Ticker used for spot feed, option-chain binding, ATM selection, and pricing; not a tradeable leg | `SBIN` / `NIFTY` |
 | Default Contract Multiplier | `default_contract_multiplier` | int/null| Y8      | **India:** null / unused — size from NFO `lotsize` | `null` (OSS US workbook uses `100` for parity only) |
 | Contract Multiplier Source  | `contract_multiplier_source`  | enum    | —       | `nfo_instrument_lotsize` (India) vs `oss_workbook_default` | `nfo_instrument_lotsize` |
 
@@ -2233,12 +2233,12 @@ Implementation: `backend/quant/pricing/bsm.py` using standard normal CDF (OSS us
 | **Input**       | Frontend OSS simulator UI      | Yellow cells: global params + legs; per-leg vol/mult overrides |
 | **Expirations** | `GET/POST /api/v1/expirations` | Manage effective expiration catalog                            |
 | **Persist**     | `POST /api/v1/strategies`      | Store strategy + legs in PostgreSQL                            |
-| **Mark**        | `quant/pricing/bsm.py`         | Re-price legs; stock legs = underlying                         |
+| **Mark**        | `quant/pricing/bsm.py`         | Re-price Call/Put legs; stock-leg pricing retained only for OSS parity tests |
 | **Greeks**      | `quant/greeks/`                | Per-leg and total per OSS conventions                          |
 | **Simulate**    | `POST .../simulate` (optional) | Parameter sweeps, B/E and extrema key points                   |
 | **Analyze**     | Gamma / Vega / Vol modules     | Consume leg-level and total Greeks                             |
 | **Risk**        | `quant/risk/`                  | Enforce limits on aggregate Greeks                             |
-| **Execute**     | `execution/order_builder`      | Expand option + stock legs to broker orders                    |
+| **Execute**     | `execution/order_builder`      | Expand Call/Put legs to broker orders; reject stock/underlying legs before submit |
 | **Monitor**     | Frontend dashboard             | Leg table with live marks (green cells)                        |
 
 
@@ -2331,10 +2331,10 @@ Broker Adapter: execute if feeds fresh + risk gates pass
 
 | Binding Key        | OSS Field Overridden                            | Typical Feed `data_type` |
 | ------------------ | ----------------------------------------------- | ------------------------ |
-| `und_price`        | Global `und_price`; stock leg `price`           | `quote`, `ohlcv`         |
+| `und_price`        | Global `und_price`; ATM selection and BSM spot input | `quote`, `ohlcv`         |
 | `option_chain`     | Per-leg `price`, `leg_volatility`               | `option_chain`           |
 | `vol_surface`      | Global or per-leg vol for skew-aware strategies | `vol_surface`            |
-| `hedge_instrument` | Hedging leg marks (cash equity / stock legs)    | `quote`, `ohlcv`         |
+| `hedge_instrument` | Removed for execution; stock hedge marks are not used | —         |
 
 
 ### 8.8 Market Sentiment & News Pipeline
@@ -3222,7 +3222,7 @@ Secrets under `credential_ref` (Secret Manager / env): see §11.12.
 | Atomic multi-leg (broker-supported) | Phase 3+            | Single basket order where broker API allows             |
 
 
-**Phase 1 — post-entry multi-leg without consent:** After a paper entry fills, if the bot's intended opening structure is multi-leg (`intended_legs` / strategy-inferred CE+PE or option+stock), remaining opening legs may be submitted **automatically without operator consent**. Completion **must** re-apply the same rules used for the first entry: fresh marks, lotsize multiples, pre-trade gate, Part T (when options+underlying), per-leg ₹1L, and **cumulative** max trade investment ₹1L (`opening_investment_inr`). This is distinct from γ–θ re-hedges (management). API: `POST /paper-sim/orders` (`auto_complete_multi_leg`, default true) and `POST /paper-sim/positions/{id}/complete-multi-leg`.
+**Phase 1 — post-entry multi-leg without consent:** After a paper entry fills, if the bot's intended opening structure is multi-leg (`intended_legs` / strategy-inferred CE+PE or four-leg options construction), remaining Call/Put opening legs may be submitted **automatically without operator consent**. Completion **must** re-apply the same rules used for the first entry: options-only hard lock, fresh marks, lotsize multiples, pre-trade gate, per-leg ₹1L, and **cumulative** max trade investment ₹1L (`opening_investment_inr`). This is distinct from γ–θ re-hedges (management). API: `POST /paper-sim/orders` (`auto_complete_multi_leg`, default true) and `POST /paper-sim/positions/{id}/complete-multi-leg`.
 
 **Rollback:** If leg 2+ fails after leg 1 fills, attempt to flatten leg 1 within `rollback_timeout_sec` (default 30s); log as `partial_fill_incident`.
 
@@ -5223,9 +5223,13 @@ The RAG eval is a **separate job from the unit-test step**, so a green `pytest` 
 
 ### Appendix D: Architecture Evolution (Previous vs. Current)
 
-This appendix records how the current architecture (v1.27) evolved from the original academic scope in `Docs/Problem_Statement.txt` and early stack notes in `Docs/Strategy_Ingestion_Pipeline.txt`. The original documents remain valuable for domain requirements and RAG pipeline stages; the **operating model and engineering spec** are superseded by this document and `context.md`.
+This appendix records how the current architecture (v1.28) evolved from the original academic scope in `Docs/Problem_Statement.txt` and early stack notes in `Docs/Strategy_Ingestion_Pipeline.txt`. The original documents remain valuable for domain requirements and RAG pipeline stages; the **operating model and engineering spec** are superseded by this document and `context.md`.
 
 **v1.27 change:** Feed-bound recommendation universe (G11–G12) loads **all NSE F&O underlyings** from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip); G12 bindings auto-map to ICICI Direct NSE quotes + NFO option chain. Instrument master zip parser uses file→exchange mapping (NSE + NFO only).
+
+**v1.28 change:** **Options-only hard lock.** Production, recommendation, paper, signal, and broker paths construct and submit Call/Put option legs only. Stock/underlying legs and cash-share hedge paths are rejected with `OPTIONS_ONLY_REQUIRED`. T11 / cash-equity-only / index-exclusion product rules are removed; high-priced equities and index underlyings may qualify when ATM / premium / liquidity gates pass.
+
+**v1.27 change:** Phase 1 post-entry multi-leg auto-complete without consent under the same open-trade rules.
 
 **v1.26 change:** **No MCP registry.** Market data (quotes, chains, historical) and live order placement use **ICICI Direct Breeze API** only. India sentiment stays on the **`Market_News.txt` pipeline** (§8.8). Retire assignable MCP ids (`user-broker-feed`, `user-nse-india`, `user-market-news`) and `backend/services/mcp_registry.py`. Recommendation `feed_sources` report ICICI Direct + news health directly (§8.9.3, §20.3 #19).
 

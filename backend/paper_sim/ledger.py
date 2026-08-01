@@ -171,7 +171,9 @@ class PaperLedger:
             total_debit - total_credit,
             total_debit * 0.1 if total_debit else abs(total_credit) * 0.2,
         )
-        method = rehedge_method or getattr(self.config, "rehedge_method", "increase_hedge")
+        method = rehedge_method or getattr(
+            self.config, "rehedge_method", "adjust_call_put_mix"
+        )
         planned = list(intended_legs or [])
         position = PaperPosition(
             position_id=f"pos_{uuid4().hex[:12]}",

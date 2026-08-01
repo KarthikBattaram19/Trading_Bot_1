@@ -1,7 +1,7 @@
 # Project Context: AI-Assisted Volatility Trading Bot
 
 > **Source documents:** `Docs/Problem_Statement.txt`, `Docs/Strategy_Ingestion_Pipeline.txt`, `Docs/OSS (1).xlsm`, `Docs/OSS_Guide (1).pdf`, `Docs/Volatility Trading.pdf`, `Docs/Gamma Scalping.pdf`, `Docs/Vega Scalping.pdf`, `Docs/Trading_Strategies.pdf`, `Docs/Trading_Strategies.md`, `Docs/Trading_Parameters.md`, `Docs/UI_Dashboard.md`, `Docs/Paper_Simulator.md`, `Market_News.txt`, `architecture.md`  
-> **Last synthesized:** July 31, 2026 (v3.8 — G11–G12 feed-bound universe = all ICICI Direct NSE F&O underlyings; prior v3.7: OSS Iron Condor valuation **2024-01-04 10:35 IST**; Railway+Vercel paper; GCP `asia-south1` live)
+> **Last synthesized:** August 1, 2026 (v3.9 — options-only hard lock: Call/Put legs only, no stock/underlying trading, no T11 spot cap, indices allowed when other gates pass; prior v3.8: G11–G12 feed-bound universe = all ICICI Direct NSE F&O underlyings)
 
 ---
 
@@ -24,7 +24,7 @@ A **Retrieval-Augmented Generation (RAG)** pipeline ingests four domain PDFs—`
 
 **India market sentiment** is curated per `Market_News.txt` (Architecture §8.8). Tone/topics/event flags overlay quant signals and drive strategy choice via `Trading_Strategies.md` Table SH-4. The in-house **paper simulator** (`Docs/Paper_Simulator.md`) rehearses the same playbook (signals, news gates, γ–θ re-hedge) on ICICI Direct marks with a local ledger before live ICICI Direct submit.
 
-**Trade inputs** for option-based strategies follow the **Macroption Option Strategy Simulator (OSS)** model (`Docs/OSS (1).xlsm`, `Docs/OSS_Guide (1).pdf`): global Black–Scholes–Merton pricing parameters (valuation date/time, underlying price, continuously compounded dividend yield and interest rate, flat or per-leg volatility) plus an **ordered, unbounded list of legs** of type **Call, Put, or Stock (underlying)**—there is **no fixed leg-count limit**. The OSS workbook shows five leg rows for manual simulation; that is a spreadsheet layout constraint, not a system cap. A live strategy may **add legs over its lifecycle** (hedges, rolls, adjustments) until **successful trade closure**. Each leg has position size, expiration (options), strike (options), initial price, and optional per-leg contract multiplier and volatility override. Per-leg and portfolio-level **Price, Value, P/L, Delta, Gamma, Theta, Vega, and Rho** are computed by the pricing and Greeks engines using the same conventions as OSS.
+**Trade inputs** for option-based strategies follow the **Macroption Option Strategy Simulator (OSS)** model (`Docs/OSS (1).xlsm`, `Docs/OSS_Guide (1).pdf`): global Black–Scholes–Merton pricing parameters (valuation date/time, underlying price, continuously compounded dividend yield and interest rate, flat or per-leg volatility) plus an **ordered, unbounded list of Call/Put option legs**—there is **no fixed leg-count limit**. `und_price` and `underlying_symbol` remain market-data, ATM-selection, and pricing inputs; they are not tradeable instruments. OSS stock-leg math is retained only for parity/unit tests, while production, paper, recommendations, signals, and broker paths reject stock/underlying legs with `OPTIONS_ONLY_REQUIRED`. The OSS workbook shows five leg rows for manual simulation; that is a spreadsheet layout constraint, not a system cap. A live strategy may **add Call/Put legs over its lifecycle** (hedges, rolls, adjustments) until **successful trade closure**. Each option leg has position size, expiration, strike, initial price, and optional per-leg contract multiplier and volatility override. Per-leg and portfolio-level **Price, Value, P/L, Delta, Gamma, Theta, Vega, and Rho** are computed by the pricing and Greeks engines using the same conventions as OSS.
 
 **Third-party integrations** connect the bot to external systems required for strategy execution: **ICICI Direct Breeze API** for live marks and (later) orders, in-house **`paper_sim`** for paper rehearsal, and **live data feed URLs** bound to each strategy's underlying and instruments. All credentials and API keys remain server-side; integrations are configured at runtime via the backend API—not hard-coded.
 
@@ -210,7 +210,7 @@ Market data is **not hard-coded or bundled**. Operators register **URL-based liv
 - **NFO lot sizing overrides OSS Y8=`100`**: each option leg’s effective multiplier and quantity step come from ICICI Direct instrument-master `lotsize` for that contract (`nfo_lot_sizing`)
 - Stale or failed feeds block autonomous execution for strategies that depend on them
 
-**Strategy ↔ feed binding:** The recommendation engine’s feed-bound universe (G11–G12) is **all NSE F&O underlyings** from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip), each auto-bound to NSE spot quotes + NFO option chain. When an OSS strategy is saved, the operator may still link explicit URLs; defaults resolve through the ICICI Direct adapter. If the strategy includes **stock/underlying** legs, the underlying must be cash equity with spot ≤ **INR 1000** (e.g. `SBIN`). **Options-only** strategies have **no** underlying price cap. The bot resolves bindings at runtime and validates feed freshness before each decision cycle.
+**Strategy ↔ feed binding:** The recommendation engine’s feed-bound universe (G11–G12) is **all NSE F&O underlyings** from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip), each auto-bound to NSE spot quotes + NFO option chain. When an OSS strategy is saved, the operator may still link explicit URLs; defaults resolve through the ICICI Direct adapter. The options-only hard lock means Call/Put legs only, no stock/underlying legs, no cash-share hedge, and no underlying price cap. Cash equities and indices may qualify when ATM / premium / liquidity gates pass. The bot resolves bindings at runtime and validates feed freshness before each decision cycle.
 
 ### 2.8 Trade Input — Option Strategy Simulator (OSS) Model
 
@@ -241,7 +241,7 @@ All option-based trades are defined using a **multi-leg strategy table** aligned
 
 **Leg count:** There is **no maximum** on legs per strategy. The OSS workbook exposes five leg rows for spreadsheet what-if; this bot persists legs as an **unbounded ordered list**. A strategy may open with any number of legs and **accumulate more** until **successful closure** (net flat or all legs expired/settled). Leg order does not affect calculations.
 
-Each leg selects a **Type**: `stock`, `call`, or `put` (`none` reserved for OSS empty-slot parity only).
+Each executable leg selects a **Type**: `call` or `put` (`none` reserved for OSS empty-slot parity only). The schema may retain `stock` for OSS parity fixtures, but bot execution rejects it.
 
 | Field | OSS Col | Applies To | Description | Example |
 |---|---|---|---|---|
@@ -249,16 +249,16 @@ Each leg selects a **Type**: `stock`, `call`, or `put` (`none` reserved for OSS 
 | **Expiration** | C | Call, Put | From expiration catalog (datetime when trading stops) | 21 Jun 2024 |
 | **Days to Expiry** | D | Call, Put | Computed; do not overwrite | 169.24 |
 | **Strike** | E | Call, Put | Same units as underlying price | 75.00 |
-| **Type** | F | All | `stock`, `call`, `put` (`none` = OSS empty slot only) | Put |
+| **Type** | F | All | `call`, `put` for execution (`stock` = OSS parity/test only; `none` = OSS empty slot only) | Put |
 | **Initial Price** | G | All | Entry price per share/unit; positive sign; may be empty for what-if | 3.60 |
 | **Per-Leg Volatility** | Q | Call, Put | Override when flat vol is off | 28.4% |
 | **Contract Multiplier** | S | All | Override; empty uses **NFO instrument `lotsize`** (India), never OSS US 100 | e.g. 65 |
 | **Share Equivalent** | T | All | `position × effective_multiplier` (computed) | lots × lotsize |
 | **Leg Name** | V | All | Display label, e.g. `+5 21Jun 75P` (computed) | +5 21Jun 75P |
 
-**Stock legs** (covered calls, protective puts, delta hedges): no strike or expiration; position is shares (or contracts × multiplier for futures). Delta = +1 (long) or −1 (short); gamma, theta, vega, rho = 0.
+**Stock legs** are pricing/test fixtures only. OSS parity retains their delta/Greek math, but the bot never constructs, recommends, paper-trades, or live-submits stock/underlying legs.
 
-**Contract multiplier:** resolve each option leg from ICICI Direct instrument-master **`lotsize`** for that NFO contract (per equity symbol). Do **not** copy the OSS workbook default of **100**. Stock legs use **1**. Per-leg override in column S when legs mix asset types. See `trading_parameters.defaults.json` → `nfo_lot_sizing`. If the strategy includes stock/underlying legs, the underlying must also satisfy spot ≤ INR 1000; options-only has no spot cap.
+**Contract multiplier:** resolve each option leg from ICICI Direct instrument-master **`lotsize`** for that NFO contract. Do **not** copy the OSS workbook default of **100**. Stock-leg multiplier `1` is OSS/test-only. Per-leg override in column S remains available for option what-if cases. See `trading_parameters.defaults.json` → `nfo_lot_sizing`. There is no underlying spot cap.
 
 **Initial cash flow** (column H — computed):
 
@@ -318,7 +318,7 @@ OSS supports parameter sweeps (underlying, vol, time, div yield, rate) with brea
 - Backend `quant/pricing/` implements BSM per OSS formulas; `quant/greeks/` matches OSS Greek conventions
 - `expiration_dates` catalog persisted separately; legs reference catalog IDs
 - Risk gates enforce limits on **portfolio totals** (`total_delta`, `total_gamma`, `total_vega`, `total_theta`)
-- Order builder expands legs (including stock hedges) into broker orders
+- Order builder expands Call/Put legs into broker orders and rejects stock/underlying legs before paper or live submit
 - Gamma and vega modules consume leg-level and aggregate Greeks
 - Live market data may override `und_price`, per-leg marks, and per-leg IV (disabling flat vol when chain IV available)
 
@@ -665,7 +665,7 @@ Live market data enters the system through **operator-configured URL endpoints**
 }
 ```
 
-Register feeds for the underlyings the strategy will trade. **Default universe:** every NSE F&O underlying on ICICI Direct (`FONSEScripMaster.txt`) with G12 bindings `icici_direct:NSE:{symbol}:quotes` and `icici_direct:NFO:{stock_code}:option_chain`. For **options+underlying** structures, use cash-equity underlyings with spot ≤ INR 1000. For **options-only**, there is no underlying price cap.
+Register feeds for the underlyings whose option chains the strategy will trade. **Default universe:** every NSE F&O underlying on ICICI Direct (`FONSEScripMaster.txt`) with G12 bindings `icici_direct:NSE:{symbol}:quotes` and `icici_direct:NFO:{stock_code}:option_chain`. The bot trades Call/Put options only; there is no underlying price cap and indices may qualify when other gates pass.
 
 **Example strategy ↔ feed binding:**
 
@@ -682,7 +682,7 @@ Register feeds for the underlyings the strategy will trade. **Default universe:*
 
 ### 5.6 Trade Input & Option Strategy Model
 
-Option-based trades use the **Macroption OSS** input table (see §2.8). The data model has four layers:
+Option-based trades use the **Macroption OSS** input table (see §2.8). The executable data model has four layers:
 
 ```
 Global Params (Valuation Date/Time, Und Price, Div Yield, Int Rate, Volatility, Flat Vol, Display Mode)
@@ -691,7 +691,7 @@ Global Params (Valuation Date/Time, Und Price, Div Yield, Int Rate, Volatility, 
 Expiration Catalog (up to 24 effective expiration datetimes — optional shared config)
         │
         ▼
-Legs (unbounded list — Position · Expiration · Strike · Type [stock|call|put] · Initial Price · Per-Leg Vol · Contract Multiplier)
+Legs (unbounded list — Position · Expiration · Strike · Type [call|put] · Initial Price · Per-Leg Vol · Contract Multiplier)
         │
         ▼
 Computed (per-leg: Price, Value, P/L, Δ, Γ, Θ, ν, ρ; leg name; share equivalent)
@@ -1331,7 +1331,7 @@ The bot integrates with external systems through **pluggable backend adapters**�
 
 ### 11.4 Option Strategy Trade Inputs
 
-Option trades are expressed as **multi-leg strategies** aligned with the **Macroption OSS** (`Docs/OSS (1).xlsm`, `Docs/OSS_Guide (1).pdf`): global BSM parameters, optional flat or per-leg volatility, contract multipliers, and an **unbounded leg list** of type **call, put, or stock**—with **no fixed leg-count limit**. Strategies may **add legs over the trade lifecycle** (hedges, rolls, adjustments) until **successful closure**. The bot does not accept ad-hoc single-field order inputs—it validates, prices (BSM-Merton), and risk-checks the full strategy table (global params → legs → computed Greeks → totals) before broker submission. Stock legs support covered calls, protective puts, and delta hedges. See §2.8 and `architecture.md` §8.5.
+Option trades are expressed as **multi-leg strategies** aligned with the **Macroption OSS** (`Docs/OSS (1).xlsm`, `Docs/OSS_Guide (1).pdf`): global BSM parameters, optional flat or per-leg volatility, contract multipliers, and an **unbounded executable leg list** of type **call or put**—with **no fixed leg-count limit**. Strategies may **add Call/Put legs over the trade lifecycle** (hedges, rolls, adjustments) until **successful closure**. The bot does not accept ad-hoc single-field order inputs—it validates, prices (BSM-Merton), and risk-checks the full strategy table (global params → legs → computed Greeks → totals) before broker submission. Stock-leg math is retained for OSS parity tests only and rejected in bot execution. See §2.8 and `architecture.md` §8.5.
 
 ### 11.5 Frontend / Backend Boundary
 
@@ -1437,7 +1437,7 @@ Build Phase 0–1 (ICICI Direct data-only → `paper_sim` fills → P&L → SH-4
 | **Option Strategy Simulator (OSS)** | Macroption multi-leg trade input UI and BSM pricing reference (`Docs/OSS (1).xlsm`) |
 | **Flat Volatility** | When enabled, one global σ applies to all option legs; when off, per-leg vol overrides |
 | **Contract Multiplier** | Shares/lots per option contract — **NFO `lotsize` per symbol** from ICICI Direct master (not OSS US 100); scales value, CF, and Greeks totals |
-| **Stock Leg** | Underlying position (long/short) within a multi-leg strategy; delta ±1, other Greeks zero |
+| **Stock Leg** | OSS parity / pricing-test fixture only; production, paper, recommendation, signal, and broker paths reject it |
 | **Effective Expiration** | Datetime when option stops trading / settlement is fixed — used for time-to-expiry |
 | **Initial CF** | Initial cash flow at trade entry; `−position × initial_price × multiplier` (debit negative) |
 | **Sharpe Ratio** | Risk-adjusted return metric used in performance evaluation |

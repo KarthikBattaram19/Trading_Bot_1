@@ -6,6 +6,7 @@ import logging
 from typing import Any
 from uuid import uuid4
 
+from backend.execution.options_only import OPTIONS_ONLY_REQUIRED
 from backend.execution.risk_gate import (
     PreTradeContext,
     evaluate_pre_trade_gate,
@@ -40,9 +41,6 @@ from backend.paper_sim.structure_builder import (
 
 logger = logging.getLogger(__name__)
 
-_INDEX_UNDERLYINGS = frozenset(
-    {"NIFTY", "BANKNIFTY", "FINNIFTY", "MIDCPNIFTY", "NIFTYNXT50"}
-)
 _CASH_EXCHANGES = frozenset({"NSE", "BSE"})
 
 
@@ -57,10 +55,14 @@ def _is_cash_underlying_leg(leg: Any) -> bool:
     return not (symbol.endswith("CE") or symbol.endswith("PE"))
 
 
-def _is_option_leg(exchange: str, symbol: str, option_type: str | None = None) -> bool:
-    if option_type is not None:
-        return True
-    if exchange.upper() == "NFO":
+def _is_option_leg(
+    exchange: str,
+    symbol: str,
+    instrument_type: str | None = None,
+) -> bool:
+    if exchange.upper() != "NFO":
+        return False
+    if (instrument_type or "").upper().startswith("OPT"):
         return True
     upper = symbol.upper()
     return upper.endswith("CE") or upper.endswith("PE")
@@ -147,18 +149,14 @@ class PaperEngine:
         underlying: str | None,
     ) -> tuple[list[dict], dict[str, Any], Any]:
         """Resolve instruments, freshness, lotsize, pre-trade, Part T — same open rules."""
+        if any(_is_cash_underlying_leg(leg) for leg in legs):
+            raise PaperLedgerError(
+                f"{OPTIONS_ONLY_REQUIRED}: Call/Put legs only; "
+                "stock/underlying legs are not allowed"
+            )
+
         resolved_legs: list[dict] = []
         ticks_for_gate: list[tuple[NormalizedTick, float]] = []
-
-        includes_underlying = any(_is_cash_underlying_leg(leg) for leg in legs)
-        if includes_underlying and underlying:
-            und = underlying.upper()
-            if und in _INDEX_UNDERLYINGS:
-                raise PaperLedgerError(
-                    f"underlying {underlying} is an index — "
-                    "cannot trade options with cash underlying under Part T "
-                    f"(spot cap {self.config.underlying_price_cap_inr:.0f} INR applies)"
-                )
 
         for leg in legs:
             record = None
@@ -171,11 +169,19 @@ class PaperEngine:
                     f"cannot resolve paper instrument {leg.exchange}:{leg.symbol}"
                 )
 
+            is_option = _is_option_leg(
+                record.exchange,
+                record.tradingsymbol,
+                getattr(record, "instrumenttype", None),
+            )
+            if not is_option:
+                raise PaperLedgerError(
+                    f"{OPTIONS_ONLY_REQUIRED}: Call/Put legs only; "
+                    "stock/underlying legs are not allowed"
+                )
+
             tick = await self.feed.get_ltp(
                 record.exchange, record.tradingsymbol, record.symboltoken
-            )
-            is_option = _is_option_leg(
-                record.exchange, record.tradingsymbol, leg.option_type
             )
             threshold = self._leg_threshold(
                 exchange=record.exchange,
@@ -235,21 +241,6 @@ class PaperEngine:
             raise PaperLedgerError(
                 f"pre_trade_gate failed: {','.join(gate.failed_ids)}"
             )
-
-        if includes_underlying and self.config.underlying_price_cap_inr > 0:
-            spot_marks = [
-                float(leg["mark_ltp"])
-                for leg in resolved_legs
-                if leg.get("is_cash_underlying")
-            ]
-            if spot_marks:
-                spot = max(spot_marks)
-                if spot > self.config.underlying_price_cap_inr:
-                    raise PaperLedgerError(
-                        f"underlying spot {spot:.2f} exceeds Part T cap "
-                        f"{self.config.underlying_price_cap_inr:.0f} INR "
-                        "(options+underlying path)"
-                    )
 
         return resolved_legs, freshness, gate
 

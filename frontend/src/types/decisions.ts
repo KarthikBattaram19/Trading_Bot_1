@@ -22,6 +22,7 @@ export interface RagCitation {
 
 export interface OptionLeg {
   leg_id: number;
+  /** `stock` retained for OSS/display parity; execution rejects stock legs (OPTIONS_ONLY_REQUIRED). */
   type: "call" | "put" | "stock";
   position: number;
   strike?: number;

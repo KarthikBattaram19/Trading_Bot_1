@@ -284,17 +284,7 @@ async def _build_universe() -> tuple[
 
 
 def _structure_uses_underlying(strategy: StrategySelectionLogic, cfg: dict[str, Any]) -> bool:
-    """True when the bot will trade options together with the cash underlying (T11 applies)."""
-    st = strategy.selected_strategy
-    if st == StrategyType.blocked:
-        return False
-    if st == StrategyType.simple_volatility:
-        return cfg["strategies"]["simple_volatility"].get("hedge_method", "stock") == "stock"
-    if st == StrategyType.gamma_scalping:
-        return cfg["strategies"]["gamma_scalping"].get("construction", "calls_stock") == "calls_stock"
-    if st == StrategyType.vega_scalping:
-        # Default vega path delta-hedges with stock unless config says options_only.
-        return cfg["strategies"]["vega_scalping"].get("hedge_method", "stock") == "stock"
+    """Hard lock: recommendations never include the cash underlying leg."""
     return False
 
 
@@ -303,33 +293,8 @@ def _prefer_options_only_for_high_spot(
     strategy: StrategySelectionLogic,
     cfg: dict[str, Any],
 ) -> tuple[StrategySelectionLogic, bool]:
-    """Scenario E: if spot > T11 cap on a stock-hedge path, force options-only (no price cap).
-
-    Returns (strategy, force_options_only).
-    """
-    f = cfg["option_universe_filters"]
-    if f.get("max_underlying_price_applies_when", "options_and_underlying") != "options_and_underlying":
-        return strategy, False
-    if not _structure_uses_underlying(strategy, cfg):
-        return strategy, False
-    if c.und_price <= f["max_underlying_price"]:
-        return strategy, False
-    note = (
-        f"Scenario E: und_price ₹{c.und_price:.2f} > {f['max_underlying_price']} INR — "
-        "switch to options-only (T11 skipped)"
-    )
-    return (
-        StrategySelectionLogic(
-            selected_strategy=strategy.selected_strategy,
-            entry_mode=strategy.entry_mode,
-            scenario_tag=strategy.scenario_tag or "Scenario E: High-Priced Underlying",
-            cross_strategy_matrix_ref=strategy.cross_strategy_matrix_ref,
-            primary_signal=f"{strategy.primary_signal}; {note}",
-            rejected_strategies=list(strategy.rejected_strategies) + ["stock_hedge — T11 spot cap"],
-            news_impact=strategy.news_impact,
-        ),
-        True,
-    )
+    """No-op retained for legacy callers; all recommendation paths are options-only."""
+    return strategy, False
 
 
 def _evaluate_gates(
@@ -342,22 +307,13 @@ def _evaluate_gates(
     f = cfg["option_universe_filters"]
     gates: list[GateResult] = []
 
-    applies = f.get("max_underlying_price_applies_when", "options_and_underlying")
-    if applies == "options_and_underlying" and not includes_underlying:
-        price_ok = True
-        price_detail = f"₹{c.und_price:.2f} (options-only — T11 N/A)"
-        price_label = "Underlying price cap N/A (options-only)"
-    else:
-        price_ok = c.und_price <= f["max_underlying_price"]
-        price_detail = f"₹{c.und_price:.2f}"
-        price_label = f"Underlying price ≤ {f['max_underlying_price']} INR"
     gates.append(
         GateResult(
-            gate_id="T11",
-            label=price_label,
-            passed=price_ok,
-            detail=price_detail,
-            parameter_ref="Trading_Parameters.md Part T — T11",
+            gate_id="OPTIONS_ONLY_REQUIRED",
+            label="Recommendation construction is options-only",
+            passed=not includes_underlying,
+            detail="No cash underlying leg" if not includes_underlying else "Cash underlying leg requested",
+            parameter_ref="options-only hard lock",
         )
     )
 
@@ -567,32 +523,20 @@ def _hedge_insight(
         return HedgeInsight(
             method="Delta-neutral ATM long vol; flatten same session",
             greek_targets="Δ≈0 · V+ · Θ ignored (intraday)",
-            structure_note=(
-                "Single ATM option; options-only delta hedge; no overnight carry (N6.5)"
-                if options_only
-                else "Single ATM option + stock/futures hedge; no overnight carry (N6.5)"
-            ),
+            structure_note="Single ATM option; options-only delta hedge; no overnight carry (N6.5)",
         )
     if st == StrategyType.gamma_scalping:
         mode = strategy.entry_mode or "cheap_vol_mode"
         return HedgeInsight(
             method=f"Vega-neutral long gamma ({mode})",
             greek_targets="Δ≈0 · V≈0 · Γ+ · Θ−",
-            structure_note=(
-                "Near/far expiry same-strike; four-leg options-only (no stock) — T11 N/A"
-                if options_only
-                else "Near/far expiry same-strike calls (or four-leg); re-hedge at Γ–Θ breakeven"
-            ),
+            structure_note="Near/far expiry same-strike; four-leg options-only structure",
         )
     if st == StrategyType.simple_volatility:
         return HedgeInsight(
             method="Delta-neutral long vega (cheap vol)",
             greek_targets="Δ≈0 · Γ+ · V+ · Θ−",
-            structure_note=(
-                "ATM option; options-only hedge (no stock) — T11 N/A; hold D+0/D+1"
-                if options_only
-                else "ATM option + hedge; hold D+0/D+1; re-hedge at gamma-theta breakeven"
-            ),
+            structure_note="ATM option; options-only hedge; hold D+0/D+1",
         )
     return HedgeInsight(
         method="Blocked — no hedge",
@@ -679,18 +623,9 @@ def _build_logic_trail(
     includes_underlying: bool = True,
 ) -> list[str]:
     """Complete step-by-step logic for UI transparency."""
-    f = cfg["option_universe_filters"]
-    if f.get("max_underlying_price_applies_when") == "options_and_underlying" and not includes_underlying:
-        t11 = f"2. Universe filter T11: options-only — no underlying price cap (N/A at ₹{c.und_price:.2f})"
-    else:
-        t11 = (
-            f"2. Universe filter T11: price cap {f['max_underlying_price']} INR "
-            f"(options+underlying) — "
-            f"{'PASS' if c.und_price <= f['max_underlying_price'] else 'FAIL'}"
-        )
     steps = [
         f"1. Feed bind: underlying_symbol={c.symbol}, und_price=₹{c.und_price:.2f} (A4/A5)",
-        t11,
+        "2. Options-only lock: recommendation construction uses option legs only",
         f"3. Liquidity T13–T15: vol={c.volume}, OI={c.open_interest}, spread={c.spread_pct:.2f}%",
         f"4. GARCH(1,1) forecast σ_annual={c.garch_forecast:.2%} (H10); mark IV={c.iv_annualized:.2%} (G4)",
     ]
@@ -713,7 +648,7 @@ def _build_logic_trail(
     if failed:
         steps.append(f"9. GATE FAIL: {', '.join(g.gate_id for g in failed)} — excluded from ranking")
     else:
-        steps.append("9. All retail gates T1–T16 + DTE pass — eligible for ranking")
+        steps.append("9. Options-only retail gates + DTE pass — eligible for ranking")
 
     if strategy.rejected_strategies:
         steps.append(f"10. Alternatives rejected: {'; '.join(strategy.rejected_strategies)}")
@@ -879,7 +814,7 @@ async def generate_recommendations(
             f"Marks coverage: live={live_count}, stub={stub_count}, demo={demo_count} "
             "(live = NSE LTP + NFO option-chain ATM)."
         ),
-        f"{passing} passed all retail gates (T1–T16, I21).",
+        f"{passing} passed all options-only retail gates (I21).",
         f"Confidence floor: only candidates with confidence ≥ {min_confidence:.0%} are recommended.",
         "Strategy selection follows Trading_Strategies.md Table SH-4 with Market_News overlay.",
         "Parameter gates sourced from Trading_Parameters.md Parts G, H, I, T, U.",

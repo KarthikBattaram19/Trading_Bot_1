@@ -150,7 +150,7 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 | ID | Focus |
 | -- | ----- |
 | N-01, N-03, N-12 | News stale / crisis / IV z blocked |
-| MD-05, MD-10, MD-14 | Bad LTP; GARCH gap; spot ≤ ₹1000 when options+underlying |
+| MD-05, MD-10, MD-14 | Bad LTP; GARCH gap; high-priced underlying — do not reject solely on spot; continue ATM / premium / liquidity gates (align `edge_cases.md` MD-14) |
 | PS-03, PS-05, PS-06, PS-11 | Multi-leg missing mark; capital-cap hedge; news kill vs re-hedge; multi-leg auto-complete under open rules |
 | Q-05, Q-07 | Lotsize; `net_hedge_edge ≤ 0` |
 | S-01, S-10 | Session window; IST / `Asia/Kolkata` |

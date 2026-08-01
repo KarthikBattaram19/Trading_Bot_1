@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
+from backend.execution.options_only import OPTIONS_ONLY_REQUIRED
 from backend.models.recommendations import GateResult, MarketNewsSummary, StrategyType
 from backend.quant.signals.garch import (
     GarchForecastResult,
@@ -61,7 +62,7 @@ class SignalComputeInputs:
     open_interest: int = 25_000
     spread_pct: float = 0.4
     dte: int = 20
-    includes_underlying: bool = True
+    includes_underlying: bool = False
     ce_volume: int | None = None
     pe_volume: int | None = None
     ce_open_interest: int | None = None
@@ -285,28 +286,20 @@ def _retail_gates(
     includes_underlying: bool,
     cfg: dict[str, Any],
 ) -> list[GateResult]:
-    """T11 / T1 / T13–T15 gates used by POST /signals/evaluate."""
+    """Options-only hard lock plus T1 / T13-T15 gates used by POST /signals/evaluate."""
     f = cfg["option_universe_filters"]
     gates: list[GateResult] = []
 
-    applies = f.get("max_underlying_price_applies_when", "options_and_underlying")
-    if applies == "options_and_underlying" and not includes_underlying:
-        price_ok = True
-        detail = f"₹{inp.und_price:.2f} (options-only — T11 N/A)"
-        label = "Underlying price cap N/A (options-only)"
-    else:
-        price_ok = inp.und_price <= float(f["max_underlying_price"])
-        detail = f"₹{inp.und_price:.2f}"
-        label = f"Underlying price ≤ {f['max_underlying_price']} INR"
-    gates.append(
-        GateResult(
-            gate_id="T11",
-            label=label,
-            passed=price_ok,
-            detail=detail,
-            parameter_ref="Trading_Parameters.md Part T — T11",
+    if includes_underlying:
+        gates.append(
+            GateResult(
+                gate_id=OPTIONS_ONLY_REQUIRED,
+                label="Options-only hard lock",
+                passed=False,
+                detail="Stock/underlying legs are not allowed",
+                parameter_ref="backend.execution.options_only",
+            )
         )
-    )
 
     prem_ok = inp.atm_premium_inr < float(f["max_option_premium"])
     gates.append(
@@ -447,7 +440,7 @@ def evaluate_candidate(
     setup_designed_for_event: bool = False,
     position_open: bool = False,
 ) -> dict[str, Any]:
-    """POST /signals/evaluate — signal packet + retail gates (T11 when options+underlying)."""
+    """POST /signals/evaluate — signal packet + options-only retail gates."""
     cfg = cfg or _load_config()
     packet = build_signal_packet(
         inp,
@@ -585,7 +578,7 @@ def signals_for_underlying(
     intraday_iv_series: Sequence[float] | None = None,
     option_iv_annual: float | None = None,
     und_price: float | None = None,
-    includes_underlying: bool = True,
+    includes_underlying: bool = False,
 ) -> dict[str, Any]:
     """GET /signals — demo-backed packet (live candles can be injected later)."""
     sym = underlying.upper()

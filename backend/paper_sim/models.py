@@ -106,7 +106,7 @@ class PaperPosition(BaseModel):
     breakeven_paid_count: int = 0
     rehedge_method: Literal[
         "increase_hedge", "reduce_options", "adjust_call_put_mix"
-    ] = "increase_hedge"
+    ] = "adjust_call_put_mix"
     last_rehedge_at: datetime | None = None
     total_delta: float | None = None
     total_gamma: float | None = None

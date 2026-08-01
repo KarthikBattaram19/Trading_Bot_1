@@ -14,6 +14,8 @@ This document is the **complete, execution-ready parameter catalog** for the vol
 
 Every parameter listed below is required **either at trade construction (OSS inputs), at signal generation (strategy logic), or at execution/risk control**. Parameters are grouped by layer, then broken out per strategy.
 
+**Options-only hard lock:** production, recommendation, paper, and live execution paths only construct and submit Call/Put option legs. `und_price` and `underlying_symbol` remain feed, chain-selection, ATM, and pricing inputs; they are not tradeable instruments. Stock legs are retained only for OSS parity / pricing tests and are rejected by bot execution with `OPTIONS_ONLY_REQUIRED`.
+
 ---
 
 ## Parameter Layer Overview
@@ -71,14 +73,14 @@ These parameters apply to **every** option-based trade. They map to OSS main she
 | A2 | **Valuation Time** | C4 | `eval_time` | Time | Yes | Intraday component; DTE uses datetime difference | 10:35:00 | **IST** (`Asia/Kolkata`); critical for intraday vega scalp and same-day flatten |
 | A3 | **Valuation Datetime** | C3+C4 | `eval_datetime` | ISO 8601 | Yes (derived) | Combined convenience alias | 2024-01-04T10:35:00+05:30 | Must be **IST**; prefer explicit `+05:30` so DTE matches OSS parity fixture |
 | A4 | **Underlying Price** | G4 | `und_price` | Decimal / share | Yes | Spot mark; same units as strikes | 85.40 | Live feed overrides default; refreshed each cycle |
-| A5 | **Underlying Symbol** | — | `underlying_symbol` | String | Yes | Ticker the legs reference. When the strategy includes a **stock/underlying** leg, spot must be ≤ ₹1000 and must be cash equity (T11). **Options-only** structures have **no** underlying price cap | SBIN | Not in OSS UI; required by bot for feeds and chain lookup. Index symbols allowed only in options-only mode (T11a/T11b do not apply) |
+| A5 | **Underlying Symbol** | — | `underlying_symbol` | String | Yes | Ticker that binds spot, chain, marks, ATM selection, and pricing inputs. It is **not** a tradeable leg in bot execution. | SBIN / NIFTY | Not in OSS UI; required by bot for feeds and chain lookup. Cash equities and indices are allowed when ATM, premium, and liquidity gates pass. |
 | A6 | **Dividend Yield** | J3 | `div_yield` | Percent p.a., **continuously compounded** | Yes | Continuous yield q; also convenience yield / foreign rate (Garman–Kohlhagen) | 2.6% (0.026) | Set 0 for pure Black–Scholes; discrete dividends are a model limitation |
 | A7 | **Interest Rate** | J4 | `int_rate` | Percent p.a., **continuously compounded** | Yes | Risk-free rate r; tenor ≈ option life | 4.0% (0.04) | Low sensitivity except long-dated / deep ITM structures |
 | A8 | **Flat Volatility Flag** | Q3 | `flat_volatility` | Boolean | Yes | When true, one σ for all legs (O4); when false, per-leg σ in column Q | true | Disable flat vol when chain IV available per leg |
 | A9 | **Volatility (flat)** | O4 | `volatility` | Percent p.a., annualized **std dev** (not variance) | Conditional | Global σ when flat vol on | 28.4% (0.284) | Vega defined per **1 vol point** (1% σ change) |
 | A10 | **Display Mode** | L4 | `display_mode` | Enum: `per_share` \| `total` | Yes | How Value, P/L, Greeks totals render | `total` (L4=2) | Prefer `total` when leg sizes differ |
-| A11 | **Default Option Contract Multiplier** | Y8 | `default_contract_multiplier` / `nfo_lot_sizing` | Integer or null | Yes | **India:** do **not** copy OSS Y8=`100`. Effective multiplier = each contract’s real NFO `lotsize` from ICICI Direct instrument master (`contract_multiplier_source=nfo_instrument_lotsize`). OSS workbook `100` is US equity/ETF parity / what-if only. | Equity NFO lot from master (e.g. SBIN) | Per-symbol NFO sizes differ and revise over time; if legs include stock/underlying, also pass T11 (spot ≤ ₹1000) |
-| A12 | **Default Stock Contract Multiplier** | Y10 | `default_stock_multiplier` | Integer | Yes | Multiplier for cash/stock hedge legs | 1 | Cash NSE/BSE hedges are shares (`1`) |
+| A11 | **Default Option Contract Multiplier** | Y8 | `default_contract_multiplier` / `nfo_lot_sizing` | Integer or null | Yes | **India:** do **not** copy OSS Y8=`100`. Effective multiplier = each contract’s real NFO `lotsize` from ICICI Direct instrument master (`contract_multiplier_source=nfo_instrument_lotsize`). OSS workbook `100` is US equity/ETF parity / what-if only. | NFO lot from master (equity or index option) | Per-symbol NFO sizes differ and revise over time. |
+| A12 | **Default Stock Contract Multiplier** | Y10 | `default_stock_multiplier` | Integer | OSS/test-only | Multiplier retained for OSS stock-leg parity fixtures only. | 1 | Rejected by bot execution; no cash NSE/BSE hedge legs are constructed or submitted. |
 
 ### A13 — Valuation Navigation (OSS UI; optional for bot)
 
@@ -96,8 +98,8 @@ These parameters apply to **every** option-based trade. They map to OSS main she
 | `contract_multiplier_source` | `nfo_instrument_lotsize` | Production + paper path |
 | `nfo_lot_sizing.resolve_from` | `icici_direct_instrument_master` | Authoritative `lotsize` per resolved NFO contract |
 | `nfo_lot_sizing.do_not_copy_oss_us_default` | `true` | Never apply OSS workbook Y8=`100` to India sizing |
-| `nfo_lot_sizing.reference_equity_lots` | optional offline examples for **tradeable** equity NFO names | Docs-only; **live ICICI Direct `lotsize` always wins**. Index lot tables are non-tradeable under T11 |
-| `default_stock_multiplier` | `1` | Cash/stock hedge legs (NSE equity shares) |
+| `nfo_lot_sizing.reference_equity_lots` | optional offline examples for equity NFO names | Docs-only; **live ICICI Direct `lotsize` always wins** |
+| `default_stock_multiplier` | `1` | OSS parity / unit-test stock legs only; execution rejects stock legs |
 
 Config artifacts: `backend/config/trading_parameters.defaults.json`, `backend/schemas/trading_parameters.schema.json`.
 
@@ -114,11 +116,11 @@ OSS reference layout: rows 8, 10, 12, 14, 16 (five slots). **This project suppor
 | B3 | **Expiration ID** | C | `expiration_id` | Call, Put | Catalog ref | Yes (options) | Index into expiration catalog | 6 → 2024-06-21 16:15 |
 | B4 | **Days to Expiry** | D | `days_to_expiry` | Call, Put | Decimal days | Computed | Positive diff: expiration datetime − valuation datetime | 169.24 |
 | B5 | **Strike** | E | `strike` | Call, Put | Decimal | Yes (options) | Same units as `und_price` | 75.00 |
-| B6 | **Type** | F | `type` | All | Enum | Yes | `none`, `stock`, `call`, `put` | `put` (F=4) |
+| B6 | **Type** | F | `type` | All | Enum | Yes | `none`, `stock`, `call`, `put`; bot execution allows **only** `call` / `put` (`none` for empty OSS slots in tests) | `put` (F=4) |
 | B7 | **Initial Price** | G | `initial_price` | All | Decimal / share | Recommended | Entry price per share; positive sign; include commissions | 3.60 |
 | B8 | **Per-Leg Volatility** | Q | `leg_volatility` | Call, Put | Percent p.a. | Conditional | Required when `flat_volatility=false` | 28.4% |
-| B9 | **Contract Multiplier Override** | S | `contract_multiplier` | All | Integer | Optional | Empty → NFO `lotsize` (options) or Y10 (stock). Never fall back to OSS US 100 on India path. | `lotsize` from master |
-| B10 | **Effective Contract Size** | R | `effective_multiplier` | All | Computed | — | S if set, else ICICI Direct NFO `lotsize` (options) or `default_stock_multiplier` (stock) | e.g. equity NFO `lotsize` |
+| B9 | **Contract Multiplier Override** | S | `contract_multiplier` | All | Integer | Optional | Empty → NFO `lotsize` for options. Stock Y10 exists only for OSS parity fixtures. Never fall back to OSS US 100 on India path. | `lotsize` from master |
+| B10 | **Effective Contract Size** | R | `effective_multiplier` | All | Computed | — | S if set, else ICICI Direct NFO `lotsize` for options; stock multiplier only in OSS parity tests | e.g. NFO `lotsize` |
 | B11 | **Share Equivalent** | T | `share_equivalent` | All | Computed | — | `position × effective_multiplier` | lots × lotsize |
 | B12 | **Leg Name** | V | `leg_name` | All | String | Computed | e.g. `+5 21Jun 75P` | +5 21Jun 75P |
 | B13 | **Expiration Datetime** | U | `expiration_datetime` | Call, Put | Datetime | From catalog | Effective stop-trading datetime | 2024-06-21 16:15:00 |
@@ -128,7 +130,7 @@ OSS reference layout: rows 8, 10, 12, 14, 16 (five slots). **This project suppor
 | OSS F value | Label | Default multiplier (India bot) |
 |---|---|---|
 | 0 / empty | None | — |
-| 1 | Stock | 1 (Y10) |
+| 1 | Stock | 1 (Y10) — OSS parity / tests only; execution rejects |
 | 3 | Call | NFO instrument `lotsize` (not OSS Y8=100) |
 | 4 | Put | NFO instrument `lotsize` (not OSS Y8=100) |
 
@@ -139,7 +141,7 @@ OSS reference layout: rows 8, 10, 12, 14, 16 (five slots). **This project suppor
 | Strike / expiration | Not applicable (grey in OSS) |
 | Position | Shares (+ long, − short); e.g. −745 = short 745 shares |
 | Greeks | Delta = ±1; gamma, theta, vega, rho = 0 |
-| Use case | Delta hedge path for all three volatility strategies |
+| Use case | OSS parity / pricing tests only; never a production, paper, signal, recommendation, or broker leg |
 
 ### B16 — Initial Cash Flow (computed, column H)
 
@@ -284,7 +286,7 @@ From `Trading_Strategies.md` §Common Execution Framework — **Data Requirement
 | G5 | **Greeks or pricing engine** | `greeks_engine` | Computed | Yes | Hedge solve, neutrality checks |
 | G6 | **Earnings calendar** | `earnings_calendar` | Events | Yes | Gamma earnings mode; block plain long-vega through event |
 | G7 | **Corporate actions calendar** | `corp_actions` | Events | Yes | Dividend / split risk |
-| G8 | **Borrow availability** | `borrow_status` | Enum + rate | Conditional | Short stock / short option legs |
+| G8 | **Short-option borrow / margin status** | `short_option_status` | Enum + rate/cost | Conditional | Short option legs and margin checks |
 | G9 | **Margin estimate** | `margin_estimate` | Decimal | Yes | Pre-approval packet, size limits |
 | G10 | **Feed freshness timestamp** | `feed_as_of` | Datetime | Yes | Stale-data kill switch |
 | G11 | **Underlying symbol** | `underlying_symbol` | String | Yes | Chain and spot binding. **Feed-bound universe:** every NSE F&O underlying from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip), mapped to NSE display tickers (e.g. `RELIND`→`RELIANCE`, `STABAN`→`SBIN`) |
@@ -301,7 +303,7 @@ From `Trading_Strategies.md` §Common Execution Framework — **Data Requirement
 | `bid`, `ask`, `mid` | Spread-aware orders, liquidity filter (T15) |
 | `volume` | Liquidity filter (T13) |
 | `open_interest` | Liquidity filter (T14; especially long-dated gamma legs) |
-| `und_price` | Underlying price cap filter (T11 — max INR 1000 when options+underlying; **N/A** for options-only) |
+| `und_price` | ATM selection, moneyness, spot marks, BSM pricing, and scenario sweeps |
 | `implied_volatility` | Cheap-vol signal, intraday IV series |
 
 ---
@@ -335,8 +337,8 @@ Used by **Simple Volatility Trading** and **Gamma Scalping mode 1 (cheap vol)**.
 | I1 | **Spread cap** | Percent | **&lt; 0.5%** of mid (T15) | All — block illiquid chains |
 | I2 | **Slippage cap** | Percent | Configurable | All — reject if edge gone |
 | I3 | **Commission per leg** | $ | Broker-specific | Cost scoring |
-| I4 | **Borrow fee** | Percent p.a. | From broker | Short stock legs |
-| I5 | **Financing rate** | Percent | From broker | Margin / stock hedge |
+| I4 | **Short-option carry / margin cost** | Percent p.a. or broker estimate | From broker / margin model | Short option legs |
+| I5 | **Financing rate** | Percent | From broker | Margin and capital-cost model |
 | I6 | **Expected re-hedge count** | Integer | From gamma-theta distance | Cost scoring |
 | I7 | **Multi-leg sync submit** | Boolean | Required in production | All multi-leg |
 | I8 | **Partial fill handling** | Policy enum | Recompute hedge after drift | All |
@@ -350,8 +352,6 @@ Used by **Simple Volatility Trading** and **Gamma Scalping mode 1 (cheap vol)**.
 | I15 | **Max option premium** | Decimal (INR) | **300** | Hard filter — reject if premium ≥ cap |
 | I16 | **Premium currency** | Enum | `INR` | All premium comparisons use INR |
 | I17 | **Moneyness requirement** | Enum | `atm` | **At the Money only** — no OTM/ITM substitutes |
-| I18 | **Max underlying price** | Decimal (INR) | **1000** | Applies **only** when the bot trades **options and its underlying** (any `stock` leg / cash-share hedge). Reject if `und_price` > cap. **Options-only** (Call/Put legs only): **no underlying price cap**. |
-| I18a | **Price-cap applicability** | Enum | `options_and_underlying` | Cap enforced iff strategy includes underlying/stock; skipped for options-only |
 | I19 | **Underlying price currency** | Enum | `INR` | All underlying price comparisons use INR |
 | I20 | **High liquidity required** | Boolean | **true** | Instrument must pass absolute floors, relative ATM volume/OI, and spread gates (T13–T15b) |
 
@@ -362,8 +362,7 @@ All must pass before submission:
 | Gate | Parameter |
 |---|---|
 | Signal objective & reproducible | `signal_reproducible=true` |
-| Instrument highly liquid | `liquidity_ok=true` — abs floors + volume/OI vs ≤20d avg + spread &lt; 0.5% (T13–T15) |
-| Underlying price within cap (options+underlying only) | `underlying_price_within_cap=true` when strategy includes stock/underlying — `und_price` ≤ 1000 INR; **skip** this gate for options-only |
+| Instrument highly liquid | `liquidity_ok=true` — abs floors + volume/OI vs ≤20d avg + spread < 0.5% (T13–T15) |
 | Size allows rebalance | `size_rebalance_ok=true` |
 | Event risks known | `event_risk_reviewed=true` |
 | Strategy matches regime | `regime_match=true` |
@@ -379,7 +378,7 @@ Abort or flatten if any become true:
 | Kill Flag | Parameter |
 |---|---|
 | Liquidity collapse / spread blowout | `kill_liquidity=true` |
-| Hedge leg unavailable | `kill_hedge_unavailable=true` |
+| Re-hedge option leg unavailable | `kill_hedge_unavailable=true` |
 | Stale / corrupt model input | `kill_stale_data=true` |
 | Unplanned earnings / news | `kill_event=true` |
 | Neutrality not restorable within cost | `kill_neutrality=true` |
@@ -395,12 +394,14 @@ Abort or flatten if any become true:
 | J1 | **Last hedge underlying price** | `hedge_point_price` | Decimal | Set at entry / rebalance | Vol, Gamma |
 | J2 | **Gamma-theta breakeven distance** | `gamma_theta_breakeven_pct` | Percent of spot | ~0.96%–1% (compute from Greeks, do not hard-code) | Re-hedge trigger |
 | J3 | **Half-breakeven tactic** | `use_half_breakeven` | Boolean | false | Optional: two half-size re-hedges |
-| J4 | **Re-hedge method** | `rehedge_method` | Enum | `increase_hedge` \| `reduce_options` \| `adjust_call_put_mix` | Vol management |
+| J4 | **Re-hedge method** | `rehedge_method` | Enum | `adjust_call_put_mix` (default) \| `reduce_options` \| `increase_hedge` | Options-only vol management |
 | J5 | **Breakeven paid count** | `breakeven_paid_count` | Integer | ≥1 allows D+1 carry | Vol, Gamma standard |
 | J6 | **Realized P/L ledger** | `realized_pnl` | Decimal | Per rebalance | Attribution |
 | J7 | **Floating P/L ledger** | `floating_pnl` | Decimal | Mark-to-market | Attribution |
 
 **Re-hedge rule:** Re-neutralize when price moves away from `hedge_point_price` by ≥ `gamma_theta_breakeven_pct`.
+
+`increase_hedge` means increasing Call/Put option size only. It never adds or removes cash shares.
 
 ---
 
@@ -462,12 +463,11 @@ Authoritative curation: project-root `Market_News.txt`. Mapping to strategies: `
 | # | Parameter | Rule | Validation |
 |---|---|---|---|
 | L2.1 | `liquidity_ok` | **High-liquidity chain** (required) | Volume + OI + spread gates (T13–T15); reject if any fail |
-| L2.1a | `underlying_price_within_cap` | `und_price` ≤ **INR 1000** when path uses stock/underlying; **N/A** for options-only | Reject only if options+underlying and spot exceeds cap |
 | L2.2 | `option_moneyness` | **ATM only** | Strike = closest available to `und_price`; reject OTM/ITM |
 | L2.3 | `option_premium_cap` | Premium < **INR 300** | Compare chain `mid` (or `ask` for long); reject if ≥ cap |
 | L2.4 | `dte` | 15–30 DTE preferred | Avoid < 10 DTE routinely |
 | L2.5 | `iv_vs_garch` | IV < GARCH forecast | H10 vs leg/mark IV |
-| L2.6 | `delta_hedge_feasible` | Can neutralize delta | Stock or options-only path |
+| L2.6 | `delta_hedge_feasible` | Can neutralize delta | Options-only Call/Put path |
 
 ### L3 — Option Selection Parameters
 
@@ -495,14 +495,7 @@ Authoritative curation: project-root `Market_News.txt`. Mapping to strategies: `
 
 ### L5 — Position Construction Parameters
 
-**Path A — Long calls + short stock**
-
-| Parameter | Rule |
-|---|---|
-| Call contracts | N (solver output) |
-| Stock hedge shares | Short ≈ `N × call_delta × multiplier` |
-
-**Path B — Options-only (same strike & expiry)**
+**Options-only hard lock — same strike & expiry**
 
 | Parameter | Formula |
 |---|---|
@@ -512,10 +505,9 @@ Authoritative curation: project-root `Market_News.txt`. Mapping to strategies: `
 
 | # | Parameter | API Key | Description |
 |---|---|---|---|
-| L5.1 | Hedge method | `hedge_method` | `stock` \| `options_only` |
+| L5.1 | Hedge method | `hedge_method` | Const `options_only` |
 | L5.2 | Call quantity | `call_qty` | From solver |
-| L5.3 | Put quantity | `put_qty` | From solver (options-only) |
-| L5.4 | Stock quantity | `stock_qty` | Shares for stock hedge |
+| L5.3 | Put quantity | `put_qty` | From solver |
 | L5.5 | Same strike flag | `same_strike` | true for options-only neutral |
 | L5.6 | Same expiry flag | `same_expiry` | true for options-only neutral |
 
@@ -554,7 +546,7 @@ Authoritative curation: project-root `Market_News.txt`. Mapping to strategies: `
 | B — Black swan after entry | Aggressive profit take; immediate re-hedge |
 | C — Quiet market | Early exit; `theta_dominant=true` |
 | D — Earnings imminent | **Block** routine simple vol; prefer gamma |
-| E — High-priced underlying | **Reject** if options+underlying and `und_price` > **INR 1000**; **allow** if options-only (no spot cap) |
+| E — High-priced or index underlying | **Allow** when ATM, premium, liquidity, and strategy gates pass; no spot cap and no index exclusion under the options-only hard lock |
 
 ---
 
@@ -585,7 +577,7 @@ Authoritative curation: project-root `Market_News.txt`. Mapping to strategies: `
 
 ### M3 — Instrument Design Parameters
 
-**Standard construction (calls + stock)**
+**Options-only hard lock — four-leg construction**
 
 | # | Parameter | API Key | Rule |
 |---|---|---|---|
@@ -593,31 +585,29 @@ Authoritative curation: project-root `Market_News.txt`. Mapping to strategies: `
 | M3.2 | Long-dated expiry | `far_expiration_id` | Higher vega, lower gamma |
 | M3.3 | Strike (same) | `strike` | Same **ATM** strike both expiries |
 | M3.4 | Near call qty (long) | `near_call_qty` | Buy short-dated calls |
-| M3.5 | Far call qty (short) | `far_call_qty` | Short until portfolio vega ≈ 0 |
-| M3.6 | Stock hedge qty | `stock_qty` | Short to neutralize residual delta |
-| M3.7 | Term structure check | `short_iv_vs_long_iv` | Reject if short IV >> long IV (distortion) |
-
-**Four-leg options-only variant**
+| M3.5 | Far call qty (short) | `far_call_qty` | Short until portfolio vega contribution is offset |
+| M3.6 | Near put qty (long) | `near_put_qty` | Buy short-dated puts for options-only delta neutrality |
+| M3.7 | Far put qty (short) | `far_put_qty` | Short long-dated puts for vega/delta solve |
+| M3.8 | Term structure check | `short_iv_vs_long_iv` | Reject if short IV >> long IV (distortion) |
 
 | Leg | Type | Expiry | Side |
 |---|---|---|---|
-| M3.8 | Near calls | Short-dated | Long |
-| M3.9 | Far calls | Long-dated | Short |
-| M3.10 | Near puts | Short-dated | Long |
-| M3.11 | Far puts | Long-dated | Short |
+| M3.9 | Near calls | Short-dated | Long |
+| M3.10 | Far calls | Long-dated | Short |
+| M3.11 | Near puts | Short-dated | Long |
+| M3.12 | Far puts | Long-dated | Short |
 
 | # | Parameter | API Key |
 |---|---|---|
-| M3.12 | Construction variant | `gamma_construction` = `calls_stock` \| `four_leg_options` |
-| M3.13 | Vega neutral solver tolerance | `vega_neutral_tolerance` |
-| M3.14 | Net gamma minimum | `min_net_gamma` |
+| M3.13 | Construction variant | `gamma_construction` = const `four_leg_options` |
+| M3.14 | Vega neutral solver tolerance | `vega_neutral_tolerance` |
+| M3.15 | Net gamma minimum | `min_net_gamma` |
 
 ### M4 — Minimum Setup Conditions
 
 | # | Parameter | Validation |
 |---|---|---|
 | M4.1 | Both expiries highly liquid | Volume + OI + spread gates (T13–T15) on near **and** far legs |
-| M4.1a | Underlying price within cap | `und_price` ≤ **INR 1000** when `gamma_construction=calls_stock` (or any stock leg); **skip** for `four_leg_options` / options-only |
 | M4.2 | Term structure OK | Not distorted against trade |
 | M4.3 | Vega neutralizable | Solver finds qty with net gamma > 0 |
 | M4.4 | Delta hedge within cost | `hedge_cost < limit` |
@@ -679,7 +669,6 @@ Use near expiry for long gamma/theta; far expiry for vega short hedge.
 | # | Parameter | Validation |
 |---|---|---|
 | N2.1 | ATM option highly liquid | Volume + OI + spread gates (T13–T15); **ATM strike only** |
-| N2.1a | Underlying price within cap | `und_price` ≤ **INR 1000** when delta hedge uses stock/underlying; **skip** for options-only hedge |
 | N2.2 | Premium within cap | Premium < **INR 300** |
 | N2.3 | Intraday IV mean stable | Sufficient history length |
 | N2.4 | Intraday IV std stable | Not exploding |
@@ -715,7 +704,7 @@ Use near expiry for long gamma/theta; far expiry for vega short hedge.
 
 | # | Parameter | API Key | Options |
 |---|---|---|---|
-| N5.1 | Construction | `hedge_method` | `stock` \| `options_only` |
+| N5.1 | Construction | `hedge_method` | Const `options_only` |
 | N5.2 | Selection score | `construction_score` | Best of liquidity + slippage + margin |
 
 ### N6 — Exit & Stop Parameters
@@ -761,7 +750,7 @@ Use near expiry for long gamma/theta; far expiry for vega short hedge.
 | O6 | Aggregate gamma | `portfolio_total_gamma` | Sum across strategies |
 | O7 | Aggregate vega | `portfolio_total_vega` | Sum across strategies |
 | O8 | Aggregate theta | `portfolio_total_theta` | Sum across strategies |
-| O9 | Capital reserved for hedges | `hedge_reserve_pct` | Allocate first |
+| O9 | Capital reserved for option adjustments | `hedge_reserve_pct` | Allocate first |
 | O10 | Max fraction per structure | `max_structure_pct` | Per-strategy cap |
 | O11 | Size reduction flag | `reduce_size` | Thin liquidity / poor hedge precision |
 | O12 | Post-shock size reduction | `post_shock_reduce` | Until models normalize |
@@ -775,7 +764,7 @@ Every signal scored **after**:
 | Commissions | `cost_commissions` |
 | Bid-ask spread | `cost_spread` |
 | Slippage | `cost_slippage` |
-| Borrow | `cost_borrow` |
+| Short-option carry / margin | `cost_short_option_margin` |
 | Financing | `cost_financing` |
 | Re-hedges | `cost_rehedge_est` |
 | **Net edge** | `edge_after_costs` — reject if ≤ 0 |
@@ -792,7 +781,7 @@ Every signal scored **after**:
 | P1.2 | Instrument(s) | `legs[]`, `underlying_symbol` |
 | P1.3 | Market condition summary | `market_summary` |
 | P1.4 | Entry rationale | `entry_rationale` |
-| P1.5 | Hedge construction | `hedge_method`, quantities |
+| P1.5 | Options-only hedge construction | `hedge_method=options_only`, Call/Put quantities |
 | P1.6 | Size & margin estimate | `margin_estimate`, notionals |
 | P1.7 | Stop, target, time exit | N6.* / L7.* / M6.* |
 | P1.8 | Known event risks | `event_risks[]` |
@@ -837,21 +826,21 @@ Every signal scored **after**:
 
 ### Q1 — Simple Volatility Trading (Minimum Parameter Set)
 
-**OSS inputs:** A1–A12, B1–B13 (≥2 legs if options-only hedge), D1–D2, G4, G10–G12, H1–H10, L2.*–L8.*, J1–J7, I1–I20, P4.
+**OSS inputs:** A1–A12, B1–B13 (≥2 Call/Put legs), D1–D2, G4, G10–G12, H1–H10, L2.*–L8.*, J1–J7, I1–I20, P4.
 
-**Critical path:** `underlying_symbol` → **if options+underlying: `und_price` ≤ INR 1000** (skip spot cap if options-only) → chain → **high liquidity (T13–T15)** → **ATM strike, premium < INR 300** → ~15–30 DTE → `IV < garch_forecast` → solve delta neutral → set `hedge_point_price` → monitor `gamma_theta_breakeven_pct` → exit D+0/D+1.
+**Critical path:** `underlying_symbol` + `und_price` feed → chain → **high liquidity (T13–T15)** → **ATM strike, premium < INR 300** → ~15–30 DTE → `IV < garch_forecast` → solve Call/Put delta neutral → set `hedge_point_price` → monitor `gamma_theta_breakeven_pct` → exit D+0/D+1.
 
 ### Q2 — Gamma Scalping (Minimum Parameter Set)
 
-**OSS inputs:** All Q1 globals plus **two expiries** (M3.1–M3.2), M2.* mode, M3.4–M3.14 quantities from solver, M4.*–M8.*, term structure params.
+**OSS inputs:** All Q1 globals plus **two expiries** (M3.1–M3.2), M2.* mode, M3.4–M3.15 quantities from solver, M4.*–M8.*, term structure params.
 
-**Critical path:** Select `gamma_entry_mode` → same-strike near/far calls → solve vega≈0 & delta≈0 → stock or four-leg variant → re-hedge at breakeven → mode-specific exit.
+**Critical path:** Select `gamma_entry_mode` → same-strike near/far calls and puts → solve vega≈0 & delta≈0 with `four_leg_options` → re-hedge with Call/Put adjustments at breakeven → mode-specific exit.
 
 ### Q3 — Vega Scalping (Minimum Parameter Set)
 
 **OSS inputs:** A1–A2 (intraday precision), A4, B* for ATM structure, N2.*–N8.*, G4 intraday series, **no overnight carry**.
 
-**Critical path:** **if options+underlying: `und_price` ≤ INR 1000** (no spot cap if options-only) → build intraday IV history → filter **high liquidity + ATM + premium < INR 300** → `iv_z_score <= -2` → delta neutral at entry → target mean reversion → stop −3σ/−4σ → **flatten at session close**.
+**Critical path:** `underlying_symbol` + `und_price` feed → build intraday IV history → filter **high liquidity + ATM + premium < INR 300** → `iv_z_score <= -2` → Call/Put delta neutral at entry → target mean reversion → stop −3σ/−4σ → **flatten at session close**.
 
 ---
 
@@ -863,9 +852,9 @@ Every signal scored **after**:
 | Und price (G4) | ✓ | ✓ | ✓ |
 | Div yield / Int rate | ✓ | ✓ | ✓ |
 | Flat vol / Vol | ✓ (compare to GARCH IV) | ✓ | ✓ (intraday σ for z-score) |
-| Single ATM leg + hedge | ✓ primary | — | ✓ primary |
+| Same-expiry ATM Call/Put mix | ✓ primary | — | ✓ primary |
 | Near + far expiry legs | — | ✓ required | — |
-| Stock hedge leg | ✓ optional | ✓ common | ✓ optional |
+| Stock hedge leg | Rejected in execution | Rejected in execution | Rejected in execution |
 | Initial price (G) | ✓ | ✓ | ✓ |
 | Total delta/gamma/vega/theta | ✓ targets | ✓ targets | ✓ monitor |
 | Expiration catalog | ✓ | ✓ (×2) | ✓ |
@@ -891,16 +880,11 @@ Use `OSS (1).xlsm` Iron Condor and `Trading_Strategies.md` worked examples to va
 
 ## Part T — Retail Option Universe Filters (INR)
 
-Hard filters applied **before** strategy-specific signals (GARCH, IV z-score, etc.). Any underlying or option contract failing these gates is excluded from the tradeable universe.
+Hard filters applied **before** strategy-specific signals (GARCH, IV z-score, etc.). Any option contract failing these gates is excluded from the tradeable universe.
 
-**Product decision (locked) — underlying price cap is mode-conditional:**
+**Product decision (locked) — options-only hard lock:** Call/Put legs only. The bot rejects `type=stock`, `hedge_method=stock`, `gamma_construction=calls_stock`, and any hedge path that would buy/sell cash shares with `OPTIONS_ONLY_REQUIRED`.
 
-| Bot trade mode | Underlying price cap | Index / cash-equity rules |
-|---|---|---|
-| **Options and its underlying** (any `stock` leg, or cash-share delta hedge) | `und_price` ≤ **INR 1000** required | Cash-equity only; exclude index underlyings (T11a/T11b) — minimizes stock-hedge capital |
-| **Options only** (Call/Put legs only; no stock/underlying legs) | **No cap** on underlying price | T11 price gate skipped; T11a/T11b do not apply — high-priced equities and index underlyings may qualify if premium / ATM / liquidity gates pass |
-
-Detect mode from the OSS leg list: if any leg has `type=stock` (or the selected hedge path uses cash shares), enforce T11 / T11a–c; otherwise treat as options-only.
+There is **no** underlying price cap and no cash-equity-only/index-exclusion product rule. Cash equities and index underlyings may qualify when the Call/Put option structure passes ATM, premium, liquidity, sizing, and risk gates. `und_price` remains required for ATM selection, BSM pricing, marks, and scenario analysis.
 
 | # | Parameter | API Key | Type | Value / Rule | Required |
 |---|---|---|---|---|---|
@@ -910,11 +894,6 @@ Detect mode from the OSS leg list: if any leg has `type=stock` (or the selected 
 | T4 | **Moneyness** | `moneyness` | Enum | **`atm`** | Yes — At the Money only |
 | T5 | **ATM selection rule** | `atm_selection_rule` | Enum | `closest_strike_to_spot` | Yes |
 | T6 | **ATM tolerance** | `atm_strike_tolerance` | Decimal | **0** | Yes — zero tolerance; no near-ATM fallback |
-| T11 | **Max underlying price** | `max_underlying_price` | Decimal | **1000** | Yes when options+underlying — reject if `und_price` > 1000 INR; **not applied** for options-only |
-| T11d | **Price-cap applicability** | `max_underlying_price_applies_when` | Enum | **`options_and_underlying`** | Yes — T11/T11a/T11b enforce only in this mode |
-| T11a | **Exclude index underlyings** | `exclude_index_underlyings` | Boolean | **true** | Yes when options+underlying — block NIFTY / BANKNIFTY / other index names; **skipped** for options-only |
-| T11b | **Require cash-equity underlying** | `require_cash_equity_underlying` | Boolean | **true** | Yes when options+underlying — underlying must be hedgeable with NSE/BSE cash shares; **skipped** for options-only |
-| T11c | **Cap rationale** | `max_underlying_price_rationale` | Enum | `minimize_stock_hedge_capital` | Yes — documents why T11 exists when stock is traded |
 | T12 | **Underlying price currency** | `underlying_price_currency` | ISO 4217 | `INR` | Yes |
 | T13 | **Min daily volume** | `min_volume` | Integer | **2000** | Yes — `min(CE,PE)` ATM volume must meet or exceed |
 | T13b | **Volume vs avg** | `volume_vs_avg_min_ratio` | Decimal | **1.5** | Yes — current ATM volume &gt; 150% of mean of last ≤20 prior sessions (`n≥10`) |
@@ -945,29 +924,9 @@ pass    = premium < max_option_premium    # strict: reject if premium >= 300 INR
 | Short option legs | Use `bid` or `mid` if configured |
 | OSS `initial_price` | Must reflect actual fill; pre-trade screen uses chain premium quote |
 
-### T9 — Underlying Price Cap Validation
+### T9 — Removed: Underlying Price Cap Validation
 
-```
-includes_underlying = any(leg.type == "stock" for leg in strategy.legs)
-                   or hedge_path_uses_cash_shares
-
-if not includes_underlying:
-    # Options-only: no underlying price cap; T11a/T11b also skipped
-    pass = True
-else:
-    # Options + underlying: index names fail immediately (T11a), then:
-    pass = und_price <= max_underlying_price    # reject if und_price > 1000 INR
-```
-
-| Comparison | Rule |
-|---|---|
-| Mode | Cap applies **only** when `max_underlying_price_applies_when=options_and_underlying` and the structure includes stock/underlying |
-| Options-only | **No** `und_price` cap — high-priced equities and index underlyings may pass T11 |
-| Spot source | Live feed `und_price` (A4); refreshed each cycle |
-| Currency | Must match `underlying_price_currency` (INR) |
-| Scope (options+underlying) | Applies to the underlying before any option leg is selected |
-| Index underlyings | Reject only in options+underlying mode (`exclude_index_underlyings=true`) |
-| Rationale | `minimize_stock_hedge_capital` — lower spot → smaller ₹ notional when delta-hedging with shares |
+Removed as a product rule. Do not reject solely because `und_price` is above INR 1000, and do not reject solely because `underlying_symbol` is an index. Reject stock/cash-share structures via `OPTIONS_ONLY_REQUIRED`; otherwise continue to T1–T8 and T10/T13–T16.
 
 ### T10 — High-Liquidity Validation
 
@@ -1000,9 +959,9 @@ liquidity_ok = atm_volume >= min_volume                # 2000
 
 | Strategy | Applies T1–T16, T7–T10 |
 |---|---|
-| Simple Volatility Trading | Yes — L2.1a, L3.5–L3.10 |
-| Gamma Scalping | Yes — all option legs (near + far); M4.1, M4.1a |
-| Vega Scalping | Yes — N2.1, N2.1a, N3.1–N3.3 |
+| Simple Volatility Trading | Yes — L3.5–L3.10 |
+| Gamma Scalping | Yes — all option legs (near + far); M4.1 |
+| Vega Scalping | Yes — N2.1, N3.1–N3.3 |
 
 ### T19 — Backend Schema Artifacts
 
@@ -1019,9 +978,10 @@ Machine-readable definitions for `GET/POST /api/v1/config/strategy`:
 
 | Field | Value |
 |---|---|
-| Version | 1.8 |
-| Updated | 2026-07-31 |
-| Change | v1.8 — Recommendation surface floor lowered to post-learning confidence ≥ **80%** (`execution_constraints.min_recommendation_confidence` / I14a) |
+| Version | 1.9 |
+| Updated | 2026-08-01 |
+| Change | v1.9 — Options-only hard lock: production / paper / signals / recommendations / broker paths allow Call/Put legs only; no stock/underlying trading, no T11 spot cap, and indices may qualify when ATM / premium / liquidity gates pass |
+| Prior | v1.8 — Recommendation surface floor lowered to post-learning confidence ≥ **80%** (`execution_constraints.min_recommendation_confidence` / I14a) |
 | Prior | v1.7 — G11–G12 feed-bound universe loads **all NSE F&O underlyings** from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip); G12 bindings auto-generated per underlying |
 | Prior | v1.6 — Recommendation surface floor: post-learning confidence ≥ **85%** (`execution_constraints.min_recommendation_confidence` / I14a); only those instruments are recommended |
 | Prior | v1.5 — Underlying price cap ≤ INR 1000 applies **only** when trading options **and** the underlying; **options-only** has no underlying price cap (T11/T11d). T11a/T11b likewise scoped to options+underlying mode |

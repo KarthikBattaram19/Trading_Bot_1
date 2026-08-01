@@ -23,11 +23,10 @@ class PaperSimConfig(BaseModel):
         description="Conservative fill slippage in basis points (50 = 0.50%)",
     )
     underlying_price_cap_inr: float = Field(
-        default=1000.0,
+        default=0.0,
         description=(
-            "When a paper order includes stock/underlying legs, cash-equity spot must be ≤ this INR. "
-            "Options-only orders have no underlying price cap. Index underlyings are rejected only "
-            "when the order includes stock/underlying. 0 disables the numeric spot check only."
+            "Deprecated under the options-only hard lock; cash stock/underlying legs are rejected "
+            "before any numeric spot-cap check. 0 keeps the legacy check disabled."
         ),
     )
     default_exchange: str = "NFO"
@@ -70,7 +69,7 @@ class PaperSimConfig(BaseModel):
         description="J3: trigger at half breakeven distance",
     )
     rehedge_method: RehedgeMethod = Field(
-        default="increase_hedge",
+        default="adjust_call_put_mix",
         description="J4 default re-hedge method",
     )
     min_edge_threshold: float = Field(

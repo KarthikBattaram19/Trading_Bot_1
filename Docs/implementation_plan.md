@@ -18,6 +18,8 @@
 | Feed health in UI / recommendations                 | ICICI Direct session/WS freshness + news-service freshness → `feed_sources`                          | `mcp_sources` / MCP assignment status             |
 
 
+**Locked product decision (2026-08-01):** options-only hard lock. The bot constructs, recommends, paper-trades, and live-submits Call/Put option legs only. There is no stock/underlying trading path, no T11 spot cap, and no index exclusion when ATM / premium / liquidity / risk gates pass.
+
 **Retire / replace in code (early Phase 0):**
 
 - Remove or replace `backend/services/mcp_registry.py` with ICICI Direct feed-health helpers + `market_news` status.

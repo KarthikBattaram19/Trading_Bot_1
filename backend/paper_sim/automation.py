@@ -383,15 +383,7 @@ class PaperAutomation:
                 leg.symbol, getattr(record, "option_type", None) if record else None
             )
             if ot is None and leg.exchange.upper() in {"NSE", "BSE"}:
-                legs.append(
-                    {
-                        "leg_id": i + 1,
-                        "type": "stock",
-                        "position": signed_qty,
-                        "initial_price": leg.avg_price,
-                        "contract_multiplier": 1,
-                    }
-                )
+                # Options-only hard lock: ignore residual cash legs; do not model as stock.
                 continue
             if ot is None or record is None:
                 continue
@@ -604,103 +596,14 @@ class PaperAutomation:
         be_pct: float,
         decision: Any,
     ) -> dict[str, Any]:
-        """Neutralize residual delta with a stock hedge leg."""
-        position = self.engine.ledger.positions[position_id]
-        underlying = (position.underlying or "").upper()
-        if not underlying:
-            return {
-                "action": "skip",
-                "reason": "no_underlying_for_stock_hedge",
-                "position_id": position_id,
-            }
-
-        delta = float(greeks["total_delta"])
-        # Shares to trade ≈ −delta (buy if short delta, sell if long delta)
-        shares = int(round(-delta))
-        if shares == 0:
-            # Still roll hedge point when force/aggressive crossed breakeven
-            self.engine.ledger.update_hedge_state(
-                position_id,
-                hedge_point_price=spot,
-                gamma_theta_breakeven_pct=be_pct,
-            )
-            pos = self.engine.ledger.positions[position_id]
-            pos.breakeven_paid_count = int(pos.breakeven_paid_count or 0) + 1
-            pos.last_rehedge_at = datetime.now(timezone.utc)
-            return {
-                "action": "rehedge",
-                "method": "increase_hedge",
-                "position_id": position_id,
-                "note": "delta_already_flat_rolled_hedge_point",
-                "spot": spot,
-                "decision": decision.reason,
-            }
-
-        await self.engine._ensure_scrip_master()
-        record = self.engine.feed.resolve(exchange="NSE", tradingsymbol=underlying)
-        if record is None:
-            return {
-                "action": "skip",
-                "reason": "underlying_instrument_missing",
-                "position_id": position_id,
-                "underlying": underlying,
-            }
-
-        # Part T: stock hedge requires spot ≤ cap
-        if (
-            self.engine.config.underlying_price_cap_inr > 0
-            and spot > self.engine.config.underlying_price_cap_inr
-        ):
-            return await self._execute_reduce_options(
-                position_id,
-                spot=spot,
-                greeks=greeks,
-                be_pct=be_pct,
-                decision=decision,
-                fallback_from="increase_hedge",
-                capital_error=f"spot {spot} exceeds Part T cap for stock hedge",
-            )
-
-        side = PaperSide.buy if shares > 0 else PaperSide.sell
-        qty = abs(shares)
-        tick = await self.engine.feed.get_ltp(
-            record.exchange, record.tradingsymbol, record.symboltoken
-        )
-        legs = [
-            {
-                "symbol": record.tradingsymbol,
-                "exchange": record.exchange,
-                "symbol_token": record.symboltoken,
-                "side": side,
-                "quantity": qty,
-                "mark_ltp": float(tick.ltp),
-                "lotsize": record.lotsize or 1,
-            }
-        ]
-        pos, fills = self.engine.ledger.apply_rehedge_legs(
+        """Legacy method name mapped to the options-only call/put mix adjustment."""
+        return await self._execute_adjust_call_put(
             position_id,
-            legs=legs,
-            slippage_bps=self.engine.config.slippage_bps,
-            hedge_point_price=spot,
-            gamma_theta_breakeven_pct=be_pct,
-            total_delta=greeks["total_delta"],
-            total_gamma=greeks["total_gamma"],
-            total_theta=greeks["total_theta"],
-            total_vega=greeks.get("total_vega"),
-            rehedge_method="increase_hedge",
+            spot=spot,
+            greeks=greeks,
+            be_pct=be_pct,
+            decision=decision,
         )
-        return {
-            "action": "rehedge",
-            "method": "increase_hedge",
-            "position_id": position_id,
-            "shares": shares,
-            "spot": spot,
-            "hedge_point_price": pos.hedge_point_price,
-            "breakeven_paid_count": pos.breakeven_paid_count,
-            "fills": [f.model_dump(mode="json") for f in fills],
-            "decision": decision.reason,
-            "net_hedge_edge": decision.net_hedge_edge,
-        }
 
     async def _execute_reduce_options(
         self,
