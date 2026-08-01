@@ -22,8 +22,8 @@
 ### Task 1: Fit library (`analytics/confidence_calibration.py`)
 
 **Files:**
-- Create: `analytics/__init__.py`
-- Create: `analytics/confidence_calibration.py`
+- Create: `backend/analytics/__init__.py`
+- Create: `backend/analytics/confidence_calibration.py`
 - Test: `backend/tests/test_confidence_calibration.py`
 
 **Interfaces:**

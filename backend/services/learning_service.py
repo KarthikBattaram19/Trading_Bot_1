@@ -509,7 +509,7 @@ class LearningService:
     def _maybe_refit_confidence_calibration(self, outcomes: list[dict[str, Any]]) -> None:
         """Attempt score→P(win) refit; swap artifact only if walk-forward passes."""
         try:
-            from analytics.confidence_calibration import fit_and_maybe_deploy
+            from backend.analytics.confidence_calibration import fit_and_maybe_deploy
             from backend.services.confidence_calibrator import DEFAULT_ARTIFACT
 
             fit_and_maybe_deploy(outcomes, artifact_path=DEFAULT_ARTIFACT)

@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from analytics.confidence_calibration import (
+from backend.analytics.confidence_calibration import (
     apply_map,
     fit_and_maybe_deploy,
     is_seed_outcome,

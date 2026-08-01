@@ -11,7 +11,7 @@
 
 Make recommendation `confidence` an **outcome-calibrated win probability** when enough closed trades exist, instead of the heuristic `min(0.95, score + 0.05)`.
 
-- Implement architecture §10.4 calibration artifact path: `analytics/confidence_calibration.py`.
+- Implement architecture §10.4 calibration artifact path: `backend/analytics/confidence_calibration.py` (package lives under `backend/` so Railway Root Directory=`backend` includes it).
 - Wire the recommendation path to use the deployed map for the ≥80% floor and display.
 - Keep heuristic `score` as the top-3 ranking key.
 - Cold-start: unchanged heuristic gating with explicit `calibration_status=uncalibrated`.
@@ -35,7 +35,7 @@ Make recommendation `confidence` an **outcome-calibrated win probability** when 
 
 | Unit | Responsibility |
 |---|---|
-| `analytics/confidence_calibration.py` | Fit maps from learning outcomes; walk-forward accept/reject; write artifact |
+| `backend/analytics/confidence_calibration.py` | Fit maps from learning outcomes; walk-forward accept/reject; write artifact |
 | `backend/data/confidence_calibration.json` | Versioned deployed map(s) + metadata |
 | `backend/services/confidence_calibrator.py` | Runtime load + `apply(raw_confidence, strategy) → (p_win, status)` |
 | `recommendation_engine` | Rank by `score`; set `confidence` via calibrator after failure-memory; expose status |
