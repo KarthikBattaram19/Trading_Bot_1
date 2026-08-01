@@ -3,6 +3,8 @@
 After an entry fills, remaining intended opening legs may be submitted without
 operator consent, but must pass the same open-trade gates as the first entry
 (``Docs/Paper_Simulator.md`` Phase 1 multi-leg completion).
+
+Options-only hard lock: intended plans never include NSE/BSE cash underlying legs.
 """
 
 from __future__ import annotations
@@ -15,7 +17,6 @@ from backend.paper_sim.models import PaperLegRequest, PaperSide
 _SIMPLE_VOL_TAGS = frozenset({"simple_vol", "simple_volatility"})
 _GAMMA_TAGS = frozenset({"gamma", "gamma_scalping", "gamma_scalp"})
 _VEGA_TAGS = frozenset({"vega", "vega_scalping", "vega_scalp"})
-_STOCK_HEDGE_TAGS = _SIMPLE_VOL_TAGS | _GAMMA_TAGS | _VEGA_TAGS
 
 
 def normalize_strategy_tag(tag: str | None) -> str | None:
@@ -86,13 +87,12 @@ def build_intended_legs_from_entry(
     underlying: str | None,
     entry_legs: list[PaperLegRequest],
     feed: Any,
-    prefer_stock_hedge: bool = True,
 ) -> list[PaperLegRequest]:
     """
     Infer the bot's intended multi-leg opening plan from strategy + first entry.
 
-    - simple_volatility: long ATM CE + PE (add missing option side)
-    - gamma / vega with stock hedge: long option(s) + cash underlying hedge
+    - simple_volatility / vega_scalping: long ATM CE + PE (add missing option side)
+    - gamma_scalping: four-leg NFO shape (straddle + second-strike CE/PE)
     - If entry already has 2+ legs, treat that basket as the intended structure
     """
     if len(entry_legs) >= 2:
@@ -109,69 +109,151 @@ def build_intended_legs_from_entry(
     first = entry_legs[0]
     qty = int(first.quantity)
 
-    # Pair the opposite option for simple vol (straddle shape).
-    if norm == "simple_volatility" and not _is_cash_leg(first.exchange, first.symbol):
-        ot = _option_type(first.symbol)
-        record = None
-        if first.symbol_token:
-            record = feed.resolve(symboltoken=first.symbol_token)
-        if record is None:
-            record = feed.resolve(exchange=first.exchange, tradingsymbol=first.symbol)
-        if record is not None and ot is not None:
-            want = "PE" if ot == "CE" else "CE"
-            pair = _find_matching_option(
-                feed,
-                name=(record.name or underlying or "").upper(),
-                expiry=record.expiry,
-                strike=float(record.strike or 0.0),
-                option_type=want,
-            )
-            if pair is not None:
-                intended.append(
-                    PaperLegRequest(
-                        symbol=pair.tradingsymbol,
-                        side=first.side,
-                        quantity=qty,
-                        exchange=pair.exchange,
-                        symbol_token=pair.symboltoken,
-                        option_type=want,  # type: ignore[arg-type]
-                        strike=float(pair.strike) if pair.strike is not None else None,
-                        expiry=pair.expiry,
-                    )
-                )
+    if _is_cash_leg(first.exchange, first.symbol):
+        return intended
 
-    # Stock hedge for strategies that delta-hedge with underlying.
-    if prefer_stock_hedge and norm in {"simple_volatility", "gamma_scalping", "vega_scalping"}:
-        und = (underlying or "").upper()
-        if und and not any(_is_cash_leg(lg.exchange, lg.symbol) for lg in intended):
-            # Only add stock hedge when construction expects it and we have an option entry.
-            has_option = any(
-                not _is_cash_leg(lg.exchange, lg.symbol) for lg in intended
-            )
-            if has_option and norm != "simple_volatility":
-                # simple_vol default in playbook is often options straddle; stock is optional.
-                # gamma/vega with stock hedge: add underlying lot-sized by option contracts.
-                stock = feed.resolve(exchange="NSE", tradingsymbol=und)
-                if stock is None:
-                    stock = feed.resolve(tradingsymbol=und)
-                if stock is not None:
-                    # Hedge share count ≈ option quantity (India lot already in option qty).
-                    hedge_qty = max(qty, 1)
-                    # Long options → short stock to neutralize; short options → long stock.
-                    hedge_side = (
-                        PaperSide.sell if first.side == PaperSide.buy else PaperSide.buy
-                    )
-                    intended.append(
-                        PaperLegRequest(
-                            symbol=stock.tradingsymbol,
-                            side=hedge_side,
-                            quantity=hedge_qty,
-                            exchange=stock.exchange,
-                            symbol_token=stock.symboltoken,
-                        )
-                    )
+    record = _resolve_option_record(feed, first, underlying)
+    if record is None:
+        return intended
+
+    if norm in {"simple_volatility", "vega_scalping"}:
+        _append_opposite_option_at_strike(
+            intended,
+            feed=feed,
+            first=first,
+            record=record,
+            underlying=underlying,
+            qty=qty,
+        )
+    elif norm == "gamma_scalping":
+        _append_opposite_option_at_strike(
+            intended,
+            feed=feed,
+            first=first,
+            record=record,
+            underlying=underlying,
+            qty=qty,
+        )
+        _append_second_strike_option_pair(
+            intended,
+            feed=feed,
+            first=first,
+            record=record,
+            underlying=underlying,
+            qty=qty,
+        )
 
     return intended
+
+
+def _resolve_option_record(
+    feed: Any, first: PaperLegRequest, underlying: str | None
+) -> Any | None:
+    if first.symbol_token:
+        record = feed.resolve(symboltoken=first.symbol_token)
+        if record is not None:
+            return record
+    return feed.resolve(exchange=first.exchange, tradingsymbol=first.symbol)
+
+
+def _append_opposite_option_at_strike(
+    intended: list[PaperLegRequest],
+    *,
+    feed: Any,
+    first: PaperLegRequest,
+    record: Any,
+    underlying: str | None,
+    qty: int,
+) -> None:
+    ot = _option_type(first.symbol)
+    if ot is None:
+        return
+    want = "PE" if ot == "CE" else "CE"
+    if any(
+        not _is_cash_leg(lg.exchange, lg.symbol)
+        and _option_type(lg.symbol) == want
+        and float(lg.strike or 0) == float(record.strike or 0)
+        for lg in intended
+    ):
+        return
+    pair = _find_matching_option(
+        feed,
+        name=(record.name or underlying or "").upper(),
+        expiry=record.expiry,
+        strike=float(record.strike or 0.0),
+        option_type=want,
+    )
+    if pair is None:
+        return
+    intended.append(
+        PaperLegRequest(
+            symbol=pair.tradingsymbol,
+            side=first.side,
+            quantity=qty,
+            exchange=pair.exchange,
+            symbol_token=pair.symboltoken,
+            option_type=want,  # type: ignore[arg-type]
+            strike=float(pair.strike) if pair.strike is not None else None,
+            expiry=pair.expiry,
+        )
+    )
+
+
+def _append_second_strike_option_pair(
+    intended: list[PaperLegRequest],
+    *,
+    feed: Any,
+    first: PaperLegRequest,
+    record: Any,
+    underlying: str | None,
+    qty: int,
+) -> None:
+    """Add CE+PE at the nearest listed strike different from the entry (four-leg gamma)."""
+    base_strike = float(record.strike or 0.0)
+    if base_strike <= 0:
+        return
+    name = (record.name or underlying or "").upper()
+    options = feed.list_options(name=name, exchange="NFO", expiry=record.expiry, limit=500)
+    alt_strikes: set[float] = set()
+    for rec in options:
+        sym = (rec.tradingsymbol or "").upper()
+        if not (sym.endswith("CE") or sym.endswith("PE")):
+            continue
+        st = float(rec.strike or 0.0)
+        if st > 0 and st != base_strike:
+            alt_strikes.add(st)
+    if not alt_strikes:
+        return
+    alt_strike = min(alt_strikes, key=lambda s: abs(s - base_strike))
+    for want in ("CE", "PE"):
+        if any(
+            not _is_cash_leg(lg.exchange, lg.symbol)
+            and _option_type(lg.symbol) == want
+            and float(lg.strike or 0) == alt_strike
+            for lg in intended
+        ):
+            continue
+        pair = _find_matching_option(
+            feed,
+            name=name,
+            expiry=record.expiry,
+            strike=alt_strike,
+            option_type=want,
+        )
+        if pair is None:
+            continue
+        intended.append(
+            PaperLegRequest(
+                symbol=pair.tradingsymbol,
+                side=first.side,
+                quantity=qty,
+                exchange=pair.exchange,
+                symbol_token=pair.symboltoken,
+                option_type=want,  # type: ignore[arg-type]
+                strike=float(pair.strike) if pair.strike is not None else None,
+                expiry=pair.expiry,
+            )
+        )
 
 
 def _find_matching_option(
