@@ -153,3 +153,5 @@ Docs/Untitled
 .ipynb_checkpoints/
 .vercel
 .env*
+.worktrees/
+.superpowers/
