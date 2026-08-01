@@ -14,3 +14,9 @@ python-dotenv>=1.0.0
 # A2 — Breeze WS Streaming 2.0 (Socket.IO rate-refresh client)
 python-socketio[asyncio_client]>=5.11.0
 aiohttp>=3.9.0
+# Track B1 — RAG (Volatility Trading.pdf → Chroma → chat)
+pymupdf>=1.24.0
+chromadb>=0.5.0
+rank_bm25>=0.2.2
+groq>=0.13.0
+# Optional: breeze-connect is used by tools/icici-direct-mcp-server only (not required for backend).
