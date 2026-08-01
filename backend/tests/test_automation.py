@@ -9,7 +9,12 @@ from fastapi.testclient import TestClient
 
 from backend.models.recommendations import MarketNewsSummary
 from backend.paper_sim.config import PaperSimConfig
-from backend.paper_sim.models import PaperLegRequest, PaperOrderRequest, PaperSide
+from backend.paper_sim.models import (
+    PaperLegPosition,
+    PaperLegRequest,
+    PaperOrderRequest,
+    PaperSide,
+)
 from backend.paper_sim.service import get_paper_engine
 from backend.services.market_news import reset_market_news_cache
 from backend.tests.test_paper_sim import FakeFeed, _simple_vol_order
@@ -63,6 +68,10 @@ def _neutral_news(**overrides) -> MarketNewsSummary:
     return MarketNewsSummary.model_validate(base)
 
 
+def test_default_rehedge_method_is_adjust_call_put_mix():
+    assert PaperSimConfig().rehedge_method == "adjust_call_put_mix"
+
+
 @pytest.mark.asyncio
 async def test_open_sets_hedge_point_from_underlying():
     engine, feed = _engine()
@@ -110,6 +119,72 @@ async def test_rehedge_when_spot_moves_past_breakeven():
 
 
 @pytest.mark.asyncio
+async def test_position_greeks_skips_cash_legs():
+    engine, _feed = _engine()
+    opened = await engine.submit_order(_simple_vol_order())
+    position_id = opened["position"]["position_id"]
+    position = engine.ledger.positions[position_id]
+    position.legs.append(
+        PaperLegPosition(
+            symbol="SBIN",
+            exchange="NSE",
+            symbol_token="3045",
+            side=PaperSide.buy,
+            quantity=7,
+            avg_price=500.0,
+            mark_ltp=500.0,
+            lotsize=1,
+        )
+    )
+
+    captured_legs = []
+
+    def fake_mark_strategy(*, global_params, legs):
+        _ = global_params
+        captured_legs.extend(legs)
+
+        class Result:
+            total_delta = 0.0
+            total_gamma = 0.0
+            total_theta = 0.0
+            total_vega = 0.0
+
+        return Result()
+
+    from unittest.mock import patch
+
+    with patch("backend.paper_sim.automation.mark_strategy", side_effect=fake_mark_strategy):
+        await engine.automation._position_greeks(position_id, 500.0)
+
+    assert captured_legs
+    assert all(leg["type"] != "stock" for leg in captured_legs)
+
+
+@pytest.mark.asyncio
+async def test_increase_hedge_uses_options_only_adjustment():
+    engine, feed = _engine(rehedge_method="increase_hedge", use_half_breakeven=False)
+    opened = await engine.submit_order(_simple_vol_order())
+    position_id = opened["position"]["position_id"]
+    feed.ltps["3045"] = 530.0
+
+    from unittest.mock import patch
+
+    with patch(
+        "backend.services.market_news.get_market_news",
+        return_value=_neutral_news(),
+    ):
+        tick = await engine.automation.tick()
+
+    rehedges = [a for a in tick["actions"] if a.get("action") == "rehedge"]
+    assert rehedges, f"expected rehedge, got {tick['actions']}"
+    assert rehedges[0]["method"] == "adjust_call_put_mix"
+    assert all(fill["exchange"] == "NFO" for fill in rehedges[0]["fills"])
+
+    pos = engine.ledger.positions[position_id]
+    assert all(leg.exchange == "NFO" for leg in pos.legs)
+
+
+@pytest.mark.asyncio
 async def test_ps06_news_kill_flattens_instead_of_rehedge():
     engine, feed = _engine()
     await engine.submit_order(_simple_vol_order())
@@ -129,7 +204,7 @@ async def test_ps06_news_kill_flattens_instead_of_rehedge():
 
 @pytest.mark.asyncio
 async def test_ps05_capital_cap_falls_back_to_reduce_options():
-    # Tiny capital so stock hedge notional fails → reduce_options path
+    # Legacy increase_hedge must remain options-only under tight capital.
     engine, feed = _engine(
         total_capital_inr=50_000,
         max_trade_investment_inr=2_000,
@@ -173,10 +248,13 @@ async def test_ps05_capital_cap_falls_back_to_reduce_options():
 
     actions = [a for a in tick["actions"] if a.get("position_id") == position_id]
     assert actions
-    # Either reduce_options hedge or capital_cap skip — must not place broker order
+    # Either options-only hedge or capital_cap skip — must not create cash legs.
     assert all(a.get("action") in {"rehedge", "skip"} for a in actions)
     if any(a.get("action") == "rehedge" for a in actions):
-        assert any(a.get("method") == "reduce_options" for a in actions)
+        assert any(
+            a.get("method") in {"reduce_options", "adjust_call_put_mix"} for a in actions
+        )
+        assert all(leg.exchange == "NFO" for leg in engine.ledger.positions[position_id].legs)
 
 
 @pytest.mark.asyncio
