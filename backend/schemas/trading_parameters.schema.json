@@ -106,12 +106,7 @@
         "moneyness",
         "atm_selection_rule",
         "atm_strike_tolerance",
-        "max_underlying_price",
-        "max_underlying_price_applies_when",
         "underlying_price_currency",
-        "exclude_index_underlyings",
-        "require_cash_equity_underlying",
-        "max_underlying_price_rationale",
         "min_volume",
         "min_open_interest",
         "max_spread_pct",
@@ -160,41 +155,9 @@
           "enum": ["lower", "higher"],
           "description": "T8 — when two strikes are equidistant from spot."
         },
-        "max_underlying_price": {
-          "type": "number",
-          "exclusiveMinimum": 0,
-          "maximum": 1000,
-          "description": "T11 — when options+underlying, reject if und_price > this value (INR). Not applied for options-only."
-        },
-        "max_underlying_price_applies_when": {
-          "type": "string",
-          "const": "options_and_underlying",
-          "description": "T11d — enforce T11/T11a/T11b only when the strategy includes stock/underlying legs or cash-share hedge; options-only has no underlying price cap."
-        },
         "underlying_price_currency": {
           "$ref": "#/$defs/CurrencyCode",
           "description": "T12 — currency for underlying price comparisons."
-        },
-        "exclude_index_underlyings": {
-          "type": "boolean",
-          "const": true,
-          "description": "T11a — when options+underlying, block NIFTY / BANKNIFTY / other index underlyings before spot compare; skipped for options-only."
-        },
-        "require_cash_equity_underlying": {
-          "type": "boolean",
-          "const": true,
-          "description": "T11b — when options+underlying, underlying must be hedgeable with NSE/BSE cash shares; skipped for options-only."
-        },
-        "max_underlying_price_rationale": {
-          "type": "string",
-          "const": "minimize_stock_hedge_capital",
-          "description": "T11c — why the ₹1000 spot cap exists when trading the underlying alongside options."
-        },
-        "excluded_index_underlying_symbols": {
-          "type": "array",
-          "items": { "type": "string", "minLength": 1 },
-          "uniqueItems": true,
-          "description": "Explicit index names that must never be selected as strategy underlyings."
         },
         "min_volume": {
           "type": "integer",
@@ -472,8 +435,7 @@
           }
         },
         "hedge_method": {
-          "type": "string",
-          "enum": ["stock", "options_only"]
+          "const": "options_only"
         },
         "hold_horizon": {
           "type": "string",
@@ -493,8 +455,7 @@
           "enum": ["cheap_vol_mode", "earnings_gap_mode", "high_realized_vol_mode"]
         },
         "construction": {
-          "type": "string",
-          "enum": ["calls_stock", "four_leg_options"]
+          "const": "four_leg_options"
         },
         "option_selection": {
           "type": "object",
@@ -544,7 +505,8 @@
             "stop_z_threshold_alt": { "type": "number" }
           }
         },
-        "flatten_at_session_close": { "type": "boolean", "const": true }
+        "flatten_at_session_close": { "type": "boolean", "const": true },
+        "hedge_method": { "const": "options_only" }
       }
     },
     "PortfolioParams": {

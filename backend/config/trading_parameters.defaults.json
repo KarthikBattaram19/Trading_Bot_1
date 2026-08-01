@@ -1,6 +1,6 @@
 {
   "$schema": "../schemas/trading_parameters.schema.json",
-  "version": "1.6",
+  "version": "1.7",
   "source_document": "Docs/Trading_Parameters.md",
   "option_universe_filters": {
     "max_option_premium": 300,
@@ -12,19 +12,7 @@
     "atm_selection_rule": "closest_strike_to_spot",
     "atm_strike_tolerance": 0,
     "equidistant_strike_preference": "lower",
-    "max_underlying_price": 1000,
-    "max_underlying_price_applies_when": "options_and_underlying",
     "underlying_price_currency": "INR",
-    "exclude_index_underlyings": true,
-    "require_cash_equity_underlying": true,
-    "max_underlying_price_rationale": "minimize_stock_hedge_capital",
-    "excluded_index_underlying_symbols": [
-      "NIFTY",
-      "BANKNIFTY",
-      "FINNIFTY",
-      "MIDCPNIFTY",
-      "NIFTYNXT50"
-    ],
     "min_volume": 1000,
     "min_open_interest": 10000,
     "max_spread_pct": 2.0,
@@ -106,7 +94,7 @@
   },
   "gamma_theta_breakeven": {
     "use_half_breakeven": false,
-    "rehedge_method": "increase_hedge",
+    "rehedge_method": "adjust_call_put_mix",
     "breakeven_paid_count": 1,
     "delta_threshold": 0.1,
     "min_edge_threshold": 0.0,
@@ -137,14 +125,14 @@
       "entry_signal": {
         "iv_below_garch_forecast": true
       },
-      "hedge_method": "stock",
+      "hedge_method": "options_only",
       "hold_horizon": "D+0",
       "max_hold_days": 1
     },
     "gamma_scalping": {
       "enabled": true,
       "gamma_entry_mode": "cheap_vol_mode",
-      "construction": "calls_stock",
+      "construction": "four_leg_options",
       "option_selection": {
         "moneyness": "atm",
         "max_option_premium": 300,
@@ -157,6 +145,7 @@
     },
     "vega_scalping": {
       "enabled": true,
+      "hedge_method": "options_only",
       "hold_horizon": "intraday",
       "vol_direction": "long",
       "option_selection": {
