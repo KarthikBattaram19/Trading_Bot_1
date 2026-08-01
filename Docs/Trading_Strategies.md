@@ -352,13 +352,13 @@ Action:
 #### Scenario E: High-Priced Underlying In Small Account
 Condition:
 
-- underlying price makes stock hedging capital-intensive (`und_price` > **INR 1000**)
+- high spot (`und_price` > **INR 1000**) raises per-lot premium and margin; there is **no** spot cap under the options-only hard lock
 
 Action:
 
-- allow the options-only structure if execution quality, liquidity, ATM, premium, and risk gates pass
-- there is no T11 spot cap and no index exclusion
-- reject only if the Call/Put structure itself fails a gate
+- allow the Call/Put structure if execution quality, liquidity, ATM, premium, and risk gates pass
+- cash equities and index underlyings are both eligible when gates pass
+- reject only if the Call/Put structure itself fails a gate (not solely on spot)
 
 ### Failure Modes
 
@@ -999,11 +999,10 @@ This section preserves every execution-critical table and rule list from the thr
 
 | Step | Action | Bot Note |
 |---|---|---|
-| 1 | Select same-strike short-dated and long-dated calls | Pair with puts in the required four-leg project construction; no stock hedge |
-| 2 | Buy short-dated calls | Provides gamma and theta |
-| 3 | Short long-dated calls until portfolio vega ≈ 0 | Creates small negative gamma; net gamma stays positive |
-| 4 | Short underlying to neutralize delta | Stock hedge path |
-| Alt | Four-leg options-only | Short-dated long calls + long-dated short calls + short-dated long puts + long-dated short puts; requires synchronized algo |
+| 1 | Select same-strike short-dated and long-dated calls and puts | Required four-leg project construction |
+| 2 | Buy short-dated calls and puts | Provides gamma and theta |
+| 3 | Short long-dated calls and puts until portfolio vega ≈ 0 | Creates offsetting vega while net gamma stays positive |
+| 4 | Solve residual delta with Call/Put quantities | No stock/underlying leg or cash-share hedge path |
 
 #### Table GS-5: Intel Earnings Gap Example (Source)
 

@@ -11,3 +11,9 @@
 - `Docs/Paper_Simulator.md` has no hits for the old dual-mode/T11 query.
 - Ran `git diff --check`: pass.
 - Ran Cursor lints for edited docs: no linter errors.
+
+**Task 7 review fix (residual stock-hedge / T11 language)**
+
+- `Docs/eval.md` — Phase 1 edge-case row for MD-14: removed live “spot ≤ ₹1000 when options+underlying”; aligned with `edge_cases.md` (no sole spot reject under options-only hard lock).
+- `Docs/Trading_Strategies.md` — Table GS-4: replaced stock-hedge Step 4 (“Short underlying to neutralize delta”) with four-leg Call/Put delta solve; Scenario E rewritten without stock-hedging capital framing.
+- `Docs/` scan (`rg` for dual-mode / T11 / stock-hedge live rules): remaining hits are hard-lock reject text, `Prior` changelog rows, or `Docs/superpowers/*` plan/spec artifacts only.
