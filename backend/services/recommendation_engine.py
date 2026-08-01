@@ -33,9 +33,16 @@ from backend.models.recommendations import (
 )
 from backend.quant.signals.garch import forecast_garch_11, log_returns_from_prices
 from backend.quant.signals.iv_zscore import compute_iv_zscore
+from backend.services.atm_liquidity import (
+    AtmHistoryPoint,
+    evaluate_atm_liquidity,
+    live_from_aggregated,
+)
+from backend.services.atm_liquidity_history import AtmLiquidityHistoryStore
 from backend.services.feed_health import get_feed_sources
 from backend.services.learning_service import get_learning_service
 from backend.services.market_news import get_market_news
+from backend.services.signals import _liquidity_gate_results, seed_atm_history_prior
 from backend.services.strategy_selection import (
     QuantRegimeInputs,
     select_strategy_sh4,
@@ -52,13 +59,13 @@ CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "trading_paramete
 
 # Offline fixture metrics keyed by G11 NSE/display symbol (marks enrichment).
 _DEMO_SPECS: list[tuple] = [
-    ("RELIANCE", 982.5, 0.24, -2.3, None, 185, 12500, 22000, 1.2, 22, 0.018, False),
-    ("TATASTEEL", 142.8, 0.31, -2.6, None, 42, 8900, 12500, 1.8, 18, 0.022, False),
-    ("INFY", 1680.0, 0.29, -1.8, 1, 210, 15200, 28000, 1.1, 25, 0.015, False),
-    ("SBIN", 812.4, 0.27, None, None, 95, 22000, 35000, 0.9, 20, 0.012, False),
-    ("HDFCBANK", 945.0, 0.22, None, 3, 120, 18500, 18500, 1.0, 28, 0.009, False),
-    ("ITC", 428.5, 0.26, -2.1, None, 68, 31000, 42000, 0.7, 15, 0.011, False),
-    ("NIFTY", 24500.0, 0.18, -2.4, None, 145, 45000, 80000, 0.5, 7, 0.014, False),
+    ("RELIANCE", 982.5, 0.24, -2.3, None, 185, 12500, 22000, 0.4, 22, 0.018, False),
+    ("TATASTEEL", 142.8, 0.31, -2.6, None, 42, 8900, 22000, 0.4, 18, 0.022, False),
+    ("INFY", 1680.0, 0.29, -1.8, 1, 210, 15200, 28000, 0.4, 25, 0.015, False),
+    ("SBIN", 812.4, 0.27, None, None, 95, 22000, 35000, 0.4, 20, 0.012, False),
+    ("HDFCBANK", 945.0, 0.22, None, 3, 120, 18500, 25000, 0.4, 28, 0.009, False),
+    ("ITC", 428.5, 0.26, -2.1, None, 68, 31000, 42000, 0.4, 15, 0.011, False),
+    ("NIFTY", 24500.0, 0.18, -2.4, None, 145, 45000, 80000, 0.4, 7, 0.014, False),
     ("BANKBARODA", 245.6, 0.35, None, None, 55, 9800, 8000, 2.3, 12, 0.028, False),
 ]
 _DEMO_BY_SYMBOL = {row[0]: row for row in _DEMO_SPECS}
@@ -81,6 +88,8 @@ class InstrumentCandidate:
     garch_distorted: bool
     price_history: list[float]
     marks_source: str = "stub"  # live | demo | stub
+    atm_history_prior: list[AtmHistoryPoint] | None = None
+    expiry_key: str | None = None
 
 
 def _load_config() -> dict[str, Any]:
@@ -153,6 +162,7 @@ def _candidate_from_spec(row: tuple, cfg: dict[str, Any]) -> InstrumentCandidate
         garch_distorted=distorted or garch_dist,
         price_history=history,
         marks_source="demo",
+        atm_history_prior=seed_atm_history_prior(vol, oi),
     )
 
 
@@ -362,38 +372,39 @@ def _evaluate_gates(
         )
     )
 
-    liq_vol = c.volume >= f["min_volume"]
-    gates.append(
-        GateResult(
-            gate_id="T13",
-            label=f"Volume ≥ {f['min_volume']}",
-            passed=liq_vol,
-            detail=str(c.volume),
-            parameter_ref="Trading_Parameters.md Part T — T13",
-        )
-    )
+    prior = list(c.atm_history_prior) if c.atm_history_prior is not None else []
+    if not prior and c.expiry_key:
+        store = AtmLiquidityHistoryStore()
+        session_date = datetime.now(timezone.utc).astimezone().date().isoformat()
+        try:
+            from zoneinfo import ZoneInfo
 
-    liq_oi = c.open_interest >= f["min_open_interest"]
-    gates.append(
-        GateResult(
-            gate_id="T14",
-            label=f"Open interest ≥ {f['min_open_interest']}",
-            passed=liq_oi,
-            detail=str(c.open_interest),
-            parameter_ref="Trading_Parameters.md Part T — T14",
+            session_date = datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+        except Exception:  # noqa: BLE001
+            pass
+        prior = store.prior_points(
+            underlying=c.symbol,
+            expiry_key=c.expiry_key,
+            before_date=session_date,
+            lookback_days=int(f.get("atm_history_lookback_days", 20)),
         )
-    )
 
-    spread_ok = c.spread_pct <= f["max_spread_pct"]
-    gates.append(
-        GateResult(
-            gate_id="T15",
-            label=f"Spread ≤ {f['max_spread_pct']}% of mid",
-            passed=spread_ok,
-            detail=f"{c.spread_pct:.2f}%",
-            parameter_ref="Trading_Parameters.md Part T — T15",
-        )
+    liq = evaluate_atm_liquidity(
+        live=live_from_aggregated(
+            volume=int(c.volume),
+            open_interest=int(c.open_interest),
+            spread_pct_value=float(c.spread_pct),
+        ),
+        prior=prior,
+        min_volume=int(f["min_volume"]),
+        min_open_interest=int(f["min_open_interest"]),
+        max_spread_pct=float(f["max_spread_pct"]),
+        volume_vs_avg_min_ratio=float(f.get("volume_vs_avg_min_ratio", 1.5)),
+        oi_vs_avg_min_ratio=float(f.get("oi_vs_avg_min_ratio", 1.3)),
+        lookback_days=int(f.get("atm_history_lookback_days", 20)),
+        min_history_days=int(f.get("atm_history_min_days", 10)),
     )
+    gates.extend(_liquidity_gate_results(liq, f))
 
     dte_min = cfg["strategies"]["simple_volatility"]["option_selection"]["min_dte"]
     dte_ok = c.dte >= dte_min

@@ -883,7 +883,7 @@ This section preserves every execution-critical table and rule list from the thr
 
 | # | Rule | Bot Interpretation |
 |---|---|---|
-| 1 | Trade only high-liquidity options | Block illiquid chains; enforce min volume (1000), min OI (10000), spread cap (2%) |
+| 1 | Trade only high-liquidity options | Block illiquid chains; abs floors vol≥2000 / OI≥20000; ATM vol >150% and OI >130% of ≤20d avg (n≥10); spread &lt; 0.5% |
 | 1a | Underlying price ≤ INR 1000 when options+underlying | Reject if spot > ₹1000 **only** when trading options with the underlying; **no spot cap** for options-only |
 | 2 | Choose ATM strike | Maximizes gamma symmetry and Greek magnitude |
 | 3 | Choose near expiry (~15–30 DTE) | More gamma/theta, less vega |

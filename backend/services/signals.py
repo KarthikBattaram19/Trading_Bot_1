@@ -20,6 +20,13 @@ from backend.quant.signals.garch import (
     log_returns_from_prices,
 )
 from backend.quant.signals.iv_zscore import IvZScoreResult, compute_iv_zscore, vega_entry_signal
+from backend.services.atm_liquidity import (
+    AtmHistoryPoint,
+    AtmLiquidityLive,
+    AtmSideMarks,
+    evaluate_atm_liquidity,
+    live_from_aggregated,
+)
 from backend.services.market_news import get_market_news
 from backend.services.strategy_selection import (
     QuantRegimeInputs,
@@ -51,10 +58,103 @@ class SignalComputeInputs:
     realized_vol_intraday: float | None = None
     atm_premium_inr: float = 100.0
     volume: int = 10_000
-    open_interest: int = 15_000
-    spread_pct: float = 1.0
+    open_interest: int = 25_000
+    spread_pct: float = 0.4
     dte: int = 20
     includes_underlying: bool = True
+    ce_volume: int | None = None
+    pe_volume: int | None = None
+    ce_open_interest: int | None = None
+    pe_open_interest: int | None = None
+    ce_bid: float | None = None
+    ce_ask: float | None = None
+    pe_bid: float | None = None
+    pe_ask: float | None = None
+    atm_history_prior: Sequence[AtmHistoryPoint] | None = None
+
+
+def seed_atm_history_prior(volume: int, open_interest: int, *, days: int = 10) -> list[AtmHistoryPoint]:
+    """Synthetic prior sessions so current marks clear 1.5× / 1.3× relative gates."""
+    avg_vol = max(1, int(volume / 1.6))
+    avg_oi = max(1, int(open_interest / 1.4))
+    return [
+        AtmHistoryPoint(session_date=f"2026-01-{i:02d}", atm_volume=avg_vol, atm_oi=avg_oi)
+        for i in range(1, days + 1)
+    ]
+
+
+def _live_from_inputs(inp: SignalComputeInputs) -> AtmLiquidityLive:
+    if (
+        inp.ce_volume is not None
+        and inp.pe_volume is not None
+        and inp.ce_open_interest is not None
+        and inp.pe_open_interest is not None
+        and inp.ce_bid is not None
+        and inp.ce_ask is not None
+        and inp.pe_bid is not None
+        and inp.pe_ask is not None
+    ):
+        return AtmLiquidityLive(
+            ce=AtmSideMarks(
+                volume=int(inp.ce_volume),
+                open_interest=int(inp.ce_open_interest),
+                bid=float(inp.ce_bid),
+                ask=float(inp.ce_ask),
+            ),
+            pe=AtmSideMarks(
+                volume=int(inp.pe_volume),
+                open_interest=int(inp.pe_open_interest),
+                bid=float(inp.pe_bid),
+                ask=float(inp.pe_ask),
+            ),
+        )
+    return live_from_aggregated(
+        volume=int(inp.volume),
+        open_interest=int(inp.open_interest),
+        spread_pct_value=float(inp.spread_pct),
+    )
+
+
+def _liquidity_gate_results(result, f: dict[str, Any]) -> list[GateResult]:
+    vs = f"{result.volume_vs_avg:.2f}" if result.volume_vs_avg is not None else "n/a"
+    oi_vs = f"{result.oi_vs_avg:.2f}" if result.oi_vs_avg is not None else "n/a"
+    return [
+        GateResult(
+            gate_id="T13",
+            label=f"Volume ≥ {f['min_volume']}",
+            passed=result.abs_volume_ok,
+            detail=str(result.atm_volume),
+            parameter_ref="Trading_Parameters.md Part T — T13",
+        ),
+        GateResult(
+            gate_id="T13b",
+            label=f"Volume > {f['volume_vs_avg_min_ratio']}× {result.history_days}d avg",
+            passed=result.rel_volume_ok,
+            detail=f"vs_avg={vs}",
+            parameter_ref="Trading_Parameters.md Part T — T13b",
+        ),
+        GateResult(
+            gate_id="T14",
+            label=f"Open interest ≥ {f['min_open_interest']}",
+            passed=result.abs_oi_ok,
+            detail=str(result.atm_oi),
+            parameter_ref="Trading_Parameters.md Part T — T14",
+        ),
+        GateResult(
+            gate_id="T14b",
+            label=f"OI > {f['oi_vs_avg_min_ratio']}× {result.history_days}d avg",
+            passed=result.rel_oi_ok,
+            detail=f"vs_avg={oi_vs}",
+            parameter_ref="Trading_Parameters.md Part T — T14b",
+        ),
+        GateResult(
+            gate_id="T15",
+            label=f"Spread < {f['max_spread_pct']}% of mid",
+            passed=result.spread_ok,
+            detail=f"{result.spread_pct:.2f}%",
+            parameter_ref="Trading_Parameters.md Part T — T15",
+        ),
+    ]
 
 
 def compute_garch_from_inputs(
@@ -219,33 +319,20 @@ def _retail_gates(
         )
     )
 
-    gates.append(
-        GateResult(
-            gate_id="T13",
-            label=f"Volume ≥ {f['min_volume']}",
-            passed=inp.volume >= int(f["min_volume"]),
-            detail=str(inp.volume),
-            parameter_ref="Trading_Parameters.md Part T — T13",
-        )
+    live = _live_from_inputs(inp)
+    prior = list(inp.atm_history_prior) if inp.atm_history_prior is not None else []
+    liq = evaluate_atm_liquidity(
+        live=live,
+        prior=prior,
+        min_volume=int(f["min_volume"]),
+        min_open_interest=int(f["min_open_interest"]),
+        max_spread_pct=float(f["max_spread_pct"]),
+        volume_vs_avg_min_ratio=float(f.get("volume_vs_avg_min_ratio", 1.5)),
+        oi_vs_avg_min_ratio=float(f.get("oi_vs_avg_min_ratio", 1.3)),
+        lookback_days=int(f.get("atm_history_lookback_days", 20)),
+        min_history_days=int(f.get("atm_history_min_days", 10)),
     )
-    gates.append(
-        GateResult(
-            gate_id="T14",
-            label=f"Open interest ≥ {f['min_open_interest']}",
-            passed=inp.open_interest >= int(f["min_open_interest"]),
-            detail=str(inp.open_interest),
-            parameter_ref="Trading_Parameters.md Part T — T14",
-        )
-    )
-    gates.append(
-        GateResult(
-            gate_id="T15",
-            label=f"Spread ≤ {f['max_spread_pct']}% of mid",
-            passed=inp.spread_pct <= float(f["max_spread_pct"]),
-            detail=f"{inp.spread_pct:.2f}%",
-            parameter_ref="Trading_Parameters.md Part T — T15",
-        )
-    )
+    gates.extend(_liquidity_gate_results(liq, f))
     return gates
 
 
@@ -421,7 +508,7 @@ _DEMO: dict[str, dict[str, Any]] = {
         "atm_premium_inr": 185,
         "volume": 12500,
         "open_interest": 22000,
-        "spread_pct": 1.2,
+        "spread_pct": 0.4,
         "dte": 22,
         "realized_vol_intraday": 0.018,
     },
@@ -433,7 +520,7 @@ _DEMO: dict[str, dict[str, Any]] = {
         "atm_premium_inr": 95,
         "volume": 22000,
         "open_interest": 35000,
-        "spread_pct": 0.9,
+        "spread_pct": 0.4,
         "dte": 20,
         "realized_vol_intraday": 0.012,
     },
@@ -444,8 +531,8 @@ _DEMO: dict[str, dict[str, Any]] = {
         "days_to_earnings": None,
         "atm_premium_inr": 42,
         "volume": 8900,
-        "open_interest": 12500,
-        "spread_pct": 1.8,
+        "open_interest": 22000,
+        "spread_pct": 0.4,
         "dte": 18,
         "realized_vol_intraday": 0.022,
     },
@@ -457,7 +544,7 @@ _DEMO: dict[str, dict[str, Any]] = {
         "atm_premium_inr": 210,
         "volume": 15200,
         "open_interest": 28000,
-        "spread_pct": 1.1,
+        "spread_pct": 0.4,
         "dte": 25,
         "realized_vol_intraday": 0.015,
     },
@@ -469,7 +556,7 @@ _DEMO: dict[str, dict[str, Any]] = {
         "atm_premium_inr": 68,
         "volume": 31000,
         "open_interest": 42000,
-        "spread_pct": 0.7,
+        "spread_pct": 0.4,
         "dte": 15,
         "realized_vol_intraday": 0.011,
     },
@@ -526,6 +613,9 @@ def signals_for_underlying(
         if intraday_iv_series is not None
         else _synthetic_iv_series(iv, demo.get("target_z"))
     )
+    vol = int(demo.get("volume", 10000))
+    oi = int(demo.get("open_interest", 25000))
+    spread = float(demo.get("spread_pct", 0.4))
     inp = SignalComputeInputs(
         symbol=sym,
         und_price=spot,
@@ -535,10 +625,11 @@ def signals_for_underlying(
         days_to_earnings=demo.get("days_to_earnings"),
         realized_vol_intraday=demo.get("realized_vol_intraday"),
         atm_premium_inr=float(demo.get("atm_premium_inr", 100)),
-        volume=int(demo.get("volume", 10000)),
-        open_interest=int(demo.get("open_interest", 15000)),
-        spread_pct=float(demo.get("spread_pct", 1.0)),
+        volume=vol,
+        open_interest=oi,
+        spread_pct=spread,
         dte=int(demo.get("dte", 20)),
         includes_underlying=includes_underlying,
+        atm_history_prior=seed_atm_history_prior(vol, oi),
     )
     return build_signal_packet(inp, news=news)

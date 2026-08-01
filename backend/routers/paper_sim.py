@@ -202,8 +202,8 @@ class SignalEvaluateRequest(BaseModel):
     realized_vol_intraday: float | None = None
     atm_premium_inr: float = Field(default=100.0, ge=0)
     volume: int = Field(default=10_000, ge=0)
-    open_interest: int = Field(default=15_000, ge=0)
-    spread_pct: float = Field(default=1.0, ge=0)
+    open_interest: int = Field(default=25_000, ge=0)
+    spread_pct: float = Field(default=0.4, ge=0)
     dte: int = Field(default=20, ge=0)
     includes_underlying: bool = Field(
         default=True,
@@ -237,7 +237,7 @@ async def paper_signals_evaluate(body: SignalEvaluateRequest):
     """Evaluate candidate vs playbook + news gates; T11 when options+underlying (Phase 1.5)."""
     from backend.models.recommendations import MarketNewsSummary
     from backend.services.market_news import get_market_news
-    from backend.services.signals import SignalComputeInputs, evaluate_candidate
+    from backend.services.signals import SignalComputeInputs, evaluate_candidate, seed_atm_history_prior
 
     news = get_market_news()
     if body.force_news:
@@ -246,6 +246,7 @@ async def paper_signals_evaluate(body: SignalEvaluateRequest):
             payload[key] = value
         news = MarketNewsSummary.model_validate(payload)
 
+    # Paper evaluate: bootstrap relative history until the EOD store has ≥10 sessions.
     inp = SignalComputeInputs(
         symbol=body.symbol,
         und_price=body.und_price,
@@ -264,6 +265,7 @@ async def paper_signals_evaluate(body: SignalEvaluateRequest):
         spread_pct=body.spread_pct,
         dte=body.dte,
         includes_underlying=body.includes_underlying,
+        atm_history_prior=seed_atm_history_prior(body.volume, body.open_interest),
     )
     return evaluate_candidate(
         inp,

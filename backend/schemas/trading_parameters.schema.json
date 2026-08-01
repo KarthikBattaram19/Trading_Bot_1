@@ -115,6 +115,12 @@
         "min_volume",
         "min_open_interest",
         "max_spread_pct",
+        "volume_vs_avg_min_ratio",
+        "oi_vs_avg_min_ratio",
+        "atm_history_lookback_days",
+        "atm_history_min_days",
+        "atm_liquidity_agg",
+        "spread_agg",
         "high_liquidity_required"
       ],
       "additionalProperties": false,
@@ -199,22 +205,52 @@
         "min_volume": {
           "type": "integer",
           "minimum": 1,
-          "description": "T13 — minimum daily contract volume on ATM leg."
+          "description": "T13 — absolute minimum daily ATM volume using min(CE, PE)."
         },
         "min_open_interest": {
           "type": "integer",
           "minimum": 1,
-          "description": "T14 — minimum open interest on ATM leg."
+          "description": "T14 — absolute minimum ATM open interest using min(CE, PE)."
         },
         "max_spread_pct": {
           "type": "number",
           "exclusiveMinimum": 0,
-          "description": "T15 — max bid-ask spread as percent of mid."
+          "description": "T15 — pass only if max(CE, PE) spread_pct is strictly less than this value."
+        },
+        "volume_vs_avg_min_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "T13b — current ATM volume must be > this × prior rolling average."
+        },
+        "oi_vs_avg_min_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "T14b — current ATM OI must be > this × prior rolling average."
+        },
+        "atm_history_lookback_days": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Max prior sessions in ATM volume/OI average (typically 20)."
+        },
+        "atm_history_min_days": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Min prior sessions before relative volume/OI gates can pass (typically 10)."
+        },
+        "atm_liquidity_agg": {
+          "type": "string",
+          "const": "min_ce_pe",
+          "description": "Aggregate ATM volume/OI as min(CE, PE)."
+        },
+        "spread_agg": {
+          "type": "string",
+          "const": "max_ce_pe",
+          "description": "Aggregate ATM spread as max(CE, PE) spread percent."
         },
         "high_liquidity_required": {
           "type": "boolean",
           "const": true,
-          "description": "T16 — enforce volume, OI, and spread gates."
+          "description": "T16 — enforce absolute floors, relative volume/OI, and spread gates."
         },
         "applies_to_strategies": {
           "type": "array",

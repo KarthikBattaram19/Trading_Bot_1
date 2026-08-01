@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 
 from backend.models.recommendations import MarketNewsSummary
 from backend.services.market_news import reset_market_news_cache
-from backend.services.signals import SignalComputeInputs, evaluate_candidate, signals_for_underlying
+from backend.services.signals import SignalComputeInputs, evaluate_candidate, seed_atm_history_prior, signals_for_underlying
 
 
 @pytest.fixture(autouse=True)
@@ -17,6 +17,15 @@ def _clear_news_cache():
     reset_market_news_cache()
     yield
     reset_market_news_cache()
+
+
+def _liq_kwargs(volume: int, open_interest: int, spread_pct: float = 0.4) -> dict:
+    return dict(
+        volume=volume,
+        open_interest=open_interest,
+        spread_pct=spread_pct,
+        atm_history_prior=seed_atm_history_prior(volume, open_interest),
+    )
 
 
 def _neutral_news(**overrides) -> MarketNewsSummary:
@@ -52,9 +61,7 @@ def test_evaluate_cheap_vol_enter_long_vol():
         iv_z_score=None,
         includes_underlying=True,
         atm_premium_inr=95,
-        volume=22000,
-        open_interest=35000,
-        spread_pct=0.9,
+        **_liq_kwargs(22000, 35000),
     )
     out = evaluate_candidate(inp, news=news)
     assert out["cheap_vol"] is True
@@ -77,9 +84,7 @@ def test_evaluate_t11_fail_when_options_and_underlying():
         garch_forecast_annual=0.30,
         includes_underlying=True,
         atm_premium_inr=210,
-        volume=15200,
-        open_interest=28000,
-        spread_pct=1.1,
+        **_liq_kwargs(15200, 28000),
     )
     out = evaluate_candidate(inp, news=news)
     assert out["gates_passed"] is False
@@ -98,9 +103,7 @@ def test_evaluate_t11_skipped_options_only():
         garch_forecast_annual=0.30,
         includes_underlying=False,
         atm_premium_inr=210,
-        volume=15200,
-        open_interest=28000,
-        spread_pct=1.1,
+        **_liq_kwargs(15200, 28000),
     )
     out = evaluate_candidate(inp, news=news)
     t11 = next(g for g in out["gates"] if g["gate_id"] == "T11")
@@ -134,9 +137,7 @@ def test_evaluate_q15_rejects_vega_on_zero_std():
         intraday_iv_series=[0.26] * 20,  # σ=0
         includes_underlying=True,
         atm_premium_inr=68,
-        volume=31000,
-        open_interest=42000,
-        spread_pct=0.7,
+        **_liq_kwargs(31000, 42000),
     )
     out = evaluate_candidate(inp, news=news)
     assert out["iv_z_reject_vega"] is True
@@ -157,9 +158,7 @@ def test_evaluate_vega_entry_when_z_flush():
         iv_z_score=-2.5,
         includes_underlying=True,
         atm_premium_inr=185,
-        volume=12500,
-        open_interest=22000,
-        spread_pct=1.2,
+        **_liq_kwargs(12500, 22000),
     )
     out = evaluate_candidate(inp, news=news)
     assert out["recommendation"] == "enter_vega"
@@ -226,7 +225,7 @@ def test_post_signals_evaluate_endpoint():
         "atm_premium_inr": 95,
         "volume": 22000,
         "open_interest": 35000,
-        "spread_pct": 0.9,
+        "spread_pct": 0.4,
         "force_news": {
             "dominant_tone": "neutral",
             "news_not_blocking": True,

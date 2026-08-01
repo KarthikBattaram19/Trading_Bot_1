@@ -1,6 +1,6 @@
 {
   "$schema": "../schemas/trading_parameters.schema.json",
-  "version": "1.6",
+  "version": "1.7",
   "source_document": "Docs/Trading_Parameters.md",
   "option_universe_filters": {
     "max_option_premium": 300,
@@ -25,9 +25,15 @@
       "MIDCPNIFTY",
       "NIFTYNXT50"
     ],
-    "min_volume": 1000,
-    "min_open_interest": 10000,
-    "max_spread_pct": 2.0,
+    "min_volume": 2000,
+    "min_open_interest": 20000,
+    "max_spread_pct": 0.5,
+    "volume_vs_avg_min_ratio": 1.5,
+    "oi_vs_avg_min_ratio": 1.3,
+    "atm_history_lookback_days": 20,
+    "atm_history_min_days": 10,
+    "atm_liquidity_agg": "min_ce_pe",
+    "spread_agg": "max_ce_pe",
     "high_liquidity_required": true,
     "applies_to_strategies": [
       "simple_volatility",
@@ -130,9 +136,9 @@
         "premium_currency": "INR",
         "min_dte": 10,
         "max_dte": 30,
-        "min_volume": 1000,
-        "min_open_interest": 10000,
-        "max_spread_pct": 2.0
+        "min_volume": 2000,
+        "min_open_interest": 20000,
+        "max_spread_pct": 0.5
       },
       "entry_signal": {
         "iv_below_garch_forecast": true
@@ -150,9 +156,9 @@
         "max_option_premium": 300,
         "premium_currency": "INR",
         "same_strike_near_far": true,
-        "min_volume": 1000,
-        "min_open_interest": 10000,
-        "max_spread_pct": 2.0
+        "min_volume": 2000,
+        "min_open_interest": 20000,
+        "max_spread_pct": 0.5
       }
     },
     "vega_scalping": {
@@ -164,9 +170,9 @@
         "max_option_premium": 300,
         "premium_currency": "INR",
         "block_ultra_near_expiry": true,
-        "min_volume": 1000,
-        "min_open_interest": 10000,
-        "max_spread_pct": 2.0
+        "min_volume": 2000,
+        "min_open_interest": 20000,
+        "max_spread_pct": 0.5
       },
       "iv_signal": {
         "entry_z_threshold": -2.0,

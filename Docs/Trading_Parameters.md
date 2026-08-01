@@ -332,7 +332,7 @@ Used by **Simple Volatility Trading** and **Gamma Scalping mode 1 (cheap vol)**.
 
 | # | Parameter | Type | Default / Rule | Applies To |
 |---|---|---|---|---|
-| I1 | **Spread cap** | Percent | **2.0%** of mid (T15) | All — block illiquid chains |
+| I1 | **Spread cap** | Percent | **&lt; 0.5%** of mid (T15) | All — block illiquid chains |
 | I2 | **Slippage cap** | Percent | Configurable | All — reject if edge gone |
 | I3 | **Commission per leg** | $ | Broker-specific | Cost scoring |
 | I4 | **Borrow fee** | Percent p.a. | From broker | Short stock legs |
@@ -353,7 +353,7 @@ Used by **Simple Volatility Trading** and **Gamma Scalping mode 1 (cheap vol)**.
 | I18 | **Max underlying price** | Decimal (INR) | **1000** | Applies **only** when the bot trades **options and its underlying** (any `stock` leg / cash-share hedge). Reject if `und_price` > cap. **Options-only** (Call/Put legs only): **no underlying price cap**. |
 | I18a | **Price-cap applicability** | Enum | `options_and_underlying` | Cap enforced iff strategy includes underlying/stock; skipped for options-only |
 | I19 | **Underlying price currency** | Enum | `INR` | All underlying price comparisons use INR |
-| I20 | **High liquidity required** | Boolean | **true** | Instrument must pass volume, OI, and spread gates (T13–T15) |
+| I20 | **High liquidity required** | Boolean | **true** | Instrument must pass absolute floors, relative ATM volume/OI, and spread gates (T13–T15b) |
 
 ### I21 — Pre-Trade Checklist (Boolean Gates)
 
@@ -362,7 +362,7 @@ All must pass before submission:
 | Gate | Parameter |
 |---|---|
 | Signal objective & reproducible | `signal_reproducible=true` |
-| Instrument highly liquid | `liquidity_ok=true` — volume, OI, and spread within T13–T15 |
+| Instrument highly liquid | `liquidity_ok=true` — abs floors + volume/OI vs ≤20d avg + spread &lt; 0.5% (T13–T15) |
 | Underlying price within cap (options+underlying only) | `underlying_price_within_cap=true` when strategy includes stock/underlying — `und_price` ≤ 1000 INR; **skip** this gate for options-only |
 | Size allows rebalance | `size_rebalance_ok=true` |
 | Event risks known | `event_risk_reviewed=true` |
@@ -477,9 +477,9 @@ Authoritative curation: project-root `Market_News.txt`. Mapping to strategies: `
 | L3.2 | Expiry selection | `expiration_id` | ~15–30 DTE |
 | L3.3 | DTE minimum | `min_dte` | 10 (hard filter except research) |
 | L3.4 | DTE maximum (routine) | `max_dte` | 30 (soft preference) |
-| L3.5 | Liquidity min volume | `min_volume` | **1000** contracts (ATM leg, daily) |
-| L3.6 | Liquidity min OI | `min_open_interest` | **10000** contracts |
-| L3.7 | Max bid-ask spread | `max_spread_pct` | **2.0%** of mid |
+| L3.5 | Liquidity min volume | `min_volume` | **2000** contracts (`min(CE,PE)` ATM, daily) + **T13b** current &gt; 150% of ≤20d avg (`n≥10`) |
+| L3.6 | Liquidity min OI | `min_open_interest` | **20000** contracts (`min(CE,PE)` ATM) + **T14b** current &gt; 130% of ≤20d avg (`n≥10`) |
+| L3.7 | Max bid-ask spread | `max_spread_pct` | **&lt; 0.5%** of mid — `max(CE,PE)` spread |
 | L3.8 | Max option premium | `max_option_premium` | **300 INR** — option premium must be < 300 |
 | L3.9 | Premium currency | `premium_currency` | `INR` |
 | L3.10 | Moneyness filter | `moneyness` | `atm` — hard reject if strike ≠ ATM for expiry |
@@ -916,10 +916,12 @@ Detect mode from the OSS leg list: if any leg has `type=stock` (or the selected 
 | T11b | **Require cash-equity underlying** | `require_cash_equity_underlying` | Boolean | **true** | Yes when options+underlying — underlying must be hedgeable with NSE/BSE cash shares; **skipped** for options-only |
 | T11c | **Cap rationale** | `max_underlying_price_rationale` | Enum | `minimize_stock_hedge_capital` | Yes — documents why T11 exists when stock is traded |
 | T12 | **Underlying price currency** | `underlying_price_currency` | ISO 4217 | `INR` | Yes |
-| T13 | **Min daily volume** | `min_volume` | Integer | **1000** | Yes — ATM leg must meet or exceed |
-| T14 | **Min open interest** | `min_open_interest` | Integer | **10000** | Yes — ATM leg must meet or exceed |
-| T15 | **Max bid-ask spread** | `max_spread_pct` | Percent | **2.0** | Yes — `(ask − bid) / mid × 100` must be ≤ cap |
-| T16 | **High liquidity required** | `high_liquidity_required` | Boolean | **true** | Yes — all T13–T15 gates enforced |
+| T13 | **Min daily volume** | `min_volume` | Integer | **2000** | Yes — `min(CE,PE)` ATM volume must meet or exceed |
+| T13b | **Volume vs avg** | `volume_vs_avg_min_ratio` | Decimal | **1.5** | Yes — current ATM volume &gt; 150% of mean of last ≤20 prior sessions (`n≥10`) |
+| T14 | **Min open interest** | `min_open_interest` | Integer | **20000** | Yes — `min(CE,PE)` ATM OI must meet or exceed |
+| T14b | **OI vs avg** | `oi_vs_avg_min_ratio` | Decimal | **1.3** | Yes — current ATM OI &gt; 130% of mean of last ≤20 prior sessions (`n≥10`) |
+| T15 | **Max bid-ask spread** | `max_spread_pct` | Percent | **0.5** | Yes — `max(CE,PE)` `(ask − bid) / mid × 100` must be **&lt;** cap |
+| T16 | **High liquidity required** | `high_liquidity_required` | Boolean | **true** | Yes — all T13–T15 / T13b / T14b gates enforced |
 
 ### T7 — ATM Strike Selection Algorithm
 
@@ -972,18 +974,26 @@ else:
 All option legs in the candidate structure must pass when `high_liquidity_required=true`:
 
 ```
-spread_pct = (ask - bid) / mid * 100        # only when mid > 0 and bid > 0
-liquidity_ok = volume >= min_volume
-            AND open_interest >= min_open_interest
-            AND spread_pct <= max_spread_pct
-            AND bid > 0 AND ask > 0
+atm_volume = min(CE_vol, PE_vol)
+atm_oi     = min(CE_oi, PE_oi)
+spread_pct = max(CE_spread%, PE_spread%)   # each (ask-bid)/mid*100; bid>0, ask>0, mid>0
+avg_vol    = mean(prior atm_volume over n sessions)   # n = last ≤20 prior days; today excluded
+avg_oi     = mean(prior atm_oi over n sessions)
+
+liquidity_ok = atm_volume >= min_volume                # 2000
+            AND atm_oi >= min_open_interest            # 20000
+            AND n >= atm_history_min_days              # 10
+            AND avg_vol > 0 AND atm_volume > 1.5 * avg_vol
+            AND avg_oi > 0 AND atm_oi > 1.3 * avg_oi
+            AND spread_pct < max_spread_pct            # 0.5
 ```
 
 | Rule | Detail |
 |---|---|
-| ATM leg | Apply T13–T15 to the selected ATM call and/or put at each expiry |
+| ATM leg | Apply T13–T15 / T13b / T14b to the selected ATM call and put at each expiry (`min`/`max` aggregates) |
 | Multi-expiry (gamma) | Near **and** far legs must each pass independently |
 | Missing data | Treat missing volume, OI, or quotes as **fail** (not liquid) |
+| Short history | If `n < 10`, relative gates fail — absolute floors alone do not make `liquidity_ok` |
 | Pre-trade gate | Set `liquidity_ok=true` only when every required leg passes |
 
 ### T18 — Scope (All Strategies)

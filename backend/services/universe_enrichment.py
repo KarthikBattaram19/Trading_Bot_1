@@ -14,6 +14,7 @@ import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Awaitable
+from zoneinfo import ZoneInfo
 
 from backend.integrations.icici_direct.instrument_master import (
     InstrumentMaster,
@@ -24,7 +25,10 @@ from backend.integrations.icici_direct.market_data import (
     get_market_data_adapter,
 )
 from backend.quant.signals.garch import forecast_garch_11, log_returns_from_prices
-
+from backend.services.atm_liquidity_history import (
+    DEFAULT_STORE_PATH as ATM_HISTORY_STORE_PATH,
+    AtmLiquidityHistoryStore,
+)
 logger = logging.getLogger(__name__)
 
 _INDEX_UNDERLYINGS = frozenset(
@@ -357,7 +361,7 @@ def parse_atm_from_chain(
         or ""
     ).upper()
 
-    return LiveMarks(
+    marks = LiveMarks(
         symbol=symbol,
         und_price=float(spot),
         atm_premium_inr=float(atm_premium),
@@ -369,6 +373,39 @@ def parse_atm_from_chain(
         atm_strike=float(atm_strike),
         expiry=expiry_raw,
     )
+    _snapshot_atm_liquidity(marks, ce_vol=ce_vol, pe_vol=pe_vol, ce_oi=ce_oi, pe_oi=pe_oi)
+    return marks
+
+
+def _session_date_ist() -> str:
+    try:
+        return datetime.now(ZoneInfo("Asia/Kolkata")).date().isoformat()
+    except Exception:  # noqa: BLE001
+        return datetime.now(timezone.utc).date().isoformat()
+
+
+def _snapshot_atm_liquidity(
+    marks: LiveMarks,
+    *,
+    ce_vol: int,
+    pe_vol: int,
+    ce_oi: int,
+    pe_oi: int,
+) -> None:
+    if not marks.symbol or not marks.expiry:
+        return
+    if ce_vol <= 0 or pe_vol <= 0 or ce_oi <= 0 or pe_oi <= 0:
+        return
+    store = AtmLiquidityHistoryStore(ATM_HISTORY_STORE_PATH)
+    store.upsert_snapshot(
+        underlying=marks.symbol,
+        expiry_key=str(marks.expiry),
+        session_date=_session_date_ist(),
+        atm_strike=float(marks.atm_strike or 0.0),
+        atm_volume=int(min(ce_vol, pe_vol)),
+        atm_oi=int(min(ce_oi, pe_oi)),
+    )
+    store.prune(keep_days=60)
 
 
 class UniverseEnricher:
@@ -617,4 +654,15 @@ def live_marks_to_candidate_fields(
         "realized_vol_intraday": None,
         "garch_distorted": distorted,
         "price_history": history,
+        "expiry_key": str(marks.expiry) if marks.expiry else None,
+        "atm_history_prior": (
+            AtmLiquidityHistoryStore(ATM_HISTORY_STORE_PATH).prior_points(
+                underlying=marks.symbol,
+                expiry_key=str(marks.expiry),
+                before_date=_session_date_ist(),
+                lookback_days=20,
+            )
+            if marks.expiry
+            else None
+        ),
     }
