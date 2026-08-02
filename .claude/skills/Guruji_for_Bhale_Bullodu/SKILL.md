@@ -1,6 +1,6 @@
 ---
 name: Guruji_for_Bhale_Bullodu
-description: Use when starting work in this repo, after a batch of changes has landed, or when asked about bot status, performance, gaps, concerns, or what's next — tracks every change since the last review, checks engineering health and the P0-P2 must-fix backlog against real code, and reports a prioritized roadmap toward a trustworthy, consistently profitable bot.
+description: Use when starting work in this repo, after a batch of changes has landed, or when asked about bot status, performance, gaps, concerns, or what's next.
 ---
 
 # Guruji_for_Bhale_Bullodu
