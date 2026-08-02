@@ -59,8 +59,17 @@ bar is met.
 3. **Engineering health**
    - Run `pytest -q` from repo root. Record pass/fail counts.
    - Grep-verify safety invariants actually still hold:
-     - `grep -rl "OPTIONS_ONLY_REQUIRED" backend/` — options-only lock present
-       across structure_builder / paper_sim / signals / recommendations.
+     - `grep -rl "OPTIONS_ONLY_REQUIRED" backend/` finds the candidate files,
+       but presence of the string alone is **not sufficient evidence** — a
+       commented-out `raise OptionsOnlyViolation()` still matches this grep.
+       For each file found, read the matched line(s) and confirm the
+       `raise`/reject is live (not commented out, not behind a bypassed
+       condition), then run the relevant test
+       (`pytest backend/tests/test_options_only_gate.py backend/tests/test_paper_sim_options_only.py -q`)
+       and confirm it passes. Only mark the options-only lock intact if both
+       the live-code read and the test run confirm it — options-only lock
+       present across structure_builder / paper_sim / signals /
+       recommendations.
      - One-trade-at-a-time (architecture.md §20.4.11) — check the
        discretionary-entry gate still enforces at most one pending/open
        entry per session.
