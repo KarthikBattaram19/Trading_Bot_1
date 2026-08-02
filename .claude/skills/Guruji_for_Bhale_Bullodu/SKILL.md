@@ -31,8 +31,8 @@ bar is met.
 ## Process
 
 1. **Load context**
-   - Read `Docs/bot_health/STATE.md` for the last-reviewed commit SHA and
-     last closed-trade count.
+   - Read `Docs/bot_health/STATE.md` for the last-reviewed commit SHA, the
+     last per-module closed-trade counts, and the last test result.
    - Read `.cursor/rules/must-fix-before-claiming-performance.mdc` fresh —
      it is the priority authority, never paraphrase from memory.
    - Read `Docs/bot_health/BACKLOG.md` for currently-open findings.
@@ -70,11 +70,30 @@ bar is met.
        the live-code read and the test run confirm it — options-only lock
        present across structure_builder / paper_sim / signals /
        recommendations.
-     - One-trade-at-a-time (architecture.md §20.4.11) — check the
-       discretionary-entry gate still enforces at most one pending/open
-       entry per session.
-     - `SUPERVISION_MODE` default — confirm the code default matches
-       `architecture.md` §1.2/§2.3.1 (`supervised`).
+     - One-trade-at-a-time (`architecture.md` §20.4.11) — read
+       `backend/execution/risk_gate.py` around the `one_trade_scope`
+       check (~lines 412-422). It only emits `status="pass"` when
+       `ctx.one_trade_scope_clear is not None and ctx.is_discretionary`;
+       otherwise it silently falls through to `status="skip"`. Do not
+       mark this "intact" from the string's presence alone — confirm
+       which callers populate `ctx.one_trade_scope_clear`
+       (`backend/tests/unit/test_risk_gate.py` exercises this at
+       ~lines 90/125) and report Done only if a real submit path
+       populates it; otherwise report Partial/Not-done and say so
+       plainly ("gate exists but no-ops unless context is populated by
+       X").
+     - `SUPERVISION_MODE` — `grep -rli "supervision" backend --include=*.py`
+       first. As of this writing it appears only in
+       `backend/routers/bot.py` (`bot_status()`), which is a status
+       *display* read, not an enforcement point. Report the default
+       value if found, but explicitly flag whether any submit path
+       actually branches on it — if not, that is itself a finding for
+       `BACKLOG.md`, not a clean "Done".
+     - ATM/liquidity gates — confirm the relative ATM liquidity gates
+       (volume/OI/spread) are still present and exercised, via
+       `backend/tests/test_atm_liquidity.py`,
+       `backend/tests/test_atm_liquidity_config.py`, and
+       `backend/tests/test_atm_liquidity_history.py`.
    - Doc/code drift: compare `architecture.md` / `context.md` "Last
      updated" / status-table claims against what the change digest (step 2)
      actually shows landed.
@@ -91,13 +110,21 @@ bar is met.
 5. **Trade metrics (maturity-gated)**
 
    Read `backend/data/learning_store.json` (and the `paper_sim` ledger if
-   present). Count closed trades per module, excluding any record with
-   `"seed": true` or equivalent synthetic marker. Compare against the
-   30-closed-trades-per-module threshold (`architecture.md` §2.3.1/§21):
-   - Below threshold: report leads with engineering health; trade metrics
-     get a brief "not yet material" note.
-   - At/above threshold: report win rate, profit factor, and drawdown
-     alongside engineering health with equal or greater billing.
+   present). Count closed trades **per module**, excluding any record with
+   `"seed": true` or equivalent synthetic marker. Compare each module's
+   count against the 30-closed-trades-per-module threshold (`architecture.md`
+   §21; the related execution-modes / supervision-path content lives in
+   `context.md` §2.3.1):
+   - Below threshold (any module): report that module's leads with
+     engineering health; trade metrics get a brief "not yet material" note.
+   - At/above threshold: report win rate, profit factor, and drawdown for
+     that module alongside engineering health with equal or greater
+     billing.
+   - Also carry forward the current `pytest -q` result (pass/fail counts
+     from step 3) as this run's test result, and compare it against
+     `STATE.md`'s "Last test result seen" — flag any newly-failing test
+     that wasn't failing last run as a P0/P1 backlog item in step 6. This
+     run's result gets persisted to `STATE.md` in step 8.
 
 6. **Reconcile backlog**
 
@@ -126,7 +153,10 @@ bar is met.
 8. **Update state**
 
    Rewrite `Docs/bot_health/STATE.md` with the new HEAD SHA, current
-   timestamp, and the closed-trade count found in step 5.
+   timestamp, the per-module closed-trade counts found in step 5 (one
+   short line per module, e.g. `<module>: N closed trades`; a table is
+   only needed if more than a couple of modules are active), and the
+   current test result (`<passed> passed / <failed> failed`) from step 3.
 
 ## Quick reference
 
