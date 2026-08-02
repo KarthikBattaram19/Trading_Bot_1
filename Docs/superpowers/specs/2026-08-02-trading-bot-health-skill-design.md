@@ -1,4 +1,4 @@
-# Trading Bot Health & Roadmap Skill — Design Spec
+# Guruji_for_Bhale_Bullodu — Bot Health & Roadmap Skill — Design Spec
 
 | Field | Value |
 |---|---|
@@ -70,7 +70,7 @@ Durable, prioritized findings log. Structure:
 
 Findings are bucketed under the must-fix rule's own P0/P1/P2 headings so the backlog visibly mirrors that priority order rather than a skill-invented one. Items outside that rule's scope (e.g. a doc typo, a test gap unrelated to the loop) go under "Other" and are explicitly deprioritized under any open P0/P1 item.
 
-### 3.3 SKILL.md instructions (`.claude/skills/trading-bot-health/SKILL.md`)
+### 3.3 SKILL.md instructions (`.claude/skills/Guruji_for_Bhale_Bullodu/SKILL.md`)
 
 The skill body walks through, each run:
 

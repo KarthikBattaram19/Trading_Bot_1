@@ -1,0 +1,44 @@
+---
+description: Priority backlog that must land before claiming top-retail vol performance
+alwaysApply: true
+---
+
+# Must-fix before claiming performance
+
+When improving this project, prioritize closing these gaps **before** claiming top-retail or high-performance results. Do not treat P&L targets, Sharpe goals, or “edge proven” language as met until P0–P1 below are real in code and evidence.
+
+This backlog is the single source of priority truth. It is read fresh (not cached) and checked against actual code each run by the **`Guruji_for_Bhale_Bullodu`** skill (`.claude/skills/Guruji_for_Bhale_Bullodu/`), which reports each item below as Done / Partial / Not-done with file/line evidence and keeps an open/resolved backlog. Editing this file changes what Guruji checks on its very next run — there is no separate copy to keep in sync.
+
+## P0 — integrity of the trading loop
+
+1. **Wire recommend → supervised approve → `paper_sim` → learning**
+   One ledger must be the source of truth. Recommendations must not “fill” outside `paper_sim`; approve/reject must be real backend APIs when `SUPERVISION_MODE=supervised`.
+   - **Definition of done:** `decisions` router exposes real `POST /approve` and `POST /reject` transitions (not read-only list/get endpoints); every accepted decision writes through to the `paper_sim` ledger and no other path can create a "filled" position; `/learning` outcomes are derived only from real ledger closes, with zero `"seed": true` / demo records mixed into the metrics used for reporting.
+
+2. **Enforce breakers + market hours + durable kill/positions**
+   Daily-loss / circuit-breaker / session-window checks must reject or pause submit paths (not dashboard-only). Kill-switch and open book must survive process restart.
+   - **Definition of done:** kill-switch armed state and the open-position book are persisted (file/DB), not in-memory process globals; a killed/restarted process resumes in the same armed/paused state it was in before the restart; daily-loss, circuit-breaker, and market-hours/session-window checks run inside the actual submit path (paper_sim engine and any live broker path), verified by grep/trace, not only surfaced as dashboard metrics.
+
+## P1 — proof of edge
+
+3. **Options-chain walk-forward / replay for SH-4 expectancy**
+   No “top performing” claims without OOS options PnL evidence for the long-vol playbook.
+   - **Definition of done:** a checked-in walk-forward or replay artifact (script + result output) exists that runs the SH-4 playbook against historical options-chain data with an explicit train/test (in-sample vs. out-of-sample) split, and reports expectancy/PnL on the OOS slice specifically — not just backtested-in-sample numbers.
+
+4. **Skew / term / India VIX regime filters + better IV**
+   Surface-aware filters and proper IV quality before treating signals as institutional-grade retail vol.
+   - **Definition of done:** an identifiable module (e.g. under `backend/quant`) computes skew and term-structure signals and gates or adjusts strategy selection using them, in addition to the existing India VIX level wiring; IV inputs used by signals have a documented quality/sanity check (not raw passthrough of a single broker mark).
+
+## P2 — tradeable quality & live safety
+
+5. **Structure sizing** (delta/vega targets, lots, costs) — turn signals into expectancy after costs.
+   - **Definition of done:** position sizing derives lot count from explicit delta/vega targets and includes brokerage/slippage/margin costs in the expectancy calculation shown to the operator or used in ranking — not a flat/arbitrary lot size.
+6. **Fill / reconcile FSM** before any live micro-capital (Phase 5).
+   - **Definition of done:** an explicit fill/reconcile state machine (submitted → partial → filled/rejected → reconciled) exists and is tested, so a live order's true state is always derivable and never silently assumed.
+
+## Guidance for agents
+
+- Prefer work that closes P0 over net-new strategy/UI features when the user asks for performance, readiness, or “make it better.”
+- If proposing a roadmap, keep this order unless the user explicitly overrides it.
+- Never imply the vol edge is validated without walk-forward / OOS evidence (P1 item 3).
+- Any item marked Partial or Not-done by Guruji stays open in `Docs/bot_health/BACKLOG.md` until its Definition of Done is met with cited evidence — not until it merely looks addressed.
