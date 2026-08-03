@@ -455,30 +455,74 @@ class UniverseEnricher:
         if not self.fetch_spot_ltp:
             return None
         und = symbol.upper()
+        # Indices: Breeze cash stock_codes first (CNXBAN, NIFFIN, …). Display
+        # names like BANKNIFTY burn rate budget and often 503 / "not available".
         if und in _INDEX_UNDERLYINGS:
-            stock_code = _INDEX_SPOT_STOCK_CODE.get(und, und)
-            tradingsymbol = und
+            primary = _INDEX_SPOT_STOCK_CODE.get(und, und)
+            fallbacks = [primary]
+            if und != primary:
+                fallbacks.append(und)
         else:
-            stock_code = und
-            tradingsymbol = und
-        try:
-            tick = await self._paced(self._md.get_ltp("NSE", tradingsymbol))
-            await stats.incr("spot_calls")
-            if tick.ltp and tick.ltp > 0:
-                return float(tick.ltp)
-        except Exception as exc:  # noqa: BLE001
-            await stats.add_error(f"{und} spot: {exc}")
-            logger.debug("Spot LTP failed for %s: %s", und, exc)
-        # Index fallback via stock_code when display name differs
-        if und in _INDEX_UNDERLYINGS and stock_code != und:
+            fallbacks = [und]
+
+        for code in fallbacks:
             try:
-                tick = await self._paced(self._md.get_ltp("NSE", stock_code))
+                tick = await self._paced(self._md.get_ltp("NSE", code))
                 await stats.incr("spot_calls")
                 if tick.ltp and tick.ltp > 0:
                     return float(tick.ltp)
             except Exception as exc:  # noqa: BLE001
-                await stats.add_error(f"{und} spot/{stock_code}: {exc}")
+                label = (
+                    f"{und} spot"
+                    if code == fallbacks[0]
+                    else f"{und} spot/{code}"
+                )
+                await stats.add_error(f"{label}: {exc}")
+                logger.debug("Spot LTP failed for %s (%s): %s", und, code, exc)
         return None
+
+    async def _fetch_option_chain_sides(
+        self,
+        *,
+        stock_code: str,
+        expiry_iso: str,
+        stats: EnrichmentStats,
+    ) -> list[dict[str, Any]]:
+        """Fetch call + put sides; Breeze requires a non-empty right or strike."""
+        merged: list[dict[str, Any]] = []
+        last_exc: Exception | None = None
+        for right in ("call", "put"):
+            rows: list[dict[str, Any]] = []
+            for product_type in ("options", "Options"):
+                try:
+                    rows = await self._paced(
+                        self._md.get_option_chain(
+                            stock_code=stock_code,
+                            expiry_date=expiry_iso,
+                            exchange_code="NFO",
+                            product_type=product_type,
+                            right=right,
+                            strike_price="",
+                        )
+                    )
+                    await stats.incr("chain_calls")
+                    if rows:
+                        break
+                except Exception as exc:  # noqa: BLE001
+                    last_exc = exc
+                    await stats.incr("chain_calls")
+                    logger.debug(
+                        "Option chain %s/%s failed for %s: %s",
+                        right,
+                        product_type,
+                        stock_code,
+                        exc,
+                    )
+            if rows:
+                merged.extend(rows)
+        if not merged and last_exc is not None:
+            raise last_exc
+        return merged
 
     async def enrich_one(self, symbol: str, stats: EnrichmentStats | None = None) -> LiveMarks | None:
         und = symbol.upper().strip()
@@ -509,26 +553,11 @@ class UniverseEnricher:
         spot = await self._spot_ltp(und, local_stats)
 
         try:
-            rows = await self._paced(
-                self._md.get_option_chain(
-                    stock_code=stock_code,
-                    expiry_date=expiry_iso,
-                    exchange_code="NFO",
-                    product_type="options",
-                )
+            rows = await self._fetch_option_chain_sides(
+                stock_code=stock_code,
+                expiry_iso=expiry_iso,
+                stats=local_stats,
             )
-            await local_stats.incr("chain_calls")
-            # Some sessions want product_type casing variants.
-            if not rows:
-                rows = await self._paced(
-                    self._md.get_option_chain(
-                        stock_code=stock_code,
-                        expiry_date=expiry_iso,
-                        exchange_code="NFO",
-                        product_type="Options",
-                    )
-                )
-                await local_stats.incr("chain_calls")
         except Exception as exc:  # noqa: BLE001
             await local_stats.incr("failed")
             await local_stats.add_error(f"{und} chain: {exc}")

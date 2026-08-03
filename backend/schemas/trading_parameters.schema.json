@@ -50,7 +50,11 @@
       "additionalProperties": true,
       "properties": {
         "min_coverage_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
-        "min_eligible_symbols": { "type": "integer", "minimum": 0 },
+        "min_eligible_symbols": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Absolute eligible floor; keep ≤ recommendation_universe_enrichment.max_symbols so capped cycles can publish."
+        },
         "abort_unavailable_strategies": { "type": "boolean" }
       }
     },

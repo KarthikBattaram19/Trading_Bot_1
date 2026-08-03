@@ -885,10 +885,20 @@ async def _generate_recommendations_uncached(
     calibrator = ConfidenceCalibrator()
 
     universe, feed_bindings, universe_source, enrich_stats, snapshots = await _build_universe()
-    scanned = len(snapshots) if snapshots else len(universe)
+    universe_size = len(snapshots) if snapshots else len(universe)
+    # Coverage must use the enrichment-attempted count when the cycle is capped
+    # (max_symbols / budget); scoring against full G11 makes publish impossible.
+    attempted = (
+        enrich_stats.requested
+        if enrich_stats is not None and enrich_stats.requested > 0
+        else 0
+    )
+    scanned = attempted if attempted > 0 else universe_size
+    if scanned <= 0:
+        scanned = len(feed_bindings) or 0
     coverage_report = evaluate_strategy_coverage(
         snapshots,
-        scanned=scanned if scanned > 0 else len(feed_bindings) or 0,
+        scanned=scanned,
         cfg=cfg,
     )
     available = coverage_report.available_strategies
@@ -1024,7 +1034,13 @@ async def _generate_recommendations_uncached(
 
     calibrated_n = sum(1 for r in top3 if r.calibration_status == "calibrated")
     notes = [
-        f"Scanned {scanned} instruments from feed-bound universe (G11–G12).",
+        f"Scanned {universe_size} instruments from feed-bound universe (G11–G12).",
+        (
+            f"Coverage denominator: {scanned} enrichment-attempted underlyings "
+            f"(max_symbols/budget cap; not full universe)."
+            if attempted > 0 and attempted != universe_size
+            else f"Coverage denominator: {scanned} underlyings."
+        ),
         (
             "Universe source: ICICI Direct FONSEScripMaster "
             f"({universe_source}) — all NSE F&O underlyings with auto G12 bindings."
@@ -1099,7 +1115,7 @@ async def _generate_recommendations_uncached(
         feed_as_of=now,
         feed_sources=sources,
         market_news=news,
-        universe_scanned=scanned,
+        universe_scanned=universe_size,
         candidates_passing_gates=passing,
         recommendations=top3,
         analysis_notes=notes,

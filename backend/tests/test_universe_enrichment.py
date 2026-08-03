@@ -116,6 +116,8 @@ async def test_enrich_many_fetches_spot_and_chain(monkeypatch):
         def __init__(self) -> None:
             self.spot_calls = 0
             self.chain_calls = 0
+            self.chain_rights: list[str] = []
+            self.ltp_symbols: list[str] = []
 
             class _Sess:
                 async def ensure_session(self):
@@ -125,33 +127,38 @@ async def test_enrich_many_fetches_spot_and_chain(monkeypatch):
 
         async def get_ltp(self, exchange: str, tradingsymbol: str, symboltoken=None):  # noqa: ANN001
             self.spot_calls += 1
-            return _FakeTick(812.0 if tradingsymbol == "SBIN" else 24500.0)
+            self.ltp_symbols.append(tradingsymbol)
+            # Indices must use Breeze cash stock_codes, not display names.
+            if tradingsymbol == "NIFTY":
+                return _FakeTick(24500.0)
+            if tradingsymbol == "SBIN":
+                return _FakeTick(812.0)
+            raise ValueError(f"unexpected spot symbol {tradingsymbol}")
 
         async def get_option_chain(self, **kwargs):  # noqa: ANN003
             self.chain_calls += 1
+            right = str(kwargs.get("right") or "")
+            self.chain_rights.append(right.lower())
+            if not right:
+                raise ValueError("Either Right or Strike-Price cannot be empty.")
             code = kwargs["stock_code"]
             spot = "812" if code == "STABAN" else "24500"
             strike = 800.0 if code == "STABAN" else 24500.0
+            side = "Call" if right.lower() == "call" else "Put"
+            ltp = 95.0 if side == "Call" else 90.0
+            bid = ltp - 1.0
+            ask = ltp + 1.0
+            vol = "12000" if side == "Call" else "11000"
+            oi = 30000 if side == "Call" else 28000
             return [
                 {
                     "strike_price": strike,
-                    "right": "Call",
-                    "ltp": 95.0,
-                    "best_bid_price": 94.0,
-                    "best_offer_price": 96.0,
-                    "total_quantity_traded": "12000",
-                    "open_interest": 30000,
-                    "spot_price": spot,
-                    "stock_code": code,
-                },
-                {
-                    "strike_price": strike,
-                    "right": "Put",
-                    "ltp": 90.0,
-                    "best_bid_price": 89.0,
-                    "best_offer_price": 91.0,
-                    "total_quantity_traded": "11000",
-                    "open_interest": 28000,
+                    "right": side,
+                    "ltp": ltp,
+                    "best_bid_price": bid,
+                    "best_offer_price": ask,
+                    "total_quantity_traded": vol,
+                    "open_interest": oi,
                     "spot_price": spot,
                     "stock_code": code,
                 },
@@ -174,7 +181,10 @@ async def test_enrich_many_fetches_spot_and_chain(monkeypatch):
     assert stats.delivered == 2
     assert stats.failed == 0
     assert md.spot_calls == 2
-    assert md.chain_calls == 2
+    # Call + put per underlying (Breeze rejects empty right).
+    assert md.chain_calls == 4
+    assert set(md.chain_rights) == {"call", "put"}
+    assert "" not in md.chain_rights
 
     # Second pass should hit cache (no extra REST).
     out2, stats2 = await enricher.enrich_many(["SBIN", "NIFTY"])
@@ -182,6 +192,82 @@ async def test_enrich_many_fetches_spot_and_chain(monkeypatch):
     assert stats2.spot_calls == 0
     assert md.spot_calls == 2
     assert set(out2) == {"SBIN", "NIFTY"}
+
+
+@pytest.mark.asyncio
+async def test_index_spot_uses_breeze_stock_code_first():
+    """BANKNIFTY cash quotes must hit CNXBAN — not the display name — first."""
+    reset_universe_enricher_for_tests()
+    expiry = _future_expiry(21)
+    # Minimal OPTIDX row so expiry selection works for BANKNIFTY.
+    fonse = (
+        "Token,InstrumentName,ShortName,Series,ExpiryDate,StrikePrice,OptionType,"
+        "LotSize,TickSize,CompanyName,ExchangeCode\n"
+        f"50001,OPTIDX,CNXBAN,OPTION,{expiry},52000,CE,15,0.05,Nifty Bank,BANKNIFTY\n"
+        f"50002,OPTIDX,CNXBAN,OPTION,{expiry},52000,PE,15,0.05,Nifty Bank,BANKNIFTY\n"
+    )
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("FONSEScripMaster.txt", fonse)
+        zf.writestr("NSEScripMaster.txt", "Token,ShortName,Series\n1,SBIN,EQ\n")
+    master = InstrumentMaster()
+    master.load_from_zip_bytes(buf.getvalue())
+
+    class _FakeTick:
+        def __init__(self, ltp: float) -> None:
+            self.ltp = ltp
+
+    class _FakeMD:
+        def __init__(self) -> None:
+            self.ltp_symbols: list[str] = []
+
+            class _Sess:
+                async def ensure_session(self):
+                    return object()
+
+            self.session_manager = _Sess()
+
+        async def get_ltp(self, exchange: str, tradingsymbol: str, symboltoken=None):  # noqa: ANN001
+            self.ltp_symbols.append(tradingsymbol)
+            if tradingsymbol == "BANKNIFTY":
+                raise AssertionError("must not quote index display name before Breeze code")
+            if tradingsymbol == "CNXBAN":
+                return _FakeTick(52100.0)
+            raise ValueError(tradingsymbol)
+
+        async def get_option_chain(self, **kwargs):  # noqa: ANN003
+            right = str(kwargs.get("right") or "").lower()
+            if right not in {"call", "put"}:
+                raise ValueError("Either Right or Strike-Price cannot be empty.")
+            side = "Call" if right == "call" else "Put"
+            return [
+                {
+                    "strike_price": 52000.0,
+                    "right": side,
+                    "ltp": 200.0,
+                    "best_bid_price": 199.0,
+                    "best_offer_price": 201.0,
+                    "total_quantity_traded": "8000",
+                    "open_interest": 40000,
+                    "spot_price": "52100",
+                    "stock_code": "CNXBAN",
+                }
+            ]
+
+    md = _FakeMD()
+    enricher = UniverseEnricher(
+        market_data=md,  # type: ignore[arg-type]
+        instruments=master,
+        cache_ttl_sec=60,
+        max_concurrency=1,
+        min_interval_ms=1,
+        fetch_spot_ltp=True,
+    )
+    out, stats = await enricher.enrich_many(["BANKNIFTY"])
+    assert stats.failed == 0
+    assert "BANKNIFTY" in out
+    assert md.ltp_symbols[0] == "CNXBAN"
+    assert "BANKNIFTY" not in md.ltp_symbols
 
 
 @pytest.mark.asyncio

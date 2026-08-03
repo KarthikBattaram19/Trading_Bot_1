@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import pytest
+
 from backend.models.recommendations import StrategyType
 from backend.services.quant_snapshot import QuantSnapshot, SignalField
 from backend.services.strategy_coverage import evaluate_strategy_coverage
+
 
 
 def _sf(value, usable: bool = True, reason: str | None = None) -> SignalField:
@@ -114,3 +117,43 @@ def test_warning_lines_on_abort():
         "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
     })
     assert any("STRATEGY_COVERAGE_ABORT" in w for w in report.warnings)
+
+
+def test_coverage_uses_attempted_denominator_under_enrichment_cap():
+    """Bounded enrich (e.g. 40 of 213) must score coverage against attempted, not full universe."""
+    # 32 eligible of 40 attempted → 80%; min_eligible (20) fits under max_symbols.
+    snaps = [_snap(f"S{i}", iv_z_ok=True, rv_ok=True) for i in range(32)]
+    snaps += [_snap(f"B{i}", live=False, garch_ok=False, iv_ok=False) for i in range(181)]
+    report = evaluate_strategy_coverage(
+        snaps,
+        scanned=40,  # enrichment max_symbols / attempted
+        cfg={
+            "strategy_coverage": {
+                "min_coverage_ratio": 0.80,
+                "min_eligible_symbols": 20,
+            },
+        },
+    )
+    simple = report.by_strategy[StrategyType.simple_volatility]
+    assert simple.eligible == 32
+    assert simple.coverage == pytest.approx(0.8)
+    assert simple.published is True
+    assert StrategyType.simple_volatility in report.available_strategies
+
+
+def test_coverage_still_aborts_when_denominator_is_full_universe():
+    """If scanned stays at full G11 size, 32/213 cannot publish even with a low absolute floor."""
+    snaps = [_snap(f"S{i}", iv_z_ok=True, rv_ok=True) for i in range(32)]
+    snaps += [_snap(f"B{i}", live=False, garch_ok=False, iv_ok=False) for i in range(181)]
+    report = evaluate_strategy_coverage(
+        snaps,
+        scanned=213,
+        cfg={
+            "strategy_coverage": {
+                "min_coverage_ratio": 0.80,
+                "min_eligible_symbols": 20,
+            },
+        },
+    )
+    assert report.by_strategy[StrategyType.simple_volatility].published is False
+

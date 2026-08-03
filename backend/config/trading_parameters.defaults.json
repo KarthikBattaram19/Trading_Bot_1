@@ -48,7 +48,7 @@
   },
   "strategy_coverage": {
     "min_coverage_ratio": 0.80,
-    "min_eligible_symbols": 50,
+    "min_eligible_symbols": 20,
     "abort_unavailable_strategies": true
   },
   "oss_global_params": {

@@ -45,3 +45,34 @@ deprioritized behind any open P0/P1 item.
 
 - [ ] RAG chat was shipped then un-shipped pending a Track B rebuild plan —
   not blocking, tracked for awareness only. (first seen 2026-08-02)
+
+- [x] **Live recommendations empty on prod (marks=0):** Breeze optionchain
+  calls send empty `right` and `strike_price`
+  (`backend/services/universe_enrichment.py` → `get_option_chain` defaults),
+  which the vendor rejects with "Either Right or Strike-Price cannot be empty."
+  FAQ requires `right="call"` (or put) with empty strike for a side snapshot.
+  (first seen 2026-08-03, evidence: prod analysis text +
+  `backend/integrations/icici_direct/client.py:290-305`,
+  [ICICI option-chain FAQ](https://www.icicidirect.com/faqs/fno/how-to-fetch-option-chain-of-any-stock-code-using-breeze-api);
+  resolved 2026-08-03, evidence: `universe_enrichment.py` `_fetch_option_chain_sides`
+  fetches `right=call` then `put`;
+  `test_enrich_many_fetches_spot_and_chain` asserts both sides)
+
+- [x] **Index spot LTP uses display names first:** `_spot_ltp` calls
+  `get_ltp("NSE", "BANKNIFTY")` before falling back to Breeze codes
+  (`CNXBAN` / `NIFFIN` / `NIFSEL`). Burns rate budget and surfaces 503 /
+  "Stock may not be available" noise. (first seen 2026-08-03, evidence:
+  `backend/services/universe_enrichment.py:454-481`;
+  resolved 2026-08-03, evidence: `_spot_ltp` tries `_INDEX_SPOT_STOCK_CODE`
+  first; `test_index_spot_uses_breeze_stock_code_first`)
+
+- [x] **Coverage gate vs enrichment cap contradiction:** after
+  `b64ebe1`, enrichment is capped at `max_symbols=40` /
+  `generation_budget_sec=20`, but `strategy_coverage` still requires
+  `eligible >= 50` **and** `coverage >= 80%` of scanned (~213). Even perfect
+  enrichment of 40 names cannot publish. (first seen 2026-08-03, evidence:
+  `backend/config/trading_parameters.defaults.json:36-51`,
+  `backend/services/strategy_coverage.py:105`;
+  resolved 2026-08-03, evidence: coverage denominator uses
+  `enrich_stats.requested`; `min_eligible_symbols` default 20;
+  `test_coverage_uses_attempted_denominator_under_enrichment_cap`)
