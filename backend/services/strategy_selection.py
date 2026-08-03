@@ -278,11 +278,16 @@ def select_strategy_sh4(
         else:
             _coverage_reject(StrategyType.vega_scalping)
 
+    gamma_entry_cfg = cfg["strategies"]["gamma_scalping"]["entry_signal"]
+    high_rv_thresh = float(gamma_entry_cfg["high_realized_vol_intraday_threshold"])
+    iv_elevated_multiplier = float(gamma_entry_cfg["iv_elevated_vs_garch_multiplier"])
+
     cheap_vol = quant.iv_annualized < quant.garch_forecast
     high_rv = (
-        quant.realized_vol_intraday is not None and quant.realized_vol_intraday > 0.015
+        quant.realized_vol_intraday is not None
+        and quant.realized_vol_intraday > high_rv_thresh
     )
-    iv_elevated = quant.iv_annualized > quant.garch_forecast * 1.05
+    iv_elevated = quant.iv_annualized > quant.garch_forecast * iv_elevated_multiplier
     agitation = news_confirms_agitation(news)
 
     # --- IV high + large realized moves (+ news agitation confirm) → gamma ---

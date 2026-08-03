@@ -160,6 +160,10 @@
         "min_volume": 2000,
         "min_open_interest": 20000,
         "max_spread_pct": 0.5
+      },
+      "entry_signal": {
+        "high_realized_vol_intraday_threshold": 0.015,
+        "iv_elevated_vs_garch_multiplier": 1.05
       }
     },
     "vega_scalping": {
