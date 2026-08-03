@@ -262,17 +262,38 @@ Trading_Strategies.md row.
   doc citation pinning them to a specific Trading_Strategies.md number, only a
   config home now.
 
-### 3.2 ATM liquidity gate is unconditionally False for the first 10 sessions of any expiry
-`backend/services/atm_liquidity.py` — `rel_volume_ok`/`rel_oi_ok` require
+### 3.2 ATM liquidity gate is unconditionally False for the first 10 sessions of any expiry — ✅ FIXED 2026-08-03
+`backend/services/atm_liquidity.py` — `rel_volume_ok`/`rel_oi_ok` required
 `history_days >= min_history_days (10)`. A brand-new expiry (e.g., week 1 of a new
-weekly/monthly series) can never pass liquidity gates regardless of how liquid it
-actually is, because `evaluate_atm_liquidity` ANDs all 5 conditions including the
-relative ones. Combined with `seed_atm_history_prior` (§3.3), this means the
-liquidity gate's realism depends entirely on which candidates get real history vs.
+weekly/monthly series) could never pass liquidity gates regardless of how liquid it
+actually was, because `evaluate_atm_liquidity` ANDs all 5 conditions including the
+relative ones. Combined with `seed_atm_history_prior` (§3.3), this meant the
+liquidity gate's realism depended entirely on which candidates got real history vs.
 synthetic fabricated history.
-- **Fix:** decide explicitly whether a new-expiry symbol should be gated on
-  absolute-only thresholds until history accrues, or intentionally excluded — right
-  now it's an emergent property of two unrelated modules, not a designed rule.
+- **Resolution:** `evaluate_atm_liquidity()` now runs a two-tier `relative_basis`:
+  `n >= min_history_days` keeps the original temporal-average check unchanged;
+  `n < min_history_days` falls back to a **same-session chain-relative** check —
+  current ATM volume/OI vs. the median volume/OI of the `NEAR_ATM_PEER_WINDOW`
+  (3-each-side) nearest strikes in the same option chain, computed in
+  `universe_enrichment._near_atm_peer_medians()` from chain data that was already
+  being fetched (`parse_atm_from_chain`) but previously discarded once the ATM
+  strike was picked — no new Breeze API calls. New config key
+  `option_universe_filters.chain_relative_min_ratio` (default `1.0`) governs the
+  fallback threshold. Both the fallback engagement (`ATM_CHAIN_RELATIVE_MODE`) and
+  a no-peer-data case (`ATM_CHAIN_RELATIVE_DATA_MISSING`) are surfaced as explicit
+  reason codes — on pass or fail — so the audit trail never silently conflates the
+  two bases. Threaded through `LiveMarks` → `QuantSnapshot` →
+  `InstrumentCandidate` → `_evaluate_gates()` and the parallel `signals.py` path;
+  `T13b`/`T14b` gate labels now say which basis was active. Absolute floors (T13/
+  T14) and the spread gate (T15) are unchanged. Tests added in
+  `test_atm_liquidity.py` (pass/fail/no-peer-data/established-expiry-unaffected)
+  and `test_universe_enrichment.py` (median computation over window strikes); full
+  backend suite (237 tests) passes.
+- **Not addressed by this fix:** the peer window is a fixed module constant
+  (`NEAR_ATM_PEER_WINDOW = 3`), not config-driven — deferred because plumbing it
+  down to `UniverseEnricher` would need a config-loading dependency in a class that
+  currently has none. §3.3's `seed_atm_history_prior` fabrication (demo-path only)
+  is untouched.
 
 ### 3.3 `seed_atm_history_prior` fabricates history that is *guaranteed* to pass the relative gates
 `backend/services/signals.py` — `avg_vol = volume/1.6`, `avg_oi = open_interest/1.4`

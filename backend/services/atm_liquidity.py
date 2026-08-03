@@ -12,6 +12,15 @@ ATM_OI_BELOW_AVG_RATIO = "ATM_OI_BELOW_AVG_RATIO"
 ATM_SPREAD_TOO_WIDE = "ATM_SPREAD_TOO_WIDE"
 ATM_ABS_FLOOR_FAIL = "ATM_ABS_FLOOR_FAIL"
 ATM_LIQUIDITY_DATA_MISSING = "ATM_LIQUIDITY_DATA_MISSING"
+# §3.2 fix: below atm_history_min_days of logged history, the relative gates
+# fall back to a same-session chain-relative comparison (ATM vs. its near-ATM
+# peer strikes) instead of forcing an automatic fail. This code is attached
+# (pass or fail) whenever that fallback basis was used, so callers/audits can
+# tell it apart from the steady-state temporal-average basis.
+ATM_CHAIN_RELATIVE_MODE = "ATM_CHAIN_RELATIVE_MODE"
+# Fallback engaged (history too short) but no usable near-ATM peer strikes
+# were available either — relative gates cannot be evaluated on any basis.
+ATM_CHAIN_RELATIVE_DATA_MISSING = "ATM_CHAIN_RELATIVE_DATA_MISSING"
 
 
 @dataclass(frozen=True)
@@ -52,6 +61,10 @@ class AtmLiquidityResult:
     abs_oi_ok: bool = False
     rel_oi_ok: bool = False
     spread_ok: bool = False
+    # "temporal" (n >= min_history_days, avg = this expiry's own prior sessions)
+    # or "chain_relative" (n < min_history_days, avg = same-session near-ATM
+    # peer strikes — §3.2 cold-start fallback).
+    relative_basis: str = "temporal"
 
 
 def spread_pct(bid: float, ask: float) -> float | None:
@@ -96,6 +109,9 @@ def evaluate_atm_liquidity(
     oi_vs_avg_min_ratio: float,
     lookback_days: int = 20,
     min_history_days: int = 10,
+    near_atm_volume_median: float | None = None,
+    near_atm_oi_median: float | None = None,
+    chain_relative_min_ratio: float = 1.0,
 ) -> AtmLiquidityResult:
     vol, oi = aggregate_atm_volume_oi(live)
     sp = aggregate_spread_pct(live)
@@ -117,36 +133,46 @@ def evaluate_atm_liquidity(
 
     prior_sorted = sorted(prior, key=lambda p: p.session_date)[-lookback_days:]
     n = len(prior_sorted)
-    avg_vol = mean(p.atm_volume for p in prior_sorted) if n else None
-    avg_oi = mean(p.atm_oi for p in prior_sorted) if n else None
+    temporal_avg_vol = mean(p.atm_volume for p in prior_sorted) if n else None
+    temporal_avg_oi = mean(p.atm_oi for p in prior_sorted) if n else None
 
     abs_volume_ok = vol >= min_volume
     abs_oi_ok = oi >= min_open_interest
     spread_ok = sp < max_spread_pct
 
-    rel_volume_ok = (
-        n >= min_history_days
-        and avg_vol is not None
-        and avg_vol > 0
-        and vol > volume_vs_avg_min_ratio * avg_vol
-    )
-    rel_oi_ok = (
-        n >= min_history_days
-        and avg_oi is not None
-        and avg_oi > 0
-        and oi > oi_vs_avg_min_ratio * avg_oi
-    )
+    if n >= min_history_days:
+        # Steady state: this expiry has its own trading history — compare
+        # today against its own rolling average (T13b/T14b).
+        relative_basis = "temporal"
+        avg_vol, avg_oi = temporal_avg_vol, temporal_avg_oi
+        rel_volume_ok = (
+            avg_vol is not None and avg_vol > 0 and vol > volume_vs_avg_min_ratio * avg_vol
+        )
+        rel_oi_ok = avg_oi is not None and avg_oi > 0 and oi > oi_vs_avg_min_ratio * avg_oi
+    else:
+        # §3.2 cold-start fallback: a brand-new expiry has no prior sessions
+        # of its own, so compare ATM against its same-session near-ATM peer
+        # strikes instead of forcing an automatic fail (see
+        # backend/services/universe_enrichment.py:_near_atm_peer_medians).
+        relative_basis = "chain_relative"
+        reasons.append(ATM_HISTORY_TOO_SHORT)
+        reasons.append(ATM_CHAIN_RELATIVE_MODE)
+        avg_vol, avg_oi = near_atm_volume_median, near_atm_oi_median
+        rel_volume_ok = (
+            avg_vol is not None and avg_vol > 0 and vol > chain_relative_min_ratio * avg_vol
+        )
+        rel_oi_ok = avg_oi is not None and avg_oi > 0 and oi > chain_relative_min_ratio * avg_oi
+        if avg_vol is None and avg_oi is None:
+            reasons.append(ATM_CHAIN_RELATIVE_DATA_MISSING)
 
     volume_vs_avg = (vol / avg_vol) if avg_vol and avg_vol > 0 else None
     oi_vs_avg = (oi / avg_oi) if avg_oi and avg_oi > 0 else None
 
-    if n < min_history_days:
-        reasons.append(ATM_HISTORY_TOO_SHORT)
     if not abs_volume_ok or not abs_oi_ok:
         reasons.append(ATM_ABS_FLOOR_FAIL)
-    if n >= min_history_days and not rel_volume_ok:
+    if not rel_volume_ok:
         reasons.append(ATM_VOLUME_BELOW_AVG_RATIO)
-    if n >= min_history_days and not rel_oi_ok:
+    if not rel_oi_ok:
         reasons.append(ATM_OI_BELOW_AVG_RATIO)
     if not spread_ok:
         reasons.append(ATM_SPREAD_TOO_WIDE)
@@ -168,6 +194,7 @@ def evaluate_atm_liquidity(
         abs_oi_ok=abs_oi_ok,
         rel_oi_ok=rel_oi_ok,
         spread_ok=spread_ok,
+        relative_basis=relative_basis,
     )
 
 

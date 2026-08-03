@@ -138,6 +138,8 @@ class InstrumentCandidate:
     marks_source: str = "stub"  # live | demo | stub
     atm_history_prior: list[AtmHistoryPoint] | None = None
     expiry_key: str | None = None
+    near_atm_volume_median: float | None = None
+    near_atm_oi_median: float | None = None
 
 
 def _load_config() -> dict[str, Any]:
@@ -515,6 +517,9 @@ def _evaluate_gates(
         oi_vs_avg_min_ratio=float(f.get("oi_vs_avg_min_ratio", 1.3)),
         lookback_days=int(f.get("atm_history_lookback_days", 20)),
         min_history_days=int(f.get("atm_history_min_days", 10)),
+        near_atm_volume_median=c.near_atm_volume_median,
+        near_atm_oi_median=c.near_atm_oi_median,
+        chain_relative_min_ratio=float(f.get("chain_relative_min_ratio", 1.0)),
     )
     gates.extend(_liquidity_gate_results(liq, f))
 

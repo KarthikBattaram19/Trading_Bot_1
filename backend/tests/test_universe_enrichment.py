@@ -89,6 +89,41 @@ def test_parse_atm_from_chain_uses_spot_and_liquidity():
     assert marks.spread_pct == pytest.approx(5.0)  # CE (20.5-19.5)/20
     assert marks.dte >= 20
     assert marks.iv_annualized > 0
+    # Only one peer strike (850, CE-only: vol=100, oi=500) — median of one value is itself.
+    assert marks.near_atm_volume_median == pytest.approx(100.0)
+    assert marks.near_atm_oi_median == pytest.approx(500.0)
+
+
+def test_parse_atm_from_chain_near_atm_peer_median_uses_window_strikes():
+    def _row(strike, right, vol, oi, mid=50.0):
+        return {
+            "strike_price": strike,
+            "right": right,
+            "ltp": mid,
+            "best_bid_price": mid - 0.2,
+            "best_offer_price": mid + 0.2,
+            "total_quantity_traded": vol,
+            "open_interest": oi,
+            "spot_price": "1000",
+            "stock_code": "TESTCO",
+        }
+
+    rows = []
+    # ATM at 1000, three peer strikes each side with distinct vol/oi so the
+    # median is unambiguous. Peer volumes: 100, 200, 300, 400, 500, 600 -> median 350.
+    peer_vols = [100, 200, 300, 400, 500, 600]
+    peer_strikes = [950, 970, 990, 1010, 1030, 1050]
+    for strike, vol in zip(peer_strikes, peer_vols):
+        rows.append(_row(strike, "Call", vol, vol * 10))
+        rows.append(_row(strike, "Put", vol, vol * 10))
+    rows.append(_row(1000, "Call", 9000, 90000))
+    rows.append(_row(1000, "Put", 9000, 90000))
+
+    marks = parse_atm_from_chain(rows, spot_hint=None, expiry_raw=_future_expiry(21))
+    assert marks is not None
+    assert marks.atm_strike == 1000.0
+    assert marks.near_atm_volume_median == pytest.approx(350.0)
+    assert marks.near_atm_oi_median == pytest.approx(3500.0)
 
 
 def test_select_preferred_expiry_in_window():

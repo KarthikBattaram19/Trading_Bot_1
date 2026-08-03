@@ -217,6 +217,11 @@
           "minimum": 1,
           "description": "Min prior sessions before relative volume/OI gates can pass (typically 10)."
         },
+        "chain_relative_min_ratio": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "description": "§3.2 cold-start fallback (history_days < atm_history_min_days): current ATM volume/OI must be > this × the median of its same-session near-ATM peer strikes (backend/services/universe_enrichment.py NEAR_ATM_PEER_WINDOW)."
+        },
         "atm_liquidity_agg": {
           "type": "string",
           "const": "min_ce_pe",

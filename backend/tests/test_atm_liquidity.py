@@ -1,4 +1,6 @@
 from backend.services.atm_liquidity import (
+    ATM_CHAIN_RELATIVE_DATA_MISSING,
+    ATM_CHAIN_RELATIVE_MODE,
     ATM_HISTORY_TOO_SHORT,
     ATM_SPREAD_TOO_WIDE,
     AtmHistoryPoint,
@@ -86,3 +88,61 @@ def test_abs_floor_still_required():
     r = _eval(live, _prior(10, vol=500, oi=5000))
     assert r.abs_volume_ok is False
     assert r.liquidity_ok is False
+
+
+# --- §3.2 chain-relative cold-start fallback (history_days < min_history_days) ---
+
+
+def test_new_expiry_passes_via_chain_relative_median():
+    """No prior sessions (n=0) but ATM clearly beats its same-session peer strikes."""
+    live = _live(vol=3000, oi=25000, bid=100.0, ask=100.4)
+    r = _eval(
+        live,
+        _prior(0),
+        near_atm_volume_median=2000.0,
+        near_atm_oi_median=20000.0,
+    )
+    assert r.history_days == 0
+    assert r.relative_basis == "chain_relative"
+    assert r.rel_volume_ok is True
+    assert r.rel_oi_ok is True
+    assert r.liquidity_ok is True
+    assert ATM_CHAIN_RELATIVE_MODE in r.reason_codes
+    assert ATM_HISTORY_TOO_SHORT in r.reason_codes
+
+
+def test_new_expiry_fails_when_below_chain_median():
+    """ATM clears absolute floors but sits below its peer strikes today — not just quiet history."""
+    live = _live(vol=2500, oi=21000, bid=100.0, ask=100.4)
+    r = _eval(
+        live,
+        _prior(3),
+        near_atm_volume_median=5000.0,
+        near_atm_oi_median=40000.0,
+    )
+    assert r.relative_basis == "chain_relative"
+    assert r.rel_volume_ok is False
+    assert r.rel_oi_ok is False
+    assert r.liquidity_ok is False
+
+
+def test_new_expiry_with_no_peer_chain_data_fails_explicitly():
+    """No history AND no near-ATM peer data (e.g. a single-strike chain) — cannot pass on any basis."""
+    live = _live(vol=5000, oi=50000)
+    r = _eval(live, _prior(0), near_atm_volume_median=None, near_atm_oi_median=None)
+    assert r.relative_basis == "chain_relative"
+    assert r.liquidity_ok is False
+    assert ATM_CHAIN_RELATIVE_DATA_MISSING in r.reason_codes
+
+
+def test_established_expiry_ignores_chain_relative_params():
+    """n >= min_history_days: temporal average still governs even if peer medians are passed."""
+    live = _live(vol=3001, oi=26001, bid=100.0, ask=100.4)
+    r = _eval(
+        live,
+        _prior(10, vol=2000, oi=20000),
+        near_atm_volume_median=999999.0,
+        near_atm_oi_median=999999.0,
+    )
+    assert r.relative_basis == "temporal"
+    assert r.liquidity_ok is True

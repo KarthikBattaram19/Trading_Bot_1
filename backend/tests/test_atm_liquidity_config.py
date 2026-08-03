@@ -16,6 +16,7 @@ def test_liquidity_defaults_match_relative_gates_spec():
     assert f["oi_vs_avg_min_ratio"] == 1.3
     assert f["atm_history_lookback_days"] == 20
     assert f["atm_history_min_days"] == 10
+    assert f["chain_relative_min_ratio"] == 1.0
     assert f["atm_liquidity_agg"] == "min_ce_pe"
     assert f["spread_agg"] == "max_ce_pe"
     for key in ("simple_volatility", "gamma_scalping", "vega_scalping"):

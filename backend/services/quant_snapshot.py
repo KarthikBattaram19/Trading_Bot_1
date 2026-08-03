@@ -39,6 +39,8 @@ class QuantSnapshot:
     price_history: list[float] = field(default_factory=list)
     expiry_key: str | None = None
     atm_strike: float | None = None
+    near_atm_volume_median: float | None = None
+    near_atm_oi_median: float | None = None
 
 
 def _flat_or_short(history: list[float], min_obs: int) -> bool:
@@ -162,6 +164,8 @@ def build_quant_snapshot(
         price_history=history,
         expiry_key=str(marks.expiry) if marks.expiry else None,
         atm_strike=marks.atm_strike,
+        near_atm_volume_median=marks.near_atm_volume_median,
+        near_atm_oi_median=marks.near_atm_oi_median,
     )
 
 
@@ -191,4 +195,6 @@ def snapshot_to_candidate_fields(snap: QuantSnapshot) -> dict[str, Any]:
         "price_history": list(snap.price_history) or [1.0],
         "expiry_key": snap.expiry_key,
         "marks_source": "live" if snap.marks_live else "stub",
+        "near_atm_volume_median": snap.near_atm_volume_median,
+        "near_atm_oi_median": snap.near_atm_oi_median,
     }

@@ -29,6 +29,7 @@ from backend.services.atm_liquidity import (
     live_from_aggregated,
 )
 from backend.services.market_news import get_market_news
+from backend.services.universe_enrichment import NEAR_ATM_PEER_WINDOW
 from backend.services.strategy_selection import (
     QuantRegimeInputs,
     select_strategy_packet,
@@ -72,6 +73,8 @@ class SignalComputeInputs:
     pe_bid: float | None = None
     pe_ask: float | None = None
     atm_history_prior: Sequence[AtmHistoryPoint] | None = None
+    near_atm_volume_median: float | None = None
+    near_atm_oi_median: float | None = None
 
 
 def seed_atm_history_prior(volume: int, open_interest: int, *, days: int = 10) -> list[AtmHistoryPoint]:
@@ -119,6 +122,15 @@ def _live_from_inputs(inp: SignalComputeInputs) -> AtmLiquidityLive:
 def _liquidity_gate_results(result, f: dict[str, Any]) -> list[GateResult]:
     vs = f"{result.volume_vs_avg:.2f}" if result.volume_vs_avg is not None else "n/a"
     oi_vs = f"{result.oi_vs_avg:.2f}" if result.oi_vs_avg is not None else "n/a"
+    chain_relative = result.relative_basis == "chain_relative"
+    if chain_relative:
+        vol_ratio = f.get("chain_relative_min_ratio", 1.0)
+        oi_ratio = f.get("chain_relative_min_ratio", 1.0)
+        basis_label = f"{NEAR_ATM_PEER_WINDOW * 2}-strike same-session chain median (new expiry, {result.history_days}d history)"
+    else:
+        vol_ratio = f["volume_vs_avg_min_ratio"]
+        oi_ratio = f["oi_vs_avg_min_ratio"]
+        basis_label = f"{result.history_days}d own-expiry avg"
     return [
         GateResult(
             gate_id="T13",
@@ -129,7 +141,7 @@ def _liquidity_gate_results(result, f: dict[str, Any]) -> list[GateResult]:
         ),
         GateResult(
             gate_id="T13b",
-            label=f"Volume > {f['volume_vs_avg_min_ratio']}× {result.history_days}d avg",
+            label=f"Volume > {vol_ratio}× {basis_label}",
             passed=result.rel_volume_ok,
             detail=f"vs_avg={vs}",
             parameter_ref="Trading_Parameters.md Part T — T13b",
@@ -143,7 +155,7 @@ def _liquidity_gate_results(result, f: dict[str, Any]) -> list[GateResult]:
         ),
         GateResult(
             gate_id="T14b",
-            label=f"OI > {f['oi_vs_avg_min_ratio']}× {result.history_days}d avg",
+            label=f"OI > {oi_ratio}× {basis_label}",
             passed=result.rel_oi_ok,
             detail=f"vs_avg={oi_vs}",
             parameter_ref="Trading_Parameters.md Part T — T14b",
@@ -324,6 +336,9 @@ def _retail_gates(
         oi_vs_avg_min_ratio=float(f.get("oi_vs_avg_min_ratio", 1.3)),
         lookback_days=int(f.get("atm_history_lookback_days", 20)),
         min_history_days=int(f.get("atm_history_min_days", 10)),
+        near_atm_volume_median=inp.near_atm_volume_median,
+        near_atm_oi_median=inp.near_atm_oi_median,
+        chain_relative_min_ratio=float(f.get("chain_relative_min_ratio", 1.0)),
     )
     gates.extend(_liquidity_gate_results(liq, f))
     return gates

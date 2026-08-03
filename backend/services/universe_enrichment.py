@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import statistics
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -42,6 +43,11 @@ _INDEX_SPOT_STOCK_CODE: dict[str, str] = {
     "MIDCPNIFTY": "NIFSEL",
     "NIFTYNXT50": "NIFNEX",
 }
+
+# Strikes each side of ATM used as the same-session liquidity peer group
+# (§3.2 chain-relative fallback for expiries with < atm_history_min_days of
+# logged history — see backend/services/atm_liquidity.py).
+NEAR_ATM_PEER_WINDOW = 3
 
 
 @dataclass
@@ -99,6 +105,8 @@ class LiveMarks:
     atm_strike: float | None = None
     expiry: str | None = None
     stock_code: str | None = None
+    near_atm_volume_median: float | None = None
+    near_atm_oi_median: float | None = None
 
 
 @dataclass
@@ -262,6 +270,61 @@ def estimate_atm_iv(
     return float(min(max(iv, 0.01), 3.0))
 
 
+def _leg_metrics(leg: dict[str, Any] | None) -> tuple[float | None, int, int, float]:
+    if not leg:
+        return None, 0, 0, 99.0
+    bid = _parse_float(leg.get("best_bid_price") or leg.get("bid"))
+    ask = _parse_float(leg.get("best_offer_price") or leg.get("ask") or leg.get("best_ask_price"))
+    ltp = _parse_float(leg.get("ltp") or leg.get("LTP"))
+    mid = _mid(bid, ask, ltp)
+    vol = _parse_int(leg.get("total_quantity_traded") or leg.get("volume") or leg.get("ltq"))
+    oi = _parse_int(leg.get("open_interest") or leg.get("oi"))
+    return mid, vol, oi, _spread_pct(bid, ask, mid)
+
+
+def _strike_vol_oi(sides: dict[str, dict[str, Any]]) -> tuple[int, int]:
+    """Conservative min(CE, PE) volume/OI for one strike — same blend rule as the ATM strike."""
+    _, ce_vol, ce_oi, _ = _leg_metrics(sides.get("CE"))
+    _, pe_vol, pe_oi, _ = _leg_metrics(sides.get("PE"))
+    if ce_vol > 0 and pe_vol > 0:
+        volume = min(ce_vol, pe_vol)
+    elif ce_vol > 0:
+        volume = ce_vol
+    elif pe_vol > 0:
+        volume = pe_vol
+    else:
+        volume = 0
+    open_interest = min(ce_oi, pe_oi) if (ce_oi > 0 and pe_oi > 0) else max(ce_oi, pe_oi)
+    return volume, open_interest
+
+
+def _near_atm_peer_medians(
+    by_strike: dict[float, dict[str, dict[str, Any]]],
+    atm_strike: float,
+    *,
+    window: int = NEAR_ATM_PEER_WINDOW,
+) -> tuple[float | None, float | None]:
+    """Same-session chain-relative peer group: the `window` closest strikes on
+    each side of ATM (ATM itself excluded — this is a peer comparison, not a
+    self-comparison). Used as the cold-start liquidity fallback when an
+    expiry has too little history for the temporal T13b/T14b average (§3.2)."""
+    other_strikes = sorted(
+        (k for k in by_strike if k != atm_strike),
+        key=lambda k: abs(k - atm_strike),
+    )[: 2 * window]
+    vols: list[int] = []
+    ois: list[int] = []
+    for strike in other_strikes:
+        vol, oi = _strike_vol_oi(by_strike[strike])
+        if vol > 0:
+            vols.append(vol)
+        if oi > 0:
+            ois.append(oi)
+    vol_median = float(statistics.median(vols)) if vols else None
+    oi_median = float(statistics.median(ois)) if ois else None
+    return vol_median, oi_median
+
+
 def parse_atm_from_chain(
     rows: list[dict[str, Any]],
     *,
@@ -298,17 +361,6 @@ def parse_atm_from_chain(
     pe = sides.get("PE")
     if ce is None and pe is None:
         return None
-
-    def _leg_metrics(leg: dict[str, Any] | None) -> tuple[float | None, int, int, float]:
-        if not leg:
-            return None, 0, 0, 99.0
-        bid = _parse_float(leg.get("best_bid_price") or leg.get("bid"))
-        ask = _parse_float(leg.get("best_offer_price") or leg.get("ask") or leg.get("best_ask_price"))
-        ltp = _parse_float(leg.get("ltp") or leg.get("LTP"))
-        mid = _mid(bid, ask, ltp)
-        vol = _parse_int(leg.get("total_quantity_traded") or leg.get("volume") or leg.get("ltq"))
-        oi = _parse_int(leg.get("open_interest") or leg.get("oi"))
-        return mid, vol, oi, _spread_pct(bid, ask, mid)
 
     ce_mid, ce_vol, ce_oi, ce_spread = _leg_metrics(ce)
     pe_mid, pe_vol, pe_oi, pe_spread = _leg_metrics(pe)
@@ -360,6 +412,8 @@ def parse_atm_from_chain(
         or ""
     ).upper()
 
+    near_atm_volume_median, near_atm_oi_median = _near_atm_peer_medians(by_strike, atm_strike)
+
     marks = LiveMarks(
         symbol=symbol,
         und_price=float(spot),
@@ -371,6 +425,8 @@ def parse_atm_from_chain(
         iv_annualized=float(iv),
         atm_strike=float(atm_strike),
         expiry=expiry_raw,
+        near_atm_volume_median=near_atm_volume_median,
+        near_atm_oi_median=near_atm_oi_median,
     )
     _snapshot_atm_liquidity(marks, ce_vol=ce_vol, pe_vol=pe_vol, ce_oi=ce_oi, pe_oi=pe_oi)
     return marks
