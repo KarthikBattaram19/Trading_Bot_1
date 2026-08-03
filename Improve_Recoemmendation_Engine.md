@@ -295,14 +295,14 @@ synthetic fabricated history.
   currently has none. §3.3's `seed_atm_history_prior` fabrication (demo-path only)
   is untouched.
 
-### 3.3 `seed_atm_history_prior` fabricates history that is *guaranteed* to pass the relative gates
+### 3.3 `seed_atm_history_prior` fabricates history that is *guaranteed* to pass the relative gates — ✅ PARTIALLY FIXED 2026-08-03
 `backend/services/signals.py` — `avg_vol = volume/1.6`, `avg_oi = open_interest/1.4`
 are chosen so current volume/OI always clears the 1.5×/1.3× relative-average
 thresholds. Used for the demo `GET /signals` path and for demo-fixture candidates
 in `recommendation_engine.py` (`_DEMO_SPECS` / `_candidate_from_spec`). Also
-hardcodes literal dates `"2026-01-{i:02d}"` — will look stale/wrong once real
-sessions move well past January 2026, if this path is ever exercised past that
-window.
+hardcoded literal dates `"2026-01-{i:02d}"` — would have looked stale/wrong once
+real sessions moved well past January 2026, if this path were ever exercised past
+that window.
 - **Confirmed scope:** only wired into the demo/offline-fixture path
   (`_candidate_from_spec`, docstring says "Test/offline fixture helper only — not
   used for production ranking") — **not** the live-enriched path, which uses
@@ -310,6 +310,20 @@ window.
   worth a test asserting the demo path never leaks into `_build_universe()`'s
   production candidate list, since that invariant currently rests on code
   discipline, not an enforced boundary.
+- **Resolution:** (1) `seed_atm_history_prior` now generates `session_date` values
+  relative to today (`datetime.now(timezone.utc).date() - timedelta(...)`) instead
+  of hardcoded `2026-01-*` strings — no longer goes stale. (2) Added
+  `test_demo_fixture_helpers_are_tagged_and_never_called_from_build_universe` to
+  `backend/tests/test_recommendation_engine.py`: inspects `_build_universe`'s
+  source and asserts it never references `_candidate_from_spec`, `_demo_universe`,
+  `_stub_candidate`, or `_DEMO_SPECS`, plus sanity-checks that the demo/stub
+  helpers really do tag `marks_source` as `"demo"`/`"stub"` (so the guard isn't
+  vacuous). This makes the "demo path never leaks into production ranking"
+  invariant machine-checked instead of docstring-only — same fix class as §5.1.
+  **Not yet done:** the gate-gaming math itself (`/1.6`, `/1.4` divisors) is
+  unchanged — this fix closes the *leak* risk and the *staleness* risk, not the
+  underlying "fabricated history always passes" property, which is by design for
+  a fixture helper that must never reach production candidates.
 
 ### 3.4 GARCH(1,1) forecast uses fixed, unfitted weights — not MLE-estimated
 `backend/quant/signals/garch.py` — `gamma=0.05, alpha=0.05, beta=0.9` are config

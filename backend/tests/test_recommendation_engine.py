@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import inspect
 from copy import deepcopy
 
 from backend.models.recommendations import StrategySelectionLogic, StrategyType
 from backend.services.recommendation_engine import (
     InstrumentCandidate,
+    _build_universe,
+    _demo_universe,
     _evaluate_gates,
     _hedge_insight,
     _load_config,
     _prefer_options_only_for_high_spot,
+    _stub_candidate,
     _structure_uses_underlying,
 )
 from backend.services.signals import seed_atm_history_prior
@@ -97,3 +101,36 @@ def test_hedge_insight_never_mentions_stock_or_futures():
 
         assert "stock" not in insight.structure_note.lower()
         assert "futures" not in insight.structure_note.lower()
+
+
+def test_demo_fixture_helpers_are_tagged_and_never_called_from_build_universe():
+    """§3.3/§5.1 guard: the fabricated demo/stub fixture builders must never be
+
+    reachable from the production universe-building path. `_build_universe()` is
+    the only function that feeds real recommendation ranking (via
+    `_candidate_from_live`), so its source must never reference the demo/stub
+    helpers — this turns the "confirmed by reading the full function" invariant
+    from the audit into a check that fails loudly if a future refactor
+    reintroduces the reference instead of relying on docstrings alone.
+    """
+    forbidden = {"_candidate_from_spec", "_demo_universe", "_stub_candidate", "_DEMO_SPECS"}
+    source = inspect.getsource(_build_universe)
+    referenced = {name for name in forbidden if name in source}
+    assert not referenced, (
+        f"_build_universe() must never call demo/stub fixture helpers, "
+        f"found references to: {sorted(referenced)}"
+    )
+
+    # Sanity: the fixture helpers really do fabricate non-live marks, so the
+    # guard above is checking something real, not a vacuous name that no
+    # longer exists.
+    demo_candidates = _demo_universe()
+    assert demo_candidates, "demo fixture spec list must not be empty"
+    assert all(c.marks_source == "demo" for c in demo_candidates)
+
+    stub = _stub_candidate("NIFTY", _load_config())
+    assert stub.marks_source == "stub"
+
+    # And the real production path builds candidates the opposite way — via
+    # `_candidate_from_live`, never the fixture spec builders.
+    assert "_candidate_from_live" in source

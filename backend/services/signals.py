@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -78,11 +79,22 @@ class SignalComputeInputs:
 
 
 def seed_atm_history_prior(volume: int, open_interest: int, *, days: int = 10) -> list[AtmHistoryPoint]:
-    """Synthetic prior sessions so current marks clear 1.5× / 1.3× relative gates."""
+    """Synthetic prior sessions so current marks clear 1.5× / 1.3× relative gates.
+
+    Test/offline fixture helper only — not used for production ranking (see
+    `_candidate_from_spec` in recommendation_engine.py). Dates are generated
+    relative to today so this stays usable indefinitely instead of going stale
+    once real sessions move past a hardcoded month.
+    """
     avg_vol = max(1, int(volume / 1.6))
     avg_oi = max(1, int(open_interest / 1.4))
+    today = datetime.now(timezone.utc).date()
     return [
-        AtmHistoryPoint(session_date=f"2026-01-{i:02d}", atm_volume=avg_vol, atm_oi=avg_oi)
+        AtmHistoryPoint(
+            session_date=(today - timedelta(days=days - i + 1)).isoformat(),
+            atm_volume=avg_vol,
+            atm_oi=avg_oi,
+        )
         for i in range(1, days + 1)
     ]
 
