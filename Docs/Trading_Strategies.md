@@ -175,20 +175,35 @@ If a series has:
 
 then mean-reversion logic can be used more safely. If it has a unit root or drifting mean, mean-reversion assumptions are unreliable.
 
+The source books justify the `2-sigma` trigger with the empirical rule: roughly `68%` of observations fall within `1σ` of the mean, `95%` within `2σ`, and `99.7%` within `3σ`. In the book's illustrative series of `300` points, `292` fell inside the `±2σ` band. A `2σ` excursion is therefore a genuinely uncommon reading — but only if the series really is stationary. The source explicitly warns that applying this logic to a non-stationary series (the classic Bollinger-Bands-on-price mistake) is "trying to score a goal with moving goalposts."
+
+Intermediate case to respect: a series can keep a **fixed mean but a variable standard deviation**. That is less damaging than a drifting mean, but it still degrades the signal — the bands widen and narrow while the mean holds.
+
 ### Volatility Forecasting
-The source volatility books use `GARCH(1,1)` as the main institutional forecast:
+The source volatility books build up through three estimators; only the last is the trading forecast:
+
+1. **Moving Average (MA)** — plain average of squared log returns; every return carries equal weight. Source example: variance `0.031692%`, daily volatility `1.7802%`. Not used in practice — equal weighting is unrealistic.
+2. **EWMA** — recursive, `sigma_n^2 = lambda * sigma_(n-1)^2 + (1 - lambda) * u_(n-1)^2`, source example `lambda = 90%` giving `sigma_n^2 = 0.036541%`. Recent returns get more weight, decaying exponentially.
+3. **GARCH(1,1)** — EWMA plus a long-run variance term, which is what makes it mean-reverting. This is the institutional forecast:
 
 - `sigma_n^2 = gamma * VL + alpha * u_(n-1)^2 + beta * sigma_(n-1)^2`
 
-with source-example weights often described as:
+with source-example weights:
 
 - `gamma = 5%`
 - `alpha = 5%`
 - `beta = 90%`
+- constraint: they must sum to `100%`
+
+`VL` (long-run variance) is computed as the **sample variance of the log returns in the series**. Log returns — not simple returns — are used because simple returns are asymmetric on the way up versus the way down (`+5%` up vs `-4.76%` down for the same `$5` move), while log returns are symmetric (`±4.879%`).
 
 Annualization:
 
 - `sigma_annual = sigma_daily * sqrt(252)`
+
+`252` is business days per year. The source flags that some countries annualize on **calendar** days instead — the project must annualize IV and GARCH on the same basis before comparing them, or the cheap-vol signal is meaningless.
+
+Model-risk caveat from the source: econometric models only work when the market is reasonably normal. After extreme events (2008, 2020), GARCH gets distorted and produces **false cheap-vol signals** — many options will show `IV < GARCH` for the wrong reason. The source's advice is to wait for the market to normalize.
 
 ### Common Option Exposures
 
@@ -202,6 +217,13 @@ Long options generally imply:
 - positive gamma
 - positive vega
 - negative theta
+
+Two source intuitions the bot should encode explicitly:
+
+- Delta is also the **approximate probability the option finishes ITM / is exercised**.
+- The closer delta is to `50%` (i.e. the more ATM the option), the **more pronounced every other Greek** is. This is the real reason ATM strikes are mandated, not just payoff symmetry.
+
+Contract-multiplier note: the source's worked examples assume `1 contract = 1 option` for arithmetic simplicity but state that a real contract normally carries `100` options. The bot must always convert Greeks and capital caps to the actual exchange lot size (NSE lot sizes vary per underlying) before sizing.
 
 ## Strategy 1: Simple Volatility Trading
 
@@ -258,6 +280,12 @@ For options-only delta neutrality (same strike and expiration), define total opt
 
 - number of **call** contracts = `N × put delta`
 - number of **put** contracts = `N × call delta`
+
+This works because call delta and put delta at the same strike/expiry sum to `100%`. Source example: with call delta `52.27%` and put delta `47.73%` on a target book of `10,000` options, the neutral split is `4,773` calls and `5,227` puts — *not* `5,000/5,000`, which would leave the book delta-positive.
+
+Source-only variant, rejected here: the stock hedge could also be built as `long puts + long stock`, but the source notes this requires **more margin** than `long calls + short stock` and that **puts tend to be less liquid**. Both stock paths are rejected by the project hard lock regardless.
+
+**Leverage warning (source, load-bearing for sizing):** the options-only hedge is *naturally leveraged*. In the source's own comparison at the same underlying, the options-only book cost `$9,773.97` and produced gamma `1,622`, theta `-168`, vega `562`, while hedging the same calls with `2,495` short shares required `$124,748` of margin and produced only gamma `774`, theta `-84`, vega `268`. Same thesis, roughly **double the Greek exposure at ~8% of the capital**. Because this project is options-only by policy, every position inherits that leverage: size to the Greek exposure, not to the premium outlay, and keep both the per-trade and per-leg **INR 1,00,000** caps binding.
 
 Project interpretation: use Call/Put combinations only. Any stock/underlying leg or cash-share hedge request fails with `OPTIONS_ONLY_REQUIRED`.
 
@@ -325,7 +353,7 @@ Action:
 - take profits aggressively or re-hedge immediately
 - do not assume the outsized move will persist in a tradable way
 
-This is the most favorable path for the strategy.
+This is the most favorable path for the strategy. Source worked example: a `$330,000` long-vol book on an oil company; a corruption-scandal headline takes the stock from `$40` to `$32` (`-20%`) and IV from `30%` to `50%`; the book goes from `$333,640` to `$915,563`, a P/L of `$581,923`, in hours. The source's own instruction at that point is **neutralize the portfolio delta or close the entire position to protect the profit** — it does not tell the trader to ride it. That is the behavior the bot must copy: a black swan is a take-profit/re-hedge trigger, not a reason to widen risk. (Note the example's capital scale is far above this project's **INR 1,00,000** per-trade cap and is retained only as a directional illustration of convexity.)
 
 #### Scenario C: Quiet Market After Entry
 Condition:
@@ -348,6 +376,18 @@ Action:
 - do not treat this as a routine simple volatility trade
 - simple long-vol is vulnerable to post-event IV crush
 - prefer gamma scalping if the goal is to capture gap risk with reduced vega exposure
+
+Source IV path around earnings (encode this as a calendar-driven state machine):
+
+- IV **rises** in the days-to-weeks leading up to the release, as uncertainty builds
+- IV **spikes** one day before
+- IV **drops sharply** immediately after, because the uncertainty the premium was pricing has been resolved
+
+The source's constructive advice for simple volatility trading is therefore **trade the run-up, not the event**: dynamically delta hedge during the pre-earnings window for as long as `GARCH(1,1)` still says volatility is cheap, and be flat before the release.
+
+Source counter-example showing why holding through is wrong: a `5%` gap **up** produces genuinely large gamma gains, but the accompanying `30%` collapse in implied volatility turns the position into a loss of roughly `50%`. Gamma being right does not save a naked-vega book.
+
+Also explicitly forbidden by the source: shorting volatility to harvest the post-earnings IV crush. The vega gain is real, but the negative gamma it creates erodes it, and the risk profile is unbounded. This project never sells volatility (see Vega Scalping rule 5).
 
 #### Scenario E: High-Priced Underlying In Small Account
 Condition:
@@ -410,12 +450,16 @@ Source-aligned reference (not executable in this bot):
 - short longer-dated calls in a quantity that neutralizes vega
 - short stock to neutralize residual delta — rejected by project hard lock
 
+The source also explains *why* it reaches for calls rather than puts in the stock-hedge version: long calls leave the book delta-**positive**, which is neutralized by **short**ing the underlying (cheaper margin); a put-based version would leave it delta-negative and require **buying** the underlying (more margin), and puts are typically less liquid. This reasoning is source-only — the project has no stock leg either way — but it is retained because the same liquidity asymmetry between calls and puts still applies to leg selection.
+
 Reason:
 
 - shorter-dated options have more gamma and theta, less vega
 - longer-dated options have more vega, less gamma and theta
 
-By selling fewer or differently sized longer-dated options against the near-dated long options, the portfolio can neutralize vega while keeping net gamma positive.
+Source reference pair: two same-strike calls at `35` DTE and `63` DTE. The `35`-day option carries more gamma and more theta; the `63`-day option carries more vega. That gap is the entire engine of the trade.
+
+By selling fewer or differently sized longer-dated options against the near-dated long options, the portfolio can neutralize vega while keeping net gamma positive. Shorting the long-dated leg does introduce some negative gamma — but not enough to cancel the book's positive gamma, and it usefully **reduces theta** at the same time.
 
 ### Required Options-Only Construction
 The project uses the four-leg options-only version:
@@ -425,11 +469,21 @@ The project uses the four-leg options-only version:
 - short-dated long puts
 - longer-dated short puts
 
+**Mirror rule (source construction, do not improvise):** start from the vega-neutral call pair (buy short-dated calls, short long-dated calls), which leaves the book vega-neutral but delta-positive. Then **mirror the same quantities, strikes, and expiries in puts**. Because calls carry positive delta and puts negative delta, the sum of `(short-dated call delta + long-dated put delta)` equals the sum of `(long-dated call delta + short-dated put delta)`; the mirrored book is delta-neutral *and* stays vega-neutral. The bot should solve the call pair first and derive the put pair by mirroring, then verify both Greeks numerically rather than re-solving all four legs independently.
+
 Use case:
 
 - no stock/underlying trading path
 - higher structural complexity
 - much stronger need for synchronized execution
+
+### Risk/Reward Framing (Source)
+The source is explicit that gamma scalping is **less risky than the simple volatility trade because vega exposure is minimized — and correspondingly less rewarding**. In a vega-neutral book the only losses available are:
+
+- the market not moving away from the hedge point (theta bleed), and
+- distortion between the implied volatilities of the two expiries
+
+Intraday, theta accrues day-over-day, so a same-session gamma scalp is theoretically delta-neutral, vega-neutral, *and* effectively theta-free — pure gamma extraction. In that mode **IV term-structure distortion is the only real loss source**, which is why the term-structure gate below is not optional.
 
 ### Minimum Conditions For A Valid Setup
 
@@ -595,6 +649,8 @@ Source-aligned rules:
 - find the best compromise between longer expiry and strong liquidity
 - avoid ultra-near expiry when Greek instability becomes too high
 
+The reason for the compromise: longer expiry means more vega (the edge being harvested) but less gamma and theta — yet vega scalping is a fast trade, so the contract needs heavy liquidity, and long-dated chains often do not have it. The source's own worked example uses an ATM option roughly **two months from expiration**, which is a reasonable default starting point for the project's expiry search, subject to the liquidity gates winning any tie.
+
 ### Entry Rules
 Primary source rule:
 
@@ -615,6 +671,10 @@ Project structure:
 Project preference:
 
 - choose the Call/Put construction only when liquidity, slippage, and margin gates pass
+
+**Source risk note that must not be lost:** the source presents the options-only delta hedge as the *leveraged and therefore riskier* way to run this trade, and says the same operation carries less risk when delta is neutralized with the underlying. This project has removed the lower-risk path by policy (options-only hard lock), so the leverage is structural and permanent. The compensating controls are the **INR 1,00,000** per-trade and per-leg caps, the liquidity gates, and mandatory same-day flattening — none of them may be relaxed to "make room" for a bigger vega scalp.
+
+**Execution-speed note:** the source states intraday IV can move in a matter of seconds, so both the opening and the closing of a vega scalp must be algorithmic. A human cannot leg this trade in time, and a half-built delta hedge in a moving market is a directional bet, not a vol trade.
 
 ### Exit Rules
 Primary exit:
@@ -868,9 +928,11 @@ This section preserves every execution-critical table and rule list from the thr
 
 | Source Document | Table / Rule Set | Primary Use For The Bot |
 |---|---|---|
-| Volatility Trading | Option selection rules, rules 1–10, GARCH example, Company Z walkthrough | Cheap-vol entry, delta hedge, gamma-theta management |
-| Gamma Scalping | Greeks-vs-time, three entry modes, Intel earnings example, rules 1–10 | Vega-neutral construction, earnings gap, intraday scalp |
-| Vega Scalping | Seven intraday rules, IV mean-reversion example | Intraday IV z-score entry and same-day exit |
+| Volatility Trading (54 pp.) | Option selection rules, trading rules 1–10, MA/EWMA/GARCH lineage + worked example, Company Z walkthrough, black-swan example, earnings IV-crush example, 10 practical aspects | Cheap-vol entry, delta hedge, gamma-theta management, event gating |
+| Gamma Scalping (55 pp.) | Greeks-vs-time (35 vs 63 DTE), three entry modes, options-only mirror construction, Intel earnings example, management rules 1–2, 10 practical aspects | Vega-neutral construction, earnings gap, intraday scalp |
+| Vega Scalping (52 pp.) | Stationarity vs non-stationarity, seven intraday rules, IV mean-reversion worked example, 7 practical aspects | Intraday IV z-score entry and same-day exit |
+
+**Shared-chapter note:** chapters 1–6 (Introduction, Basics of Derivatives, Stock Option Properties, Black-Scholes, Option Greeks, Forecasting Volatility) are **identical across all three books**. The GARCH numbers, gamma-theta breakeven derivation, delta-hedge-without-stocks example, and the Greeks-vs-time relationship therefore apply to all three strategies and are consolidated here rather than repeated per strategy. Only chapters 7+ differ.
 
 ---
 
@@ -882,9 +944,11 @@ This section preserves every execution-critical table and rule list from the thr
 |---|---|---|
 | 1 | Trade only high-liquidity options | Block illiquid chains; abs floors vol≥2000 / OI≥20000; ATM vol >150% and OI >130% of ≤20d avg (n≥10); spread < 0.5% |
 | 1a | Options-only hard lock | Call/Put legs only; no stock/underlying trading, no T11 spot cap, and no index exclusion when other gates pass |
-| 2 | Choose ATM strike | Maximizes gamma symmetry and Greek magnitude |
-| 3 | Choose near expiry (~15–30 DTE) | More gamma/theta, less vega |
+| 2 | Choose ATM strike | Delta nearest 50% → symmetric payoff *and* maximum magnitude on every other Greek |
+| 3 | Choose the **next** expiration date, ~15–30 DTE | More gamma/theta, less vega |
 | 4 | Avoid <10 DTE routinely | Black-Scholes distortions; extreme Greek risk |
+
+**Source numbering note:** the Volatility Trading book states these as two rules — `1) Choose Only High Liquidity Options` and `2) Choose the ATM options with a close expiration date` — with the DTE band (~15–30) and the `<10 DTE` warning given in the surrounding prose and in practical aspect #6. Rows 3 and 4 above are that prose promoted to enforceable gates; row 1a is project policy, not source.
 
 #### Table VT-2: Core Volatility Trading Rules (Source Numbering)
 
@@ -894,10 +958,12 @@ This section preserves every execution-critical table and rule list from the thr
 | 4 | Delta hedging is prerequisite, not the strategy | Must neutralize delta before managing gamma/vega/theta |
 | 5 | Always long options (positive gamma); never short vol for this strategy | Long calls or long call+put structures only |
 | 6 | Delta hedge via (a) long calls + short stock, or (b) long calls + long puts same strike/expiry | Project executes only path (b); path (a) is source-only and rejected |
-| 7 | Stock hedge: buy X calls ≈ long `X × call delta` shares; hedge by shorting that many shares | Source-only reference; rejected by project hard lock |
-| 8 | Options-only hedge: total contracts N; **calls = N × put delta**; **puts = N × call delta** | Lower margin; stronger Greek leverage |
-| 9 | Re-hedge when price moves away from last hedge point by gamma-theta breakeven (~1%) | Automated rebalance trigger |
+| 7 | Stock hedge: buy X calls ≈ long `X × call delta` shares; hedge by shorting that many shares. Source adds: the mirror version (buy puts, buy stock) works but needs **more margin**, and puts are **less liquid** | Source-only reference; rejected by project hard lock. The call-vs-put liquidity asymmetry still informs leg choice |
+| 8 | Options-only hedge: total contracts N; **calls = N × put delta**; **puts = N × call delta** (call delta + put delta = 100% at same strike/expiry) | Lower margin; stronger Greek leverage. Source example: 10,000 options at call δ 52.27% → 4,773 calls + 5,227 puts, not 5,000/5,000 |
+| 9 | Re-hedge when price moves away from last hedge point by gamma-theta breakeven (~1%) | Automated rebalance trigger; direction-agnostic (up or down) |
 | 10 | Re-hedge by increasing or decreasing position | Track realized P/L and floating P/L separately |
+
+**Rule 9 mechanics (source):** if the book is delta-positive after an up-move, neutrality is restored by any of — sell the underlying (rejected here), buy more puts, or shed some calls. Buying puts *increases* size; shedding calls *decreases* size and realizes part of the gain. Both are legal; the bot must record which path it took and keep the realized/floating split (Rule 10).
 
 #### Table VT-3: GARCH(1,1) Parameter Reference
 
@@ -921,7 +987,15 @@ This section preserves every execution-critical table and rule list from the thr
 | Daily volatility σ_n | √(variance) | 1.9046% |
 | Annualized volatility | 1.9046% × √252 | **30.23%** |
 
-**Interpretation:** Compare annualized GARCH forecast to annualized option IV. IV below forecast = cheap vol entry candidate. After black swan events, GARCH may be distorted — block or downgrade signals until normalization.
+Predecessor estimators from the same source series (useful as sanity checks / fallbacks, not as trade signals):
+
+| Model | Formula | Source Result |
+|---|---|---|
+| Moving Average | mean of squared log returns (equal weights) | variance 0.031692%; σ 1.7802% |
+| EWMA (λ = 90%) | `σ_n² = λ·σ_(n-1)² + (1-λ)·u_(n-1)²` = 90%·0.036595% + 10%·0.036051% | σ_n² = 0.036541% |
+| GARCH(1,1) | EWMA + long-run variance term (mean reversion) | σ_n² = 0.0362757% |
+
+**Interpretation:** Compare annualized GARCH forecast to annualized option IV. IV below forecast = cheap vol entry candidate. `√252` assumes business-day annualization — confirm the IV feed uses the same convention (the source warns some markets annualize on calendar days) before comparing. `VL` = sample variance of the log-return window. After black swan events, GARCH may be distorted and will emit **false** `IV < GARCH` signals across many chains at once — block or downgrade signals until normalization (a broad simultaneous cheap-vol reading is itself a distortion tell).
 
 #### Table VT-5: Gamma-Theta Breakeven Management
 
@@ -936,15 +1010,18 @@ This section preserves every execution-critical table and rule list from the thr
 
 | Step | Action | Result |
 |---|---|---|
-| Setup | Stock ~$20; 10 ATM call contracts; 20 total option slots | Initial portfolio delta −92.56 (not neutral) |
-| Hedge attempt A | Adjust puts to 8 contracts | Best delta +16.47 (too long) |
-| Hedge attempt B | Adjust calls (preferred in example) | Delta −2.04; margin ~$1,190 |
-| Price move | +1% to $20.20 (breakeven distance) | Floating P/L +$12.39 (~1% on margin); delta +125.82 |
-| Re-hedge | Sell 2 call contracts (reduce size) | Realized +$19.26; floating −$6.88; total unchanged |
-| Overnight | −2% gap; IV 20% → 22% | Floating +$120.40 |
-| Total trade | Realized + floating | **$139.66 profit on ~$1,200 margin (~11.6%)** |
+| Setup | Stock at $20; nearest-ATM strike is **$20.20** (exact ATM rarely exists); start 10 call + 10 put contracts = 20 total | Initial portfolio delta −92.56 (not neutral) |
+| Hedge attempt A | Adjust **puts**: exact neutrality needs **8.3** contracts, must round down to 8 | Best delta +16.47 (too long) |
+| Hedge attempt B | Adjust **calls** instead (better in this example) | Delta −2.04; margin $1,190.08 (larger position → slightly more margin) |
+| Price move | Spot +1% to $20.20 (≈ breakeven distance) | Floating P/L +$12.39 (~1% on margin); delta +125.82 |
+| Re-hedge | Sell 2 call contracts (reduce size) | Realized +$19.26; floating −$6.88; sum unchanged vs pre-hedge floating |
+| Carry | Breakeven paid once → D+0 becomes D+1 | Theta of one day is covered |
+| Overnight | −2% gap; IV 20% → 22% | Floating +$120.40 (gamma from yesterday + gap, plus vega, minus theta) |
+| Total trade | Realized $19.26 + floating $120.40 | **$139.66 profit on ~$1,200 margin (~11.6%)** |
 
-**Interpretation:** Small contract counts prevent perfect delta neutrality. Bot must log residual delta, compare call vs put adjustment paths, and track realized vs floating P/L on every rebalance.
+**Interpretation:** Small contract counts prevent perfect delta neutrality (with 100 contracts the 8.3 would have been 83 and the hedge far cleaner). Bot must log residual delta, evaluate **both** the call-adjust and put-adjust paths and pick the lower absolute residual delta, note that reducing contract count also reduces Greek magnitude, and track realized vs floating P/L on every rebalance.
+
+**Source's own attribution of the P/L:** gamma gains are what *pay for theta*; the vega gain from IV 20% → 22% is where the actual profit came from. The source states plainly that "it's extremely important that the implied volatility rises so that significant profits can arise." A cheap-vol trade that only ever pays its theta is not a winning trade — the bot should not treat repeated breakeven payments alone as success.
 
 #### Table VT-7: Greek Profile Target — Simple Volatility Trade
 
@@ -961,8 +1038,56 @@ This section preserves every execution-critical table and rule list from the thr
 |---|---|
 | Gamma-theta breakeven paid ≥ once and thesis intact | May hold to D+1 |
 | IV rises (vega gains) + gap/move | Strong close candidate |
-| IV falls and price quiet | Exit early; vega losses dominate |
-| IV cheap vs GARCH at entry | Expect IV rise; if IV falls 3+ points anyway | Treat as failed thesis |
+| IV falls and price quiet | Exit early; vega losses dominate (quiet tape means breakeven is *also* hard to reach — the two failures compound) |
+| Entered on IV cheap vs GARCH, but IV then falls **more than 3 percentage points** | Treat as failed thesis and exit. Source: it is "extremely rare for vega to fall more than three percentage points if IV is lower than the GARCH(1,1)" — so a 3+ point drop means the forecast, not the market, was wrong |
+| Multiple days elapsed | Do not carry. Source: institutional traders don't hold these many days — the position grows complex and, as price drifts from the original hedge point, the Greeks become much less pronounced |
+
+#### Table VT-9: Black Swan While Long Volatility (Source Worked Example)
+
+| Field | Value | Bot Interpretation |
+|---|---|---|
+| Position | Simple volatility trade on an oil company, ~$330,000 deployed | Scale is source-only; project cap is INR 1,00,000 per trade |
+| Shock | Corruption headline; stock $40 → $32 (−20%) | Unscheduled, unhedgeable event |
+| IV response | 30% → 50% | Long vega pays alongside gamma |
+| P/L | +$581,923 ($333,640 → $915,563) in hours | Convexity, not prediction |
+| Prescribed action | **Neutralize delta or close the whole position** to protect the profit | Hard-code as a take-profit / re-hedge trigger; never "let it run" |
+
+**Interpretation:** This is the payoff the strategy exists to capture, but the source treats a black swan as an *exit event*, not a trend to ride. Pair with Shared Kill Conditions: an unplanned event the setup was not designed for is a flatten trigger even when it is currently profitable.
+
+#### Table VT-10: Earnings IV Crush — Why Simple Vol Avoids The Event
+
+| Phase | IV Behavior | Bot Action |
+|---|---|---|
+| Days-to-weeks before release | IV rises as uncertainty builds | Valid dynamic-delta-hedge window **if** `IV < GARCH` still holds |
+| One day before | IV spikes | Prepare to be flat; do not initiate simple long-vol |
+| Immediately after release | IV drops sharply as uncertainty resolves | Must be flat; this is the crush |
+| Source counter-example | 5% gap **up** with IV −30% | Large gamma gain, but ~**50% net loss** — vega dominates |
+| Tempting inversion | Short vol to harvest the crush | **Forbidden** — negative gamma erodes the vega gain and the risk is unbounded |
+
+**Interpretation:** For simple volatility trading, earnings is a window to trade *into*, not *through*. Gate on the earnings calendar (and the `Market_News.txt` overlay) to force flat-before-release. If the intent is to capture the gap itself, that is a gamma-scalping trade, not this one.
+
+#### Table VT-11: Options-Only Hedge Is Leveraged (Source Comparison)
+
+| Metric | Options-only (calls + puts) | Calls + short stock |
+|---|---|---|
+| Capital / margin to open | $9,773.97 | $124,748 (2,495 shares @ $50) |
+| Gamma | 1,622 | 774 |
+| Theta | −168 | −84 |
+| Vega | 562 | 268 |
+
+**Interpretation:** Same thesis, roughly double the Greek exposure at ~8% of the capital — the source calls the options-only delta hedge "naturally leveraged." Since this project is options-only by hard lock, that leverage is permanent and not a choice. Size on **Greek exposure and worst-case loss**, not on premium outlay, and treat the INR 1,00,000 per-trade / per-leg caps as binding limits rather than targets.
+
+#### Table VT-12: Volatility Index Stationarity (Context Only)
+
+| Regime | Source VIX Level | Bot Use |
+|---|---|---|
+| Baseline / relative low | 8%–12% | Historically followed by a rise; supportive context for long-vol |
+| Common intermediate peak | ~25% | Frequent mean-reversion ceiling |
+| Larger stress peak | ~48% | Elevated regime |
+| 2008 financial crisis | ~96% | Model-distortion regime |
+| 2020 pandemic | ~85% | Model-distortion regime |
+
+**Interpretation:** Volatility indices are stationary in a way price is not, which is why relative lows tend to be followed by rises. The source is explicit that reading VIX highs/lows is **anecdotal and not the institutional method** — the `IV vs GARCH(1,1)` comparison remains the signal. For this project the analogue is **India VIX**, and it should be used only as a regime/context filter and a distortion tripwire (see the P1 backlog item on India VIX regime filters), never as a standalone entry.
 
 ---
 
@@ -976,7 +1101,9 @@ This section preserves every execution-critical table and rule list from the thr
 | Theta | Inversely proportional | Higher (more decay) | Lower |
 | Vega | Directly proportional | Lower | Higher |
 
-**Interpretation:** The source stock hedge is not executable in this project. Use the four-leg Call/Put construction to target delta neutral, vega neutral, gamma positive, theta negative.
+Source reference pair (same strike, two expiries): **35 DTE vs 63 DTE** calls — the 35-day leg shows more gamma and more theta, the 63-day leg more vega. Use a comparable near/far separation when solving the structure; too small a gap leaves nothing to hedge with.
+
+**Interpretation:** The source stock hedge is not executable in this project. Use the four-leg Call/Put construction to target delta neutral, vega neutral, gamma positive, theta negative. Shorting the far-dated leg adds some negative gamma (net gamma stays positive) and usefully **reduces theta** — the structure is a deliberate trade of vega exposure for a smaller but cheaper-to-carry gamma position.
 
 #### Table GS-2: Target Portfolio Profile
 
@@ -1001,8 +1128,11 @@ This section preserves every execution-critical table and rule list from the thr
 |---|---|---|
 | 1 | Select same-strike short-dated and long-dated calls and puts | Required four-leg project construction |
 | 2 | Buy short-dated calls and puts | Provides gamma and theta |
-| 3 | Short long-dated calls and puts until portfolio vega ≈ 0 | Creates offsetting vega while net gamma stays positive |
-| 4 | Solve residual delta with Call/Put quantities | No stock/underlying leg or cash-share hedge path |
+| 3 | Short long-dated calls until portfolio vega ≈ 0 — solve the **call pair first** | Book is now vega-neutral but delta-positive |
+| 4 | **Mirror** the identical quantities, strikes, and expiries in puts | Call/put delta signs cancel; book becomes delta-neutral and stays vega-neutral. No stock/underlying leg or cash-share hedge path |
+| 5 | Verify all four Greeks numerically after solving | Do not assume the mirror is exact after rounding to lot size; log residual delta and residual vega |
+
+**Delta identity behind step 4 (source):** `δ(short-dated call) + δ(long-dated put)` = `δ(long-dated call) + δ(short-dated put)`. This is why mirroring works and why the bot should derive the put pair rather than re-solving four legs independently.
 
 #### Table GS-5: Intel Earnings Gap Example (Source)
 
@@ -1038,7 +1168,21 @@ This section preserves every execution-critical table and rule list from the thr
 |---|---|---|
 | Short-expiry IV < long-expiry IV | Favorable | Preferred entry geometry |
 | Short-expiry IV locally high; long-expiry locally low | Mean-reversion of IV spread can hurt | Reject or reduce size |
-| Post-entry 20% IV drop (vega-neutral book) | Minimal P/L impact | Validates vega hedge purpose |
+| Post-entry 20% IV drop (vega-neutral book, IV 40% base) | Minimal P/L impact | Validates vega hedge purpose |
+| Options-only book, price +5% with IV −30% | Gamma gains survive the crush | The same shock that costs a simple long-vol book ~50% (Table VT-10) is absorbed here |
+
+**Source warning:** term-structure distortion is described as the **hidden problem** of this strategy. IV is directly proportional to time to expiry *on average*, but the two expiries oscillate independently. Entering when the short-dated IV sits at a local maximum and the long-dated IV at a local minimum produces a loss when those IVs correct toward their "correct" relationship — even though the book was vega-neutral at entry. Optimal geometry is `IV(long expiry) > IV(short expiry)`; the forbidden entry is `IV(long) < IV(short)`.
+
+#### Table GS-9: Gamma Scalping Risk/Reward Profile (Source)
+
+| Aspect | Source Position | Bot Interpretation |
+|---|---|---|
+| Risk vs simple vol trade | **Lower** — vega exposure is minimized | Preferred structure when IV direction is uncertain |
+| Reward vs simple vol trade | **Lower** — no vega upside to capture | Do not expect simple-vol-sized outcomes; score net of costs |
+| Worst case | Market does not move away from the hedge point + theta bleed | Bounded and known at entry |
+| Only other loss source | IV term-structure distortion between the two expiries | Gate at entry (Table GS-8); monitor post-entry |
+| Intraday mode | Theta accrues day-to-day, so a same-session scalp is delta-neutral, vega-neutral, and effectively theta-free | Pure gamma extraction; term-structure distortion becomes the **sole** loss source |
+| Execution requirement | Source: "at least three simultaneous trades" (four in the options-only version) | Highest execution bar of the three strategies; algorithmic multi-leg submit is mandatory, manual legging will fail |
 
 ---
 
@@ -1079,11 +1223,14 @@ This section preserves every execution-critical table and rule list from the thr
 
 | Field | Value | Interpretation |
 |---|---|---|
+| Instrument | ATM option, ~**2 months** from expiration | Longer expiry = more vega, but liquidity must still pass |
 | Entry trigger | IV crosses −2σ below intraday mean | Long vol via delta-neutral calls+puts |
 | IV distance to mean | ~2 percentage points | Proxy for expected vega capture |
-| Position margin | $16,533 | Size reference |
-| Profit at mean reversion | $1,652 | ~10% return; excludes possible gamma add-on |
-| Leverage note | Options-only hard lock | Stock hedge is source-only; project execution uses Call/Put structures |
+| Position cost to open | $16,533 | Size reference |
+| Profit at mean reversion | $1,652 | ~10% return; source explicitly **excludes** likely gamma add-on |
+| Risk scaling | Source: higher profit ⇒ higher risk; a **larger σ ⇒ higher risk** | Widen-band setups are not free upside — size down as intraday σ rises |
+| Leverage note | Options-only hard lock | Source calls the options-only version the *leveraged and riskier* path and says the stock-hedge version carries less risk. Project has removed the lower-risk path by policy — compensate with the INR 1,00,000 caps, liquidity gates, and same-day flatten |
+| Opportunity frequency | Some days offer several setups; some offer none, or IV is not stationary at all | Never force a trade; no-signal is the expected outcome on many sessions |
 
 #### Table VS-5: Vega Scalping Failure And Antifragile Scenarios
 
@@ -1092,7 +1239,20 @@ This section preserves every execution-critical table and rule list from the thr
 | IV reverts to mean | Profit | Standard exit |
 | Breaking news spikes IV | Profit (long vega) | Take profit; do not wait for perfect mean touch |
 | Quiet tape; IV drifts lower | Loss | Stop at 3σ–4σ; same-day flatten |
-| IV variance unstable | Signal degradation | Block new entries |
+| IV variance unstable (fixed mean, variable σ) | Signal degradation — bands move while mean holds | Block new entries; less severe than a drifting mean but still disqualifying |
+
+**Source framing:** "the only way to lose money with Vega Scalping is if the market doesn't move for too long," which lets IV fall far enough to hit the stop. Conversely, any breaking news mid-trade is a *win* because long vega gains on the IV spike — the strategy is antifragile in the same sense as the other two. The bot should therefore treat a quiet, low-participation tape as the actual enemy, and should not interpret a news-driven IV spike as a reason to hold out for a textbook mean touch.
+
+#### Table VS-6: Why 2σ — Empirical Rule Basis (Source)
+
+| Band | Expected Coverage | Bot Interpretation |
+|---|---|---|
+| ±1σ | ~68% | Routine noise; no signal |
+| ±2σ | ~95% (source demo: 292 of 300 points) | Entry threshold — genuinely uncommon reading |
+| ±3σ | ~99.7% | Stop level (conservative setting) |
+| ±4σ | Beyond the empirical rule | Stop level (higher risk tolerance) |
+
+**Interpretation:** The 2σ trigger is not arbitrary — it is the empirical-rule tail. Its validity depends entirely on the series being stationary; the source's warning is that applying the same bands to a non-stationary series is the Bollinger-Bands-on-price error ("moving goalposts"). The bot must therefore validate intraday stationarity **before** trusting the z-score, not merely compute it.
 
 ---
 
@@ -1112,16 +1272,18 @@ This section preserves every execution-critical table and rule list from the thr
 
 | # | Topic | Bot Requirement |
 |---|---|---|
-| 1 | Stock price and IV affect margin | Pre-trade margin model uses spot and IV |
-| 2 | Small contract counts | Expect imperfect delta/vega neutrality; enforce minimum size or reject |
-| 3 | Algorithmic execution | Multi-leg synchronized submit; no manual legging in production |
+| 1 | Stock price and IV affect margin | Pre-trade margin model uses spot and IV. Higher IV → richer premium → more capital per unit of exposure |
+| 2 | Small contract counts | Expect imperfect delta/vega neutrality; enforce minimum size or reject. Source: fine-tuning improves roughly in proportion to contract count (8.3→8 vs 83) |
+| 3 | Algorithmic execution | Multi-leg synchronized submit; no manual legging in production. Source leg counts: simple vol **2** simultaneous orders, gamma scalping **3+** (4 options-only), vega scalping **2** but with seconds-scale IV drift. Algos may also slice to limit liquidity/trapping risk. Explicitly an *execution* algo — it does not analyze the market |
 | 4 | GARCH after black swans | Block cheap-vol signals until model normalizes |
 | 5 | Gamma/theta vs vega vs time | Use Table GS-1 for expiry selection |
 | 6 | Avoid <10 DTE | Hard filter except research mode |
 | 7 | Liquidity | Spread and OI filters; critical for long-dated gamma legs |
 | 8 | Re-hedge by increasing or decreasing | Preserve realized + floating P/L ledger |
 | 9 | Greek equilibrium is local | Recompute Greeks after every material move |
-| 10 | Goal Seek / numerical hedge solve | Solve contract counts numerically; do not guess ratios |
+| 10 | Goal Seek / numerical hedge solve | Solve contract counts numerically; do not guess ratios. Same technique derives the gamma-theta breakeven: solve for the spot move that makes P/L equal the day's theta |
+
+**Source coverage note:** the Volatility Trading and Gamma Scalping books both list all 10 items (Gamma Scalping restates #2, #3 and #8 in terms of Delta **and** Vega). The Vega Scalping book lists only 7 — it omits the GARCH-after-black-swans, increase/decrease-position, and Greek-equilibrium items, since a same-day trade with no theta carry does not need them. This project applies all 10 to all three strategies; the omission is a scope difference in the source, not a permission.
 
 #### Table SH-2: Delta Hedge Construction Comparison
 
@@ -1168,8 +1330,9 @@ When indexing this document for RAG or strategy engines:
 
 - Tag each table with `strategy`, `topic`, and `source_doc` metadata (for example: `doc-gamma`, `gamma-theta-breakeven`).
 - Prefer retrieving entire table + interpretation chunk together; rows split across chunks lose execution context.
-- Numeric examples (Company Z, Intel, Vega example) are calibration references, not guaranteed future performance.
-- Rule 5 in Vega Scalping (never short vol at +2σ) is a hard constraint, not a suggestion.
+- Numeric examples (Company Z, Intel, black swan, earnings crush, leverage comparison, vega example) are calibration references in USD at source scale, **not** guaranteed future performance and **not** sizing guidance — the project's INR 1,00,000 per-trade / per-leg caps always win.
+- Rule 5 in Vega Scalping (never short vol at +2σ) is a hard constraint, not a suggestion. So is the project's options-only lock.
+- Hard constraints extracted from the sources, for direct encoding: never short volatility (any strategy); never trade `<10 DTE` outside research mode; never enter gamma scalping with `IV(long expiry) < IV(short expiry)`; never hold a simple volatility trade through an earnings release; exit a cheap-vol trade if IV falls more than 3 percentage points against the GARCH thesis; flatten every vega scalp same session.
 
 ## Document Status
 This file is intended to be the canonical high-level trade-execution reference for the project. The section **Complete Source Tables And Interpretations** consolidates all execution-critical tables and numbered rules from the three source PDFs. It should be updated whenever:
