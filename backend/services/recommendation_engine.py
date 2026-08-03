@@ -7,9 +7,11 @@ per Docs/Trading_Strategies.md Table SH-4, ranks candidates, returns top 3.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import math
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -67,6 +69,41 @@ from backend.services.universe_enrichment import (
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "trading_parameters.defaults.json"
+
+# In-process response cache so /recommendations and /decisions do not re-scan
+# ~200 FNO underlyings on every page load (Breeze rate limits make that a multi-minute hang).
+_response_cache: RecommendationResponse | None = None
+_response_cache_at: float | None = None
+_response_cache_lock = asyncio.Lock()
+
+
+def _response_cache_ttl_sec() -> float:
+    try:
+        section = (_load_config().get("recommendation_universe_enrichment") or {})
+        return float(section.get("response_cache_ttl_sec", 90.0))
+    except Exception:  # noqa: BLE001
+        return 90.0
+
+
+def reset_recommendation_response_cache_for_tests() -> None:
+    global _response_cache, _response_cache_at
+    _response_cache = None
+    _response_cache_at = None
+
+
+def _store_recommendation_response_cache(response: RecommendationResponse) -> None:
+    global _response_cache, _response_cache_at
+    _response_cache = response
+    _response_cache_at = time.monotonic()
+
+
+def peek_cached_recommendations() -> RecommendationResponse | None:
+    """Return a still-fresh cached packet, or None."""
+    if _response_cache is None or _response_cache_at is None:
+        return None
+    if (time.monotonic() - _response_cache_at) > _response_cache_ttl_sec():
+        return None
+    return _response_cache
 
 # Offline fixture metrics keyed by G11 NSE/display symbol (marks enrichment).
 _DEMO_SPECS: list[tuple] = [
@@ -254,13 +291,41 @@ async def _build_universe() -> tuple[
     enrich_enabled = bool(enrich_cfg.get("enabled", True))
     snap_cfg = cfg.get("quant_snapshot") or {}
     lookback = int(snap_cfg.get("daily_lookback_days", 60))
+    fetch_rv = bool(snap_cfg.get("fetch_intraday_rv", True))
     enrich_stats: EnrichmentStats | None = None
     live_by_symbol: dict[str, LiveMarks] = {}
+    budget_sec = float(enrich_cfg.get("generation_budget_sec", 20.0))
+    max_symbols = max(1, int(enrich_cfg.get("max_symbols", 40)))
+    deadline = time.monotonic() + max(5.0, budget_sec)
+
+    # Prefer liquid index / bank names first so a budget cut still covers core names.
+    priority = {
+        "NIFTY": 0,
+        "BANKNIFTY": 1,
+        "FINNIFTY": 2,
+        "MIDCPNIFTY": 3,
+        "RELIANCE": 10,
+        "HDFCBANK": 11,
+        "ICICIBANK": 12,
+        "INFY": 13,
+        "TCS": 14,
+        "SBIN": 15,
+        "TATASTEEL": 16,
+        "ITC": 17,
+    }
+    symbols = sorted(
+        symbols,
+        key=lambda s: (priority.get(s.upper(), 1000), s.upper()),
+    )
 
     if enrich_enabled and symbols and source.startswith("icici_direct"):
         try:
             enricher = get_universe_enricher(cfg)
-            live_by_symbol, enrich_stats = await enricher.enrich_many(symbols)
+            live_by_symbol, enrich_stats = await enricher.enrich_many(
+                symbols,
+                deadline_monotonic=deadline,
+                max_symbols=max_symbols,
+            )
         except Exception as exc:  # noqa: BLE001
             logger.warning("Universe live enrichment failed: %s", exc)
             enrich_stats = EnrichmentStats(requested=len(symbols), failed=len(symbols))
@@ -270,6 +335,53 @@ async def _build_universe() -> tuple[
     earn_cal = EarningsCalendarStore()
     as_of = session_date_ist()
     now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Only build history for symbols that actually got live marks, and stop at budget.
+    live_symbols = [s for s in symbols if s.upper() in {k.upper() for k in live_by_symbol}]
+    history_sem = asyncio.Semaphore(3)
+
+    async def _history_for(symbol: str) -> tuple[str, list[float], float | None]:
+        live = live_by_symbol.get(symbol.upper())
+        if live is None:
+            return symbol, [], None
+        stock_code = live.stock_code or master.stock_code_for_underlying(symbol)
+        async with history_sem:
+            if time.monotonic() >= deadline:
+                return symbol, [], None
+            history = await fetch_daily_closes(
+                symbol=symbol,
+                stock_code=stock_code,
+                lookback_days=lookback,
+                as_of_date=as_of,
+            )
+            rv: float | None = None
+            if fetch_rv and time.monotonic() < deadline:
+                rv = await fetch_realized_vol_intraday(
+                    symbol=symbol,
+                    stock_code=stock_code,
+                    as_of_date=as_of,
+                )
+            return symbol, history, rv
+
+    history_by_symbol: dict[str, tuple[list[float], float | None]] = {}
+    if live_symbols:
+        remaining = max(0.5, deadline - time.monotonic())
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*[_history_for(s) for s in live_symbols]),
+                timeout=remaining,
+            )
+            for symbol, history, rv in results:
+                history_by_symbol[symbol.upper()] = (history, rv)
+        except asyncio.TimeoutError:
+            logger.warning(
+                "Candle history budget exhausted after enriching %d symbols",
+                len(live_by_symbol),
+            )
+            if enrich_stats is not None:
+                enrich_stats.errors.append(
+                    "generation_budget: candle history truncated to keep API responsive"
+                )
 
     for symbol in symbols:
         bindings[symbol] = (
@@ -299,18 +411,7 @@ async def _build_universe() -> tuple[
                 iv=float(live.iv_annualized),
             )
         iv_series = iv_store.series(symbol=symbol, session_date=as_of)
-        stock_code = live.stock_code or master.stock_code_for_underlying(symbol)
-        history = await fetch_daily_closes(
-            symbol=symbol,
-            stock_code=stock_code,
-            lookback_days=lookback,
-            as_of_date=as_of,
-        )
-        rv = await fetch_realized_vol_intraday(
-            symbol=symbol,
-            stock_code=stock_code,
-            as_of_date=as_of,
-        )
+        history, rv = history_by_symbol.get(symbol.upper(), ([], None))
         days_earn = earn_cal.days_to_earnings(symbol, as_of_date=as_of)
         snap = build_quant_snapshot(
             marks=live,
@@ -734,6 +835,32 @@ def _exit_plan(strategy: StrategySelectionLogic, cfg: dict[str, Any]) -> str:
 
 
 async def generate_recommendations(
+    news: MarketNewsSummary | None = None,
+    *,
+    force_refresh: bool = False,
+) -> RecommendationResponse:
+    """Return top recommendations, preferring a short-lived in-process cache.
+
+    Full live enrichment of the FNO universe can take minutes under Breeze rate
+    limits. Page loads (/recommendations, /decisions) must not wait that long —
+    serve a fresh-enough cached packet, and only recompute on miss / force_refresh.
+    """
+    if not force_refresh and news is None:
+        cached = peek_cached_recommendations()
+        if cached is not None:
+            return cached
+
+    async with _response_cache_lock:
+        if not force_refresh and news is None:
+            cached = peek_cached_recommendations()
+            if cached is not None:
+                return cached
+        result = await _generate_recommendations_uncached(news=news)
+        _store_recommendation_response_cache(result)
+        return result
+
+
+async def _generate_recommendations_uncached(
     news: MarketNewsSummary | None = None,
 ) -> RecommendationResponse:
     cfg = _load_config()

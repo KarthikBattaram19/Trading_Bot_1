@@ -1,16 +1,19 @@
-import { getBotStatus, getRecommendations } from "@/lib/api";
-import { RecommendationsView } from "@/components/recommendations/recommendations-view";
+import { getBotStatus } from "@/lib/api";
+import { RecommendationsLoader } from "@/components/recommendations/recommendations-loader";
 import { SituationalBar } from "@/components/dashboard/situational-bar";
 
+export const dynamic = "force-dynamic";
+
+/**
+ * Shell renders immediately (bot status is fast). Recommendation packets are
+ * fetched client-side so soft-nav never stalls on a cold enrich cycle.
+ */
 export default async function RecommendationsPage() {
-  const [data, status] = await Promise.all([
-    getRecommendations(),
-    getBotStatus(),
-  ]);
+  const status = await getBotStatus();
   return (
     <>
       <SituationalBar status={status} />
-      <RecommendationsView initial={data} />
+      <RecommendationsLoader />
     </>
   );
 }

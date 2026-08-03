@@ -171,7 +171,7 @@ def test_recommendations_include_live_market_news(monkeypatch: pytest.MonkeyPatc
 
     reset_universe_enricher_for_tests()
 
-    async def _fake_enrich_many(self, symbols):  # noqa: ANN001
+    async def _fake_enrich_many(self, symbols, **_kwargs):  # noqa: ANN001
         marks = {
             s.upper(): LiveMarks(
                 symbol=s.upper(),
@@ -214,6 +214,12 @@ def test_recommendations_refresh_bypasses_market_news_cache(
     monkeypatch.setenv("MARKET_NEWS_CACHE_TTL_SEC", "3600")
     reset_market_news_cache()
 
+    from backend.services.recommendation_engine import (
+        reset_recommendation_response_cache_for_tests,
+    )
+
+    reset_recommendation_response_cache_for_tests()
+
     primed = get_market_news(force_refresh=True)
     assert primed.source_freshness
     primed_ts = max(v for v in primed.source_freshness.values() if v is not None)
@@ -231,7 +237,7 @@ def test_recommendations_refresh_bypasses_market_news_cache(
 
     reset_universe_enricher_for_tests()
 
-    async def _fake_enrich_many(self, symbols):  # noqa: ANN001
+    async def _fake_enrich_many(self, symbols, **_kwargs):  # noqa: ANN001
         marks = {
             s.upper(): LiveMarks(
                 symbol=s.upper(),
@@ -250,7 +256,8 @@ def test_recommendations_refresh_bypasses_market_news_cache(
     monkeypatch.setattr(UniverseEnricher, "enrich_many", _fake_enrich_many)
 
     client = TestClient(app)
-    res = client.get("/api/v1/recommendations")
+    # Explicit refresh path (UI "Refresh analysis") must bypass response + news caches.
+    res = client.get("/api/v1/recommendations?refresh=true")
     assert res.status_code == 200
     news = res.json()["market_news"]
     assert news["source_freshness"]

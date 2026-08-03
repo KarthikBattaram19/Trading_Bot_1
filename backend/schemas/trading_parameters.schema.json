@@ -388,6 +388,21 @@
       "properties": {
         "enabled": { "type": "boolean" },
         "cache_ttl_sec": { "type": "number", "minimum": 0 },
+        "response_cache_ttl_sec": {
+          "type": "number",
+          "minimum": 0,
+          "description": "TTL for the full RecommendationResponse cache used by /recommendations and /decisions."
+        },
+        "generation_budget_sec": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Wall-clock budget for live enrich + candle history so page APIs stay responsive."
+        },
+        "max_symbols": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Cap how many FNO underlyings are live-enriched per cycle (priority names first)."
+        },
         "max_concurrency": { "type": "integer", "minimum": 1 },
         "min_interval_ms": { "type": "number", "minimum": 0 },
         "fetch_spot_ltp": { "type": "boolean" },

@@ -32,6 +32,9 @@
   "recommendation_universe_enrichment": {
     "enabled": true,
     "cache_ttl_sec": 90,
+    "response_cache_ttl_sec": 90,
+    "generation_budget_sec": 20,
+    "max_symbols": 40,
     "max_concurrency": 4,
     "min_interval_ms": 700,
     "fetch_spot_ltp": true,

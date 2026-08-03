@@ -198,7 +198,7 @@ async def test_build_universe_prefers_live_marks(monkeypatch):
     monkeypatch.setattr(imod, "_instrument_master", master)
     monkeypatch.setattr(eng, "get_instrument_master", lambda: master)
 
-    async def _fake_enrich_many(self, symbols):  # noqa: ANN001
+    async def _fake_enrich_many(self, symbols, **_kwargs):  # noqa: ANN001
         marks = {
             s.upper(): LiveMarks(
                 symbol=s.upper(),

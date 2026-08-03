@@ -551,17 +551,26 @@ class UniverseEnricher:
         await local_stats.incr("live_ok")
         return marks
 
-    async def enrich_many(self, symbols: list[str]) -> tuple[dict[str, LiveMarks], EnrichmentStats]:
-        stats = EnrichmentStats(requested=len(symbols))
+    async def enrich_many(
+        self,
+        symbols: list[str],
+        *,
+        deadline_monotonic: float | None = None,
+        max_symbols: int | None = None,
+    ) -> tuple[dict[str, LiveMarks], EnrichmentStats]:
         started = time.monotonic()
-        if not symbols:
+        capped = list(symbols)
+        if max_symbols is not None and max_symbols > 0:
+            capped = capped[:max_symbols]
+        stats = EnrichmentStats(requested=len(capped))
+        if not capped:
             return {}, stats
 
         # Fail fast when Breeze session is unavailable — avoid 213× timed-out calls.
         try:
             await self._md.session_manager.ensure_session()
         except Exception as exc:  # noqa: BLE001
-            stats.failed = len(symbols)
+            stats.failed = len(capped)
             stats.errors.append(f"ICICI session unavailable — skipping live enrichment ({exc})")
             stats.elapsed_sec = time.monotonic() - started
             logger.warning("Skipping live universe enrichment: %s", exc)
@@ -570,15 +579,36 @@ class UniverseEnricher:
         sem = asyncio.Semaphore(self.max_concurrency)
         out: dict[str, LiveMarks] = {}
         out_lock = asyncio.Lock()
+        deadline_hit = False
 
         async def _one(sym: str) -> None:
+            nonlocal deadline_hit
+            if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                deadline_hit = True
+                return
             async with sem:
+                if deadline_monotonic is not None and time.monotonic() >= deadline_monotonic:
+                    deadline_hit = True
+                    return
                 marks = await self.enrich_one(sym, stats)
                 if marks is not None:
                     async with out_lock:
                         out[sym.upper()] = marks
 
-        await asyncio.gather(*[_one(s) for s in symbols])
+        await asyncio.gather(*[_one(s) for s in capped])
+        if deadline_hit or (
+            deadline_monotonic is not None and time.monotonic() >= deadline_monotonic
+        ):
+            skipped = max(0, len(symbols) - len(capped))
+            remaining = max(0, len(capped) - len(out) - stats.failed - stats.cache_hits)
+            stats.errors.append(
+                "generation_budget: enrichment deadline reached "
+                f"(live_ok={stats.live_ok}, skipped_symbols≈{skipped + remaining})"
+            )
+        if max_symbols is not None and len(symbols) > len(capped):
+            stats.errors.append(
+                f"max_symbols={max_symbols}: enriched subset of {len(symbols)} FNO underlyings"
+            )
         stats.elapsed_sec = time.monotonic() - started
         return out, stats
 

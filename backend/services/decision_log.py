@@ -14,6 +14,8 @@ are left empty because Phase 0 does not build option structures yet.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from datetime import datetime, timedelta, timezone
 
 from backend.models.decisions import (
@@ -29,10 +31,17 @@ from backend.models.decisions import (
 )
 from backend.models.recommendations import InstrumentRecommendation, StrategyType
 from backend.services.learning_service import get_learning_service
-from backend.services.recommendation_engine import generate_recommendations
+from backend.services.recommendation_engine import (
+    generate_recommendations,
+    peek_cached_recommendations,
+)
+
+logger = logging.getLogger(__name__)
 
 # How long a surfaced recommendation stays actionable before it reads as expired.
 DECISION_TTL_MINUTES = 15
+# Bound live decision projection so /decisions never hangs on a cold enrich cycle.
+_LIVE_DECISIONS_TIMEOUT_SEC = 12.0
 
 _MODULE_BY_STRATEGY = {
     StrategyType.simple_volatility.value: StrategyModule.volatility,
@@ -226,8 +235,27 @@ def _acted_on_decisions() -> list[DecisionRecord]:
 
 
 async def _live_decisions() -> list[DecisionRecord]:
-    """Currently surfaced recommendations, pending until the bot acts or they age out."""
-    result = await generate_recommendations()
+    """Currently surfaced recommendations, pending until the bot acts or they age out.
+
+    Prefer the in-process recommendation cache so listing decisions does not
+    trigger a multi-minute FNO enrich. On a cold cache, wait briefly for a
+    generation; on timeout, return no live rows (acted-on history still shows).
+    """
+    result = peek_cached_recommendations()
+    if result is None:
+        try:
+            result = await asyncio.wait_for(
+                generate_recommendations(),
+                timeout=_LIVE_DECISIONS_TIMEOUT_SEC,
+            )
+        except asyncio.TimeoutError:
+            logger.warning(
+                "list_decisions: live recommendation cycle exceeded %.1fs — "
+                "returning acted-on history only",
+                _LIVE_DECISIONS_TIMEOUT_SEC,
+            )
+            return []
+
     created_at = result.generated_at
     day = created_at.strftime("%Y%m%d")
     expired = _now() - created_at > timedelta(minutes=DECISION_TTL_MINUTES)

@@ -95,10 +95,26 @@ function withMockAutonomousExecution(
   };
 }
 
-async function fetchJson<T>(path: string): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`API ${path}: ${res.status}`);
-  return res.json() as Promise<T>;
+async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timeoutMs = 45_000;
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${API_URL}${path}`, {
+      cache: "no-store",
+      ...init,
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`API ${path}: ${res.status}`);
+    return res.json() as Promise<T>;
+  } catch (err) {
+    if (err instanceof Error && err.name === "AbortError") {
+      throw new Error(`API ${path}: timed out after ${timeoutMs / 1000}s`);
+    }
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function getBotStatus(): Promise<BotStatus> {
@@ -290,7 +306,9 @@ export async function refreshRecommendations(): Promise<RecommendationResponse> 
   if (useMockData()) {
     return withMockAutonomousExecution(mockRecommendations);
   }
-  const res = await fetch(`${API_URL}/api/v1/recommendations`, { cache: "no-store" });
+  const res = await fetch(`${API_URL}/api/v1/recommendations?refresh=true`, {
+    cache: "no-store",
+  });
   if (!res.ok) throw new Error(`Recommendations failed: ${res.status}`);
   return res.json() as Promise<RecommendationResponse>;
 }

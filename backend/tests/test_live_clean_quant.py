@@ -113,7 +113,7 @@ async def test_enrichment_fail_does_not_load_demo_ranking_universe(monkeypatch, 
     monkeypatch.setattr(imod, "_instrument_master", master)
     monkeypatch.setattr(eng, "get_instrument_master", lambda: master)
 
-    async def _fail_enrich(self, symbols):  # noqa: ANN001
+    async def _fail_enrich(self, symbols, **_kwargs):  # noqa: ANN001
         return {}, EnrichmentStats(requested=len(symbols), failed=len(symbols))
 
     monkeypatch.setattr(UniverseEnricher, "enrich_many", _fail_enrich)
