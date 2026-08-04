@@ -81,6 +81,56 @@ def test_real_history_yields_usable_garch():
     assert snap.days_to_earnings.value == 5
 
 
+def test_enable_mle_fit_true_wires_through_to_forecast():
+    """cfg["garch_forecast"]["enable_mle_fit"]/"fit_min_observations" must reach
+    forecast_garch_11's fit_weights/fit_min_observations params — a typo in
+    either config key would otherwise silently disable the feature with all
+    other tests still green."""
+    history = [100.0 * (1.0 + 0.001 * ((i % 5) - 2)) for i in range(65)]
+    snap = build_quant_snapshot(
+        marks=_marks(),
+        price_history_daily=history,
+        iv_series_intraday=[0.25, 0.26, 0.24, 0.23, 0.22, 0.21],
+        days_to_earnings=5,
+        cfg={
+            "garch_forecast": {
+                "gamma_weight": 0.05,
+                "alpha_weight": 0.05,
+                "beta_weight": 0.9,
+                "annualization_factor": 252,
+                "min_observations": 20,
+                "enable_mle_fit": True,
+                "fit_min_observations": 60,
+            },
+            "iv_zscore": {"min_observations": 5, "entry_z_threshold": -2.0},
+        },
+    )
+    assert snap.garch_forecast.usable is True
+
+
+def test_enable_mle_fit_false_still_usable_via_fixed_weights():
+    history = [100.0 * (1.0 + 0.001 * ((i % 5) - 2)) for i in range(65)]
+    snap = build_quant_snapshot(
+        marks=_marks(),
+        price_history_daily=history,
+        iv_series_intraday=[0.25, 0.26, 0.24, 0.23, 0.22, 0.21],
+        days_to_earnings=5,
+        cfg={
+            "garch_forecast": {
+                "gamma_weight": 0.05,
+                "alpha_weight": 0.05,
+                "beta_weight": 0.9,
+                "annualization_factor": 252,
+                "min_observations": 20,
+                "enable_mle_fit": False,
+                "fit_min_observations": 60,
+            },
+            "iv_zscore": {"min_observations": 5, "entry_z_threshold": -2.0},
+        },
+    )
+    assert snap.garch_forecast.usable is True
+
+
 def test_signal_field_defaults():
     f = SignalField(value=None, usable=False, reason="missing")
     assert f.usable is False

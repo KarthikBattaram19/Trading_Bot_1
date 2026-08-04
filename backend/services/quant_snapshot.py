@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -9,6 +10,8 @@ from typing import Any
 from backend.quant.signals.garch import forecast_garch_11, log_returns_from_prices
 from backend.quant.signals.iv_zscore import compute_iv_zscore
 from backend.services.universe_enrichment import LiveMarks
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +115,17 @@ def build_quant_snapshot(
             beta=float(gcfg.get("beta_weight", 0.9)),
             annualization_factor=int(gcfg.get("annualization_factor", 252)),
             min_observations=min_obs,
+            fit_weights=bool(gcfg.get("enable_mle_fit", False)),
+            fit_min_observations=int(gcfg.get("fit_min_observations", 60)),
+        )
+        logger.debug(
+            "garch_forecast symbol=%s fitted=%s gamma_used=%s alpha_used=%s beta_used=%s reason=%s",
+            symbol,
+            result.fitted,
+            result.gamma_used,
+            result.alpha_used,
+            result.beta_used,
+            result.reason,
         )
         if result.usable and result.sigma_annual is not None and not result.garch_distorted:
             garch_field = SignalField(float(result.sigma_annual), True, None)
