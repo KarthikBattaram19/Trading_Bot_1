@@ -10,28 +10,28 @@ from __future__ import annotations
 import os
 from datetime import datetime, timezone
 
+from backend.analytics.confidence_calibration import is_seed_outcome
 from backend.models.recommendations import InstrumentRecommendation, StrategyType
 from backend.models.trades import AutonomousExecutionResult, TradeAttemptResult
 from backend.services.learning_service import get_learning_service
 
-# In-memory session state (replaced by PostgreSQL in full implementation)
-_one_trade_locked = False
-_active_trade_id: str | None = None
+
+def get_active_trade_id() -> str | None:
+    """
+    Ledger-derived, not an in-memory global — the `paper_sim` open-trades store
+    (`learning_store.json`) is written on open/close and survives a process
+    restart, so the lock can't desync from reality the way a plain module
+    global would (Docs/bot_health/BACKLOG.md P0). Seeded demo records are
+    excluded so the bundled fixture trade never blocks real entries.
+    """
+    for trade in get_learning_service().list_open_trades():
+        if not is_seed_outcome({"trade_id": trade.trade_id}):
+            return trade.trade_id
+    return None
 
 
 def is_one_trade_locked() -> bool:
-    return _one_trade_locked
-
-
-def get_active_trade_id() -> str | None:
-    return _active_trade_id
-
-
-def unlock_trade() -> None:
-    """Release one-trade lock after close / learning outcome."""
-    global _one_trade_locked, _active_trade_id
-    _one_trade_locked = False
-    _active_trade_id = None
+    return get_active_trade_id() is not None
 
 
 def _all_gates_pass(rec: InstrumentRecommendation) -> bool:
@@ -52,17 +52,17 @@ def _pre_submit_checks(rec: InstrumentRecommendation) -> str | None:
 
 async def _simulate_broker_submit(
     rec: InstrumentRecommendation,
+    *,
+    simulate_first_rank_failure: bool = False,
 ) -> tuple[bool, str | None, str | None]:
     """
     Submit via broker router (ICICI Direct shadow dry-run by default).
-    Rank #1 may fail when SIMULATE_FIRST_RANK_FAILURE=true (demo fallback path).
+
+    `simulate_first_rank_failure` is a test-only injection point for exercising
+    the rank-1-rejects/fallback-to-rank-2 path — it must never be enabled from
+    a production call site. Defaults to False (no simulated rejection).
     """
-    simulate_first_fail = os.getenv("SIMULATE_FIRST_RANK_FAILURE", "true").lower() in (
-        "1",
-        "true",
-        "yes",
-    )
-    if simulate_first_fail and rec.rank == 1:
+    if simulate_first_rank_failure and rec.rank == 1:
         return (
             False,
             None,
@@ -110,20 +110,17 @@ async def _simulate_broker_submit(
     return True, trade_id, None
 
 
-def _lock_trade(trade_id: str) -> None:
-    global _one_trade_locked, _active_trade_id
-    _one_trade_locked = True
-    _active_trade_id = trade_id
-
-
 async def execute_autonomous_from_recommendations(
     recommendations: list[InstrumentRecommendation],
+    *,
+    simulate_first_rank_failure: bool = False,
 ) -> AutonomousExecutionResult:
     """
     Try opening a trade on each ranked recommendation in order until one succeeds.
-    """
-    global _one_trade_locked, _active_trade_id
 
+    `simulate_first_rank_failure` is a test-only injection point (see
+    `_simulate_broker_submit`) — production callers must leave it at the default.
+    """
     if not recommendations:
         return AutonomousExecutionResult(
             executed=False,
@@ -147,10 +144,13 @@ async def execute_autonomous_from_recommendations(
             )
             continue
 
-        success, trade_id, broker_error = await _simulate_broker_submit(rec)
+        success, trade_id, broker_error = await _simulate_broker_submit(
+            rec, simulate_first_rank_failure=simulate_first_rank_failure
+        )
         if success and trade_id:
-            _lock_trade(trade_id)
-            # Register open trade so continual learning can record the outcome
+            # Persist to the open-trades ledger — this is also what locks
+            # the one-trade scope (see get_active_trade_id above) and feeds
+            # continual learning's outcome recording.
             get_learning_service().register_open_trade(trade_id, rec)
             attempts.append(
                 TradeAttemptResult(

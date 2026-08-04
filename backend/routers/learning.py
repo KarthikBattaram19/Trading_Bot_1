@@ -7,7 +7,6 @@ from fastapi.responses import JSONResponse
 
 from backend.models.learning import CloseTradeRequest
 from backend.services.learning_service import get_learning_service
-from backend.services.trade_executor import get_active_trade_id, unlock_trade
 
 router = APIRouter(prefix="/api/v1/learning", tags=["learning"])
 
@@ -56,8 +55,7 @@ async def record_trade_outcome(body: CloseTradeRequest):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e
 
-    # Release one-trade lock if this was the active discretionary entry
-    if get_active_trade_id() == body.trade_id:
-        unlock_trade()
-
+    # One-trade lock is ledger-derived (trade_executor.get_active_trade_id) —
+    # record_outcome() above already removed this trade from open_trades,
+    # which releases the lock with no separate unlock step needed.
     return JSONResponse(content=outcome.model_dump(mode="json"))

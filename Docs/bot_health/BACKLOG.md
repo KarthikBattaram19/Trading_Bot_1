@@ -13,10 +13,24 @@ deprioritized behind any open P0/P1 item.
   source of truth, and exclude seed/demo records from `/learning` metrics.
   (first seen 2026-08-02, evidence: `backend/routers/decisions.py:1`,
   `backend/data/learning_store.json` — all records currently `"seed": true`)
-- [ ] Persist kill-switch armed state and the open-position book so they
-  survive a process restart — currently in-memory globals only.
-  (first seen 2026-08-02, evidence: `backend/routers/bot.py:24`
-  `_kill_switch_armed = False`)
+- [ ] Persist kill-switch armed state so it survives a process restart —
+  currently an in-memory global only. (first seen 2026-08-02, evidence:
+  `backend/routers/bot.py:24` `_kill_switch_armed = False`)
+- [x] **One-trade lock / active-trade-id were in-memory globals, resetting
+  on every restart and letting a second discretionary entry through while
+  a position was still open.** `backend/services/trade_executor.py` now
+  derives `is_one_trade_locked()` / `get_active_trade_id()` from the
+  `paper_sim` open-trades ledger (`learning_store.json`, already disk-persisted
+  by `learning_service.register_open_trade` / `record_outcome`) instead of
+  module globals, so state survives a restart with no new persistence code.
+  Seeded demo records are excluded via `is_seed_outcome` so the bundled
+  fixture trade never blocks real entries. (first seen 2026-08-02, evidence:
+  `backend/services/trade_executor.py:18-19` `_one_trade_locked = False`;
+  resolved 2026-08-04, evidence: `trade_executor.get_active_trade_id`
+  reads `get_learning_service().list_open_trades()`;
+  `test_lock_survives_simulated_process_restart`,
+  `test_seeded_demo_open_trade_does_not_lock`,
+  `test_second_entry_blocked_while_one_trade_locked`)
 
 ## P1 — proof of edge
 
