@@ -31,6 +31,10 @@ class GarchForecastResult:
     insufficient_history: bool
     reason: str | None = None
     observations: int = 0
+    fitted: bool = False
+    gamma_used: float | None = None
+    alpha_used: float | None = None
+    beta_used: float | None = None
 
     @property
     def usable(self) -> bool:
@@ -198,10 +202,19 @@ def forecast_garch_11(
     annualization_factor: int = 252,
     min_observations: int = 20,
     gap_detected: bool = False,
+    fit_weights: bool = False,
+    fit_min_observations: int = 60,
 ) -> GarchForecastResult:
     """Walk GARCH(1,1) through a log-return series; return one-step-ahead annualized vol.
 
     ``gap_detected`` (MD-10) forces ``garch_distorted`` so cheap-vol entries are blocked.
+
+    ``fit_weights``: when True and ``n >= fit_min_observations``, fits
+    (gamma, alpha, beta) per this return series via MLE instead of using the
+    fixed ``gamma``/``alpha``/``beta`` arguments; a failed/non-converged fit
+    forces ``garch_distorted`` (``reason="garch_fit_failed"``). Below
+    ``fit_min_observations`` (but at/above ``min_observations``) the fixed
+    weights are used, unchanged from today's behavior.
     """
     _assert_weights(gamma, alpha, beta)
     cleaned = [
@@ -256,8 +269,28 @@ def forecast_garch_11(
             observations=n,
         )
 
+    fitted = False
+    use_gamma, use_alpha, use_beta = gamma, alpha, beta
+    if fit_weights and n >= fit_min_observations:
+        fit = fit_garch_11_mle(cleaned, vl)
+        if fit is None:
+            return GarchForecastResult(
+                sigma_daily=None,
+                sigma_annual=None,
+                vl=vl,
+                prior_u2=None,
+                prior_sigma2=None,
+                forecast_sigma2=None,
+                garch_distorted=True,
+                insufficient_history=False,
+                reason="garch_fit_failed",
+                observations=n,
+            )
+        use_gamma, use_alpha, use_beta = fit.gamma, fit.alpha, fit.beta
+        fitted = True
+
     # Walk the recursive variance path; last entry is today's forecast (H6–H8)
-    path = _sigma2_path(cleaned, vl=vl, gamma=gamma, alpha=alpha, beta=beta)
+    path = _sigma2_path(cleaned, vl=vl, gamma=use_gamma, alpha=use_alpha, beta=use_beta)
     sigma2 = path[-1]
     prior_u2 = cleaned[-1] ** 2
     prior_sigma2 = path[-2] if len(path) > 1 else vl
@@ -275,6 +308,10 @@ def forecast_garch_11(
         insufficient_history=False,
         reason=None,
         observations=n,
+        fitted=fitted,
+        gamma_used=use_gamma,
+        alpha_used=use_alpha,
+        beta_used=use_beta,
     )
 
 

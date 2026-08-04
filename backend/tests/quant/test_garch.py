@@ -106,3 +106,52 @@ def test_fit_garch_11_mle_returns_none_on_degenerate_input():
     # All-zero returns: sigma2 path collapses toward 0, likelihood is degenerate.
     fitted = fit_garch_11_mle([0.0] * 100, vl=0.0)
     assert fitted is None
+
+
+def test_below_fit_floor_uses_fixed_weights_not_distorted():
+    """20 <= n < fit_min_observations: fixed weights, fitted=False, still usable."""
+    returns = [0.01, -0.008, 0.005, -0.003] * 10  # n=40
+    result = forecast_garch_11(
+        returns, min_observations=20, fit_weights=True, fit_min_observations=60
+    )
+    assert result.usable
+    assert result.fitted is False
+    assert result.gamma_used == pytest.approx(0.05)
+    assert result.alpha_used == pytest.approx(0.05)
+    assert result.beta_used == pytest.approx(0.90)
+
+
+def test_at_fit_floor_fits_and_marks_fitted():
+    true_gamma, true_alpha, true_beta = 0.08, 0.12, 0.80
+    vl = 0.0002
+    returns = _simulate_garch_returns(
+        90, gamma=true_gamma, alpha=true_alpha, beta=true_beta, vl=vl, seed=11
+    )
+    result = forecast_garch_11(
+        returns, min_observations=20, fit_weights=True, fit_min_observations=60
+    )
+    assert result.usable
+    assert result.fitted is True
+    assert result.gamma_used is not None
+    assert abs(result.gamma_used + result.alpha_used + result.beta_used - 1.0) < 1e-6
+
+
+def test_fit_failure_forces_distorted(monkeypatch):
+    import backend.quant.signals.garch as garch_module
+
+    monkeypatch.setattr(garch_module, "fit_garch_11_mle", lambda *a, **k: None)
+    returns = [0.01, -0.008, 0.005, -0.003] * 20  # n=80, above fit_min_observations
+    result = garch_module.forecast_garch_11(
+        returns, min_observations=20, fit_weights=True, fit_min_observations=60
+    )
+    assert result.garch_distorted is True
+    assert result.usable is False
+    assert result.reason == "garch_fit_failed"
+
+
+def test_fit_weights_false_is_default_and_unaffected_by_fit_floor():
+    """Backward compatibility: fit_weights defaults False, existing callers untouched."""
+    returns = [0.01, -0.008, 0.005, -0.003] * 25  # n=100, would clear fit floor
+    result = forecast_garch_11(returns, min_observations=20)
+    assert result.usable
+    assert result.fitted is False
