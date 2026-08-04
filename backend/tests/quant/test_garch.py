@@ -57,3 +57,13 @@ def test_forecast_from_price_history_usable():
     assert result.usable
     assert result.sigma_annual is not None
     assert 0.01 < result.sigma_annual < 2.0
+
+
+def test_vl_is_mean_centered_not_mean_of_squares():
+    """§3.4 secondary issue: VL must be mean((r-r̄)²), not mean(r²), for drifting series."""
+    # Constant positive drift: every return is 0.01, so r̄ = 0.01 and
+    # mean-centered variance is exactly 0.0 -- but mean(r²) would be 0.0001.
+    returns = [0.01] * 25
+    result = forecast_garch_11(returns, min_observations=20)
+    assert result.vl is not None
+    assert result.vl == pytest.approx(0.0, abs=1e-12)

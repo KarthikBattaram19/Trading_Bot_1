@@ -55,6 +55,31 @@ def log_returns_from_prices(prices: Sequence[float]) -> list[float]:
     return out
 
 
+def _sigma2_path(
+    returns: Sequence[float],
+    *,
+    vl: float,
+    gamma: float,
+    alpha: float,
+    beta: float,
+) -> list[float]:
+    """Recursive one-step-ahead variance path.
+
+    ``path[i]`` is the forecast produced after observing ``returns[0..i]`` —
+    i.e. it's the variance forecast *for* ``returns[i+1]``. Shared by the
+    plain filter and the MLE fit objective so both walk the identical
+    recursion.
+    """
+    sigma2 = vl
+    path: list[float] = []
+    for r in returns:
+        prior_u2 = r * r
+        prior_sigma2 = sigma2
+        sigma2 = gamma * vl + alpha * prior_u2 + beta * prior_sigma2
+        path.append(sigma2)
+    return path
+
+
 def garch_one_step(
     *,
     vl: float,
@@ -146,8 +171,9 @@ def forecast_garch_11(
             observations=n,
         )
 
-    # Long-run variance VL = sample variance of log returns (H5)
-    vl = sum(r * r for r in cleaned) / n
+    # Long-run variance VL = mean-centered sample variance of log returns (H5)
+    mean_r = sum(cleaned) / n
+    vl = sum((r - mean_r) ** 2 for r in cleaned) / n
     if vl <= 0:
         return GarchForecastResult(
             sigma_daily=None,
@@ -162,13 +188,11 @@ def forecast_garch_11(
             observations=n,
         )
 
-    # Initialize σ² with VL; iterate so last step is today's forecast (H6–H8)
-    sigma2 = vl
-    prior_u2 = cleaned[0] ** 2
-    for r in cleaned:
-        prior_u2 = r * r
-        prior_sigma2 = sigma2
-        sigma2 = gamma * vl + alpha * prior_u2 + beta * prior_sigma2
+    # Walk the recursive variance path; last entry is today's forecast (H6–H8)
+    path = _sigma2_path(cleaned, vl=vl, gamma=gamma, alpha=alpha, beta=beta)
+    sigma2 = path[-1]
+    prior_u2 = cleaned[-1] ** 2
+    prior_sigma2 = path[-2] if len(path) > 1 else vl
 
     daily = math.sqrt(max(sigma2, 0.0))
     annual = daily * math.sqrt(float(annualization_factor))
