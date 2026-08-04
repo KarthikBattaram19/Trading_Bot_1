@@ -39,7 +39,7 @@ Cross-cutting: `EXECUTION_MODE` × `SUPERVISION_MODE` (§6.2.1–6.2.2, plan §3
 | M-07 | Shadow → paper with pipeline errors in shadow week | Block promotion | P1 | §6.2.1, plan Phase 2 |
 | M-08 | Paper soak → live without chaos green / §2.2 soak | Block Phase 5 gate | P0 | §21.0, plan §7–8 |
 | M-09 | Flip paper ledger into live positions (reuse paper fills as broker state) | Forbidden — separate GCP path | P0 | Paper_Simulator; §11.15 |
-| M-10 | `SIMULATE_FIRST_RANK_FAILURE=true` left on in production soak | Force-false for soak metrics; only for fallback path validation | P1 | §6.4 |
+| M-10 | ~~`SIMULATE_FIRST_RANK_FAILURE=true` left on in production soak~~ — env var removed 2026-08-04; no longer reachable in prod, injected only in tests | N/A (closed) | P1 | §6.4 |
 | M-11 | Live first week without re-starting `supervised` | Prefer re-supervise then re-promote | P1 | §11.15, plan 5.4 |
 | M-12 | `live_enabled=false` but `EXECUTION_MODE=live` | Treat as not live; block orders | P0 | §20.4.10 |
 
@@ -194,7 +194,7 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 | RF-06 | Zero eligible recommendations | Empty list; no execute | P0 | §6.4 |
 | RF-07 | SSR refresh + client refresh double-submit same cycle | One-trade + idempotency must prevent duplicate | P0 | §6.4 timing |
 | RF-08 | Client `useEffect` / timer execute (legacy) | Forbidden — execute only in GET cycle / explicit legacy POST | P0 | §6.4 |
-| RF-09 | `SIMULATE_FIRST_RANK_FAILURE` validates #2 path | #2 succeeds; soak with flag off | P1 | §6.4 |
+| RF-09 | `simulate_first_rank_failure=True` (test-only DI arg) validates #2 fallback path | #2 succeeds; no env var involved, prod never sets it | P1 | §6.4 |
 | RF-10 | Legacy `POST .../execute-autonomous` with stale list | Re-generate or re-gate; one-trade scope | P1 | §6.4 |
 
 ---
@@ -395,7 +395,7 @@ From §20.4.8, §22.1, plan Phase 3.4.
 | **1** | News stale; SH-4 kill; lotsize reject; conservative slippage; γ–θ + capital cap; GARCH distorted |
 | **2** | Approval timeout; one-trade defer; kill-switch; circuit breakers; idempotency; Track B green before LLM gate |
 | **3** | Semi-auto threshold boundary (0.849 vs 0.85); demotion; chaos CH-01–CH-04; config rollback |
-| **4** | All ranks fail; RF double-fetch; soak with conservative fills; `SIMULATE_FIRST_RANK_FAILURE=false` |
+| **4** | All ranks fail; RF double-fetch; soak with conservative fills; rank-1-rejects path exercised only via test DI, never in prod |
 | **5** | Static IP; sequential multi-leg rollback; micro-size; re-supervise on live; market-hours deploy pause; A6 no stubs |
 | **Track B** | Empty Chroma; faithfulness; Ask AI on decision card without leaking secrets |
 

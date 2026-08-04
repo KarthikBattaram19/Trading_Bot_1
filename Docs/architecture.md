@@ -864,7 +864,16 @@ Discretionary entries follow a **second graduated axis** independent of `EXECUTI
 | `approval_timeout_min` | `15` | Pending decision TTL in `supervised` (no auto-submit on expiry) |
 | `semi_auto_confidence_min` | `0.85` | Minimum confidence for auto-submit in `semi_autonomous` |
 | `EXECUTION_MODE` | `shadow` → `paper` (paper-sim) → `live` | Submit path: log-only → local ledger → ICICI Direct (§6.2.1) |
-| `SIMULATE_FIRST_RANK_FAILURE` | `true` (dev) | paper-sim / adapter stub rejects rank #1 to validate fallback path (§6.4); relevant only in `fully_autonomous` |
+
+Note: rank-1-rejects/fallback-to-rank-2 behavior was previously toggled by a
+`SIMULATE_FIRST_RANK_FAILURE` env var that defaulted to `true` — a production-
+reachable flag that silently rejected the engine's own top-ranked pick on every
+environment that hadn't explicitly overridden it. Removed 2026-08-04; the
+fallback path is now exercised only via dependency injection in tests
+(`simulate_first_rank_failure=True` passed directly to
+`execute_autonomous_from_recommendations`/`_simulate_broker_submit` in
+`backend/services/trade_executor.py`), never via environment or a production
+default.
 
 **API:**
 
@@ -1082,7 +1091,6 @@ Each of the top-3 cards exposes a full operator-facing packet aligned with `Trad
 
 | Key | Default (current build) | Purpose |
 | --- | ----------------------- | ------- |
-| `SIMULATE_FIRST_RANK_FAILURE` | `true` (dev) | paper-sim / adapter stub rejects rank #1 to validate fallback path |
 | `execution_constraints.min_recommendation_confidence` | **0.80** | Post-learning confidence floor — only instruments with confidence ≥ **80%** are recommended (top-3 is chosen from that set) |
 
 Candidates that pass retail gates and strategy selection but fall below this floor are excluded from `recommendations[]` and called out in `analysis_notes`.

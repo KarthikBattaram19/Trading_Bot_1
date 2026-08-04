@@ -301,7 +301,7 @@ Also:
 
 Also:
 
-- [ ] `SIMULATE_FIRST_RANK_FAILURE=false` for soak metrics (M-10); use true only for RF path test
+- [ ] No env var controls RF path anymore (M-10 removed 2026-08-04) — soak runs naturally never simulate a rank-1 rejection; RF-01–RF-06 exercise the path via `simulate_first_rank_failure=True` injected directly in tests
 - [ ] `paper_conservative` throughout soak (PS-01)
 - [ ] Analytics dashboards usable; Chroma backup if Track B active
 - [ ] New module under full-auto starts supervised / two-key (M-05) — verify policy

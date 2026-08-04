@@ -538,7 +538,7 @@ This is the sharpest gap in the whole engine and directly the subject of
   path in `trade_executor.py` is the thing that must be re-pointed at `paper_sim`,
   and `decisions.py` is the router that needs the real POST endpoints.
 
-### 4.2 CRITICAL — `SIMULATE_FIRST_RANK_FAILURE` defaults to `true`, permanently faking a broker rejection for rank #1
+### 4.2 CRITICAL — `SIMULATE_FIRST_RANK_FAILURE` defaults to `true`, permanently faking a broker rejection for rank #1 — ✅ FIXED 2026-08-04
 `backend/services/trade_executor.py:58-70` — `os.getenv("SIMULATE_FIRST_RANK_FAILURE",
 "true")` — **the default, in the absence of any env var, is to always fail the #1
 ranked recommendation** with a fabricated error message ("Broker reject: vega scalp
@@ -552,6 +552,21 @@ observation, it's a hardcoded string.
   test-only via dependency injection/monkeypatch), and verify current prod env vars
   in Railway to see whether this has been silently shaping which recommendations
   ever "execute."
+- **Resolution:** removed the `SIMULATE_FIRST_RANK_FAILURE` env var entirely —
+  `os.getenv` is no longer read for this behavior anywhere in `trade_executor.py`.
+  `_simulate_broker_submit()` and `execute_autonomous_from_recommendations()` now
+  take an explicit keyword-only `simulate_first_rank_failure: bool = False`
+  parameter; production call sites (`routers/recommendations.py`, both the `GET
+  /recommendations` cycle and `POST /execute-autonomous`) don't pass it, so it's
+  structurally impossible for prod to reach the simulated-rejection branch — there
+  is no environment configuration that can turn it back on. The rank-1-rejects/
+  fallback-to-rank-2 path is now exercised only via direct dependency injection in
+  a new `backend/tests/test_trade_executor.py` (3 tests: default never simulates a
+  failure, setting the old env var is now provably inert, and the injected-`True`
+  path still falls through to rank #2 with the fabricated broker-reject message
+  intact for that test scenario). Full backend suite (244 tests, was 241) passes.
+  `Docs/architecture.md`, `Docs/eval.md`, `Docs/edge_cases.md` updated to drop the
+  env-var-based soak/test instructions in favor of the DI-based approach.
 
 ### 4.3 One-trade lock and active-trade-id are in-memory globals — no restart survival
 `trade_executor.py:18-19` — matches the already-open Guruji/backlog P0 item on
