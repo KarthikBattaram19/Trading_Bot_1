@@ -57,7 +57,7 @@ async def fetch_daily_closes(
         rows = await adapter.get_candles(
             exchange="NSE",
             symboltoken=code,
-            interval="1day",
+            interval="day",
             from_date=start.strftime("%Y-%m-%dT09:00:00.000Z"),
             to_date=end.strftime("%Y-%m-%dT16:00:00.000Z"),
             stock_code=code,

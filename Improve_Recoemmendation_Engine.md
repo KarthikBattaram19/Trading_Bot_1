@@ -203,6 +203,7 @@ flowchart LR
         F41["§4.1 No approve/reject;<br/>GET auto-executes;<br/>never touches paper_sim"]
         F42["§4.2 SIMULATE_FIRST_RANK_FAILURE<br/>defaults true"]
         F43["§4.3 One-trade lock is an<br/>in-memory global"]
+        F313["§3.13 candle_history.py wrong<br/>interval; real fetches always 0 rows — ✅ FIXED 2026-08-04"]
     end
     subgraph HIGH["🟠 High — P1-adjacent"]
         F36["§3.6 Confidence calibration<br/>likely inactive today"]
@@ -231,7 +232,7 @@ flowchart LR
     classDef high fill:#7a3d00,stroke:#e67e22,color:#fff2e6;
     classDef med fill:#7a5c00,stroke:#f1c40f,color:#fff8e1;
     classDef low fill:#2c2c2c,stroke:#888,color:#eee;
-    class F41,F42,F43 crit;
+    class F41,F42,F43,F313 crit;
     class F36,F31,F38,F44,F310,F311 high;
     class F39,F32,F33,F35,F52,F312 med;
     class F34,F37,F51,F53 low;
@@ -514,6 +515,28 @@ loss mode that survives vega-neutrality.
   `iv_long_expiry >= iv_short_expiry` (or equivalent no-inversion) gate to
   `strategy_selection.py`'s gamma_scalping branches before selection, matching Table
   GS-8's "reject or reduce size" rule.
+
+### 3.13 CRITICAL — `candle_history.py` passed `interval="1day"` to Breeze; every real daily-close fetch silently returned zero rows — ✅ FIXED 2026-08-04
+`backend/services/candle_history.py:60` (`fetch_daily_closes`, used by GARCH and by
+this doc's own walk-forward evidence work) called ICICI's `get_historical_charts`
+with `interval="1day"`. Breeze's daily-interval endpoint only accepts
+`"minute"`, `"5minute"`, `"30minute"`, or `"day"` — verified live: the buggy
+value returns HTTP 200 with `{"Error":"Interval should be either 'minute',
+'5minute', '30minute', or 'day'."}`, which the `except Exception` in
+`fetch_daily_closes` silently swallows and returns `[]`. There was no test file
+for `candle_history.py` at all, so nothing caught this. This means every real
+(non-seeded, non-demo) daily-close fetch has likely never returned real data in
+production — GARCH forecasts on real symbols have probably been falling into
+`insufficient_history`/`garch_distorted` this whole time, not because of thin
+history, but because the fetch itself always failed.
+- **Resolution:** changed `interval="1day"` to `interval="day"`
+  (`candle_history.py:60`). Verified live against Breeze: NIFTY now returns
+  336 real daily closes for a 250-day lookback request (previously 0). Added
+  `backend/tests/test_candle_history.py` — asserts the exact interval string
+  passed for both `fetch_daily_closes` (`"day"`) and `fetch_realized_vol_intraday`
+  (`"5minute"`, confirmed correct and untouched) against a recording fake
+  adapter, so a regression here fails a unit test instead of only failing
+  silently against the live API.
 
 ---
 
