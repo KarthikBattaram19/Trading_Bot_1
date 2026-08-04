@@ -45,6 +45,14 @@ deprioritized behind any open P0/P1 item.
 - [ ] No walk-forward/OOS replay evidence exists yet for SH-4 expectancy
   claims — blocked on the P0-1 item above producing real closed trades to
   replay against. (first seen 2026-08-02)
+  - Narrower sub-item done 2026-08-04: GARCH(1,1) MLE-fit forecast accuracy
+    (not P&L) has real walk-forward evidence —
+    `Docs/bot_health/garch_mle_walk_forward_evidence.md` — 1,788 pooled
+    out-of-sample days across NIFTY/BANKNIFTY/RELIANCE/HDFCBANK/INFY, fitted
+    weights essentially tied with the fixed-weight fallback (50.7% win rate,
+    indistinguishable mean QLIKE). `garch_forecast.enable_mle_fit` stays
+    `false` on this evidence. Does not close this bullet — SH-4 P&L replay is
+    still blocked on P0-1.
 - [ ] No skew/term-structure regime filter module exists under
   `backend/quant` — India VIX level alone doesn't meet the rule's
   Definition of Done for this item. (first seen 2026-08-02, evidence:

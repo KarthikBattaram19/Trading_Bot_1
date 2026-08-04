@@ -357,6 +357,19 @@ than subtracting the sample mean first.
   `quant_snapshot.py` call site also defaults to `False` if the key is
   omitted), so production behavior is unchanged from before this fix until
   walk-forward/OOS evidence justifies turning it on.
+- **Walk-forward evidence gathered 2026-08-04:** `Docs/bot_health/garch_mle_walk_forward_evidence.md`
+  (method + code: `backend/quant/analytics/garch_walk_forward_validator.py`,
+  `backend/scripts/backfill_daily_price_history.py`,
+  `backend/scripts/run_garch_walk_forward_validation.py`). 1,788 pooled
+  out-of-sample days across the pilot universe (NIFTY, BANKNIFTY, RELIANCE,
+  HDFCBANK, INFY; ~2.5 years of real Breeze daily closes each), rolling
+  250-day window, QLIKE-scored. Result: the MLE fit essentially ties the
+  fixed-weight fallback (50.7% combined win rate, mean QLIKE −7.9202 fitted
+  vs −7.9207 fixed — not a meaningful difference) — no forecast-accuracy
+  edge found. **Recommendation stands: keep `enable_mle_fit: false`.** This
+  is a real result, not just a defensive default anymore, though it's worth
+  re-running periodically as more history accumulates rather than treated as
+  final.
 - A single |log-return| > 25% anywhere in the 60-day lookback (`detect_price_gaps`,
   hardcoded `max_return_abs=0.25`) sets `garch_distorted=True` for the *whole*
   window, with no distinction between "one stale bad print 55 days ago" and "a real

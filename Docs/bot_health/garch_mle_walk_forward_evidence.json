@@ -1,0 +1,80 @@
+{
+  "generated_at": "2026-08-04T16:36:38.589596+00:00",
+  "window": 250,
+  "fit_min_observations": 60,
+  "min_events": 100,
+  "per_symbol": [
+    {
+      "symbol": "BANKNIFTY",
+      "n_events": 358,
+      "n_fit_usable": 358,
+      "fit_usable_rate": 1.0,
+      "mean_qlike_fixed": -8.438073149778102,
+      "mean_qlike_fitted": -8.464073819185685,
+      "mean_mse_fixed": 5.664809915810597e-08,
+      "mean_mse_fitted": 5.600750535856405e-08,
+      "fitted_win_rate": 0.5698324022346368,
+      "insufficient_sample": false
+    },
+    {
+      "symbol": "HDFCBANK",
+      "n_events": 358,
+      "n_fit_usable": 358,
+      "fit_usable_rate": 1.0,
+      "mean_qlike_fixed": -7.909085639190562,
+      "mean_qlike_fitted": -7.894364654844187,
+      "mean_mse_fixed": 1.1753165495272876e-07,
+      "mean_mse_fitted": 1.1872374606596052e-07,
+      "fitted_win_rate": 0.5139664804469274,
+      "insufficient_sample": false
+    },
+    {
+      "symbol": "INFY",
+      "n_events": 358,
+      "n_fit_usable": 358,
+      "fit_usable_rate": 1.0,
+      "mean_qlike_fixed": -6.959279560337138,
+      "mean_qlike_fitted": -6.963683214470267,
+      "mean_mse_fixed": 5.403287253796891e-07,
+      "mean_mse_fitted": 5.390493995272023e-07,
+      "fitted_win_rate": 0.49162011173184356,
+      "insufficient_sample": false
+    },
+    {
+      "symbol": "NIFTY",
+      "n_events": 356,
+      "n_fit_usable": 356,
+      "fit_usable_rate": 1.0,
+      "mean_qlike_fixed": -8.648800518750038,
+      "mean_qlike_fitted": -8.65635772256025,
+      "mean_mse_fixed": 2.353774012704569e-08,
+      "mean_mse_fitted": 2.333431840359837e-08,
+      "fitted_win_rate": 0.5449438202247191,
+      "insufficient_sample": false
+    },
+    {
+      "symbol": "RELIANCE",
+      "n_events": 358,
+      "n_fit_usable": 358,
+      "fit_usable_rate": 1.0,
+      "mean_qlike_fixed": -7.652207402668,
+      "mean_qlike_fitted": -7.626506748018726,
+      "mean_mse_fixed": 1.0678588343245609e-07,
+      "mean_mse_fitted": 1.0742410305673096e-07,
+      "fitted_win_rate": 0.4134078212290503,
+      "insufficient_sample": false
+    }
+  ],
+  "combined": {
+    "symbol": "ALL",
+    "n_events": 1788,
+    "n_fit_usable": 1788,
+    "fit_usable_rate": 1.0,
+    "mean_qlike_fixed": -7.9206757068689235,
+    "mean_qlike_fitted": -7.920174680931322,
+    "mean_mse_fixed": 1.6912909251211135e-07,
+    "mean_mse_fitted": 1.6907064837064257e-07,
+    "fitted_win_rate": 0.5067114093959731,
+    "insufficient_sample": false
+  }
+}
