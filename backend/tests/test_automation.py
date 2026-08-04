@@ -263,9 +263,10 @@ async def test_ps08_kill_switch_skips_hedges():
     await engine.submit_order(_simple_vol_order())
     feed.ltps["3045"] = 560.0
 
-    from backend.routers import bot as bot_router
+    from backend.services.kill_switch_state import get_kill_switch_state
 
-    bot_router._kill_switch_armed = True
+    state = get_kill_switch_state()
+    state.set_armed(True)
     try:
         from unittest.mock import patch
 
@@ -279,7 +280,7 @@ async def test_ps08_kill_switch_skips_hedges():
         assert tick["status"]["state"] == "paused_kill_switch"
         await engine.automation.stop()
     finally:
-        bot_router._kill_switch_armed = False
+        state.set_armed(False)
 
 
 @pytest.mark.asyncio

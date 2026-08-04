@@ -13,9 +13,17 @@ deprioritized behind any open P0/P1 item.
   source of truth, and exclude seed/demo records from `/learning` metrics.
   (first seen 2026-08-02, evidence: `backend/routers/decisions.py:1`,
   `backend/data/learning_store.json` — all records currently `"seed": true`)
-- [ ] Persist kill-switch armed state so it survives a process restart —
-  currently an in-memory global only. (first seen 2026-08-02, evidence:
-  `backend/routers/bot.py:24` `_kill_switch_armed = False`)
+- [x] **Kill-switch armed state was an in-memory global, resetting to
+  unarmed on every restart.** `backend/services/kill_switch_state.py` adds a
+  small JSON-file-backed `KillSwitchState` (`backend/data/kill_switch_state.json`,
+  same pattern as `learning_store.json`); `backend/routers/bot.py`'s
+  `is_kill_switch_armed()` / `/bot/pause` / `/bot/resume` now read and write
+  it instead of a module global, so the halt survives a restart. The
+  redundant `_scheduler_mode` global (always mirrored the armed flag) was
+  removed with it. (first seen 2026-08-02, evidence: `backend/routers/bot.py:24`
+  `_kill_switch_armed = False`; resolved 2026-08-04, evidence:
+  `test_armed_state_survives_simulated_process_restart`,
+  `test_bot_router_reads_persisted_state`)
 - [x] **One-trade lock / active-trade-id were in-memory globals, resetting
   on every restart and letting a second discretionary entry through while
   a position was still open.** `backend/services/trade_executor.py` now
