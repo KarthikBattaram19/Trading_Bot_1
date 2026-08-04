@@ -312,21 +312,36 @@ From `Trading_Strategies.md` §Common Execution Framework — **Data Requirement
 
 Used by **Simple Volatility Trading** and **Gamma Scalping mode 1 (cheap vol)**.
 
+Weights are **MLE-fit per symbol** (`backend/quant/signals/garch.py::fit_garch_11_mle`,
+`scipy.optimize.minimize`) when there's enough history to fit reliably;
+otherwise the fixed values below are used as a fallback. Three tiers, keyed
+off the number of log returns `n` for that symbol:
+
+| `n` | Weights used | `garch_distorted`? |
+|---|---|---|
+| `n < min_observations` (20) | none — no forecast | Yes (`insufficient_history`) |
+| `min_observations ≤ n < fit_min_observations` (60) | Fixed (H1–H3 below) | No |
+| `n ≥ fit_min_observations` (60) | MLE-fit per symbol | No, unless the fit fails to converge (`garch_fit_failed`) |
+
 | # | Parameter | Symbol | Typical Value | Type | Required When |
 |---|---|---|---|---|---|
-| H1 | **Long-run variance weight** | γ (gamma) | 5% | Weight | IV < GARCH entry |
-| H2 | **Prior squared return weight** | α (alpha) | 5% | Weight | IV < GARCH entry |
-| H3 | **Prior variance weight** | β (beta) | 90% | Weight | IV < GARCH entry |
-| H4 | **Weight constraint** | γ+α+β | 100% | Constraint | Model validity |
-| H5 | **Long-run variance VL** | VL | From sample var of log returns | Computed | Forecast |
+| H1 | **Long-run variance weight (fixed fallback)** | γ (gamma) | 5% | Weight | Fallback tier only — see above |
+| H2 | **Prior squared return weight (fixed fallback)** | α (alpha) | 5% | Weight | Fallback tier only — see above |
+| H3 | **Prior variance weight (fixed fallback)** | β (beta) | 90% | Weight | Fallback tier only — see above |
+| H4 | **Weight constraint** | γ+α+β | 100% | Constraint | Model validity (both fixed and fitted) |
+| H5 | **Long-run variance VL** | VL | Mean-centered sample variance of log returns: `mean((r-r̄)²)` | Computed | Forecast |
 | H6 | **Prior squared return** | u²ₙ₋₁ | From return series | Computed | Forecast |
 | H7 | **Prior variance** | σ²ₙ₋₁ | From series | Computed | Forecast |
 | H8 | **Daily variance forecast** | σ²ₙ | γ·VL + α·u² + β·σ²ₙ₋₁ | Computed | Signal |
 | H9 | **Daily volatility** | σ_daily | √σ²ₙ | Computed | Signal |
 | H10 | **Annualized forecast vol** | σ_annual | σ_daily × √252 | Percent | **Compare to option IV** |
-| H11 | **Post-shock block flag** | `garch_distorted` | Boolean | Risk | Block cheap-vol after black swan |
+| H11 | **Post-shock block flag** | `garch_distorted` | Boolean | Risk | Block cheap-vol after black swan or a failed fit |
 
 **Entry condition (cheap vol):** `IV < σ_annual (GARCH forecast)` — annualized option IV must be **below** forecast.
+
+**Observability:** `GarchForecastResult.fitted` (and `.gamma_used`/`.alpha_used`/`.beta_used`)
+report whether a given forecast used fitted or fixed weights — check these
+before treating "the model was fit" as true for a specific symbol/cycle.
 
 ---
 

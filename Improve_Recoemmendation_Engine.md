@@ -221,7 +221,7 @@ flowchart LR
         F312["§3.12 No term-structure data —<br/>GS-8 distortion gate can't run"]
     end
     subgraph LOW["⚪ Low — cleanup"]
-        F34["§3.4 GARCH weights fixed,<br/>not MLE-fit (by design)"]
+        F34["§3.4 GARCH weights fixed,<br/>not MLE-fit — ✅ FIXED 2026-08-04"]
         F37["§3.7 Dead cash-underlying<br/>code path"]
         F51["§5.1 Demo/stub candidates<br/>coexist, docstring-only guard"]
         F53["§5.3 UI copy can overstate<br/>universe coverage"]
@@ -325,20 +325,25 @@ that window.
   underlying "fabricated history always passes" property, which is by design for
   a fixture helper that must never reach production candidates.
 
-### 3.4 GARCH(1,1) forecast uses fixed, unfitted weights — not MLE-estimated
-`backend/quant/signals/garch.py` — `gamma=0.05, alpha=0.05, beta=0.9` are config
-constants (sum-to-1 enforced), not parameters fit to each symbol's own return
-series via maximum likelihood. This is a legitimate simplification for a
-paper-trading system, but any language claiming "the model was fit" would be
-inaccurate — it's a fixed-weight GARCH-shaped recursive filter. Also: `VL` (long-run
-variance) is computed as `mean(r²)`, i.e., treats returns as zero-mean rather than
-subtracting the sample mean first — a minor deviation from textbook sample
-variance, immaterial for near-zero-drift daily equity returns but worth knowing
-about if a strategy chases a name with real drift.
-- **Fix (optional, P1/P2-adjacent):** either (a) explicitly document that weights
-  are fixed-by-config, not fitted, everywhere the model is described in
-  Docs/Trading_Parameters.md, or (b) add a periodic MLE re-fit job if per-symbol
-  responsiveness matters more than stability.
+### 3.4 GARCH(1,1) forecast uses fixed, unfitted weights — not MLE-estimated — ✅ FIXED 2026-08-04
+`backend/quant/signals/garch.py` — was `gamma=0.05, alpha=0.05, beta=0.9` config
+constants applied to every symbol identically, not parameters fit to each
+symbol's own return series via maximum likelihood. Also, `VL` (long-run
+variance) was computed as `mean(r²)`, treating returns as zero-mean rather
+than subtracting the sample mean first.
+- **Resolution:** `fit_garch_11_mle()` fits `(γ,α,β)` per symbol via
+  `scipy.optimize.minimize` (SLSQP) when there are ≥ `fit_min_observations`
+  (default 60, config `garch_forecast.fit_min_observations`) log returns;
+  between `min_observations` (20) and that floor, the fixed weights above
+  remain the deliberate fallback (`fitted=False`, not distorted — same
+  behavior as before this fix). A non-converged/degenerate fit at or above
+  the floor now fails closed: `garch_distorted=True`,
+  `reason="garch_fit_failed"`, rather than silently reusing fixed weights.
+  `VL` now uses mean-centered sample variance, applied on both the fit and
+  fallback paths. `GarchForecastResult.fitted`/`.gamma_used`/`.alpha_used`/
+  `.beta_used` make it observable, per forecast, whether the weights were
+  actually fit. See `Docs/superpowers/specs/2026-08-04-garch-mle-fit-design.md`
+  and `backend/tests/quant/test_garch.py`.
 - A single |log-return| > 25% anywhere in the 60-day lookback (`detect_price_gaps`,
   hardcoded `max_return_abs=0.25`) sets `garch_distorted=True` for the *whole*
   window, with no distinction between "one stale bad print 55 days ago" and "a real
