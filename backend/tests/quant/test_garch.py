@@ -134,6 +134,41 @@ def test_at_fit_floor_fits_and_marks_fitted():
     assert result.fitted is True
     assert result.gamma_used is not None
     assert abs(result.gamma_used + result.alpha_used + result.beta_used - 1.0) < 1e-6
+    # Fit must actually move off the fixed defaults (0.05, 0.05, 0.90) —
+    # catches a fit that silently no-ops back to the fixed weights.
+    fixed_gamma, fixed_alpha, fixed_beta = 0.05, 0.05, 0.90
+    tol = 1e-3
+    assert (
+        abs(result.gamma_used - fixed_gamma) > tol
+        or abs(result.alpha_used - fixed_alpha) > tol
+        or abs(result.beta_used - fixed_beta) > tol
+    )
+
+
+def test_below_tier_boundary_n59_uses_fixed_weights():
+    """n = fit_min_observations - 1: still below the floor, must not fit."""
+    true_gamma, true_alpha, true_beta = 0.08, 0.12, 0.80
+    vl = 0.0002
+    returns = _simulate_garch_returns(
+        59, gamma=true_gamma, alpha=true_alpha, beta=true_beta, vl=vl, seed=11
+    )
+    result = forecast_garch_11(
+        returns, min_observations=20, fit_weights=True, fit_min_observations=60
+    )
+    assert result.fitted is False
+
+
+def test_at_tier_boundary_n60_fits():
+    """n = fit_min_observations exactly: the floor must be inclusive (n >= floor)."""
+    true_gamma, true_alpha, true_beta = 0.08, 0.12, 0.80
+    vl = 0.0002
+    returns = _simulate_garch_returns(
+        60, gamma=true_gamma, alpha=true_alpha, beta=true_beta, vl=vl, seed=11
+    )
+    result = forecast_garch_11(
+        returns, min_observations=20, fit_weights=True, fit_min_observations=60
+    )
+    assert result.fitted is True
 
 
 def test_fit_failure_forces_distorted(monkeypatch):

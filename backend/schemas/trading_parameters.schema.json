@@ -432,7 +432,7 @@
         "min_observations": { "type": "integer", "minimum": 1 },
         "max_log_return_gap": { "type": "number", "minimum": 0 },
         "enable_mle_fit": { "type": "boolean" },
-        "fit_min_observations": { "type": "integer", "minimum": 1 }
+        "fit_min_observations": { "type": "integer", "minimum": 20 }
       }
     },
     "ExecutionConstraints": {

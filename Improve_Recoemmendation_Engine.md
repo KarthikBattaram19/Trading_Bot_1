@@ -342,8 +342,20 @@ than subtracting the sample mean first.
   `VL` now uses mean-centered sample variance, applied on both the fit and
   fallback paths. `GarchForecastResult.fitted`/`.gamma_used`/`.alpha_used`/
   `.beta_used` make it observable, per forecast, whether the weights were
-  actually fit. See `Docs/superpowers/specs/2026-08-04-garch-mle-fit-design.md`
+  actually fit, and are now logged (`quant_snapshot.py`, `logger.debug`) per
+  symbol per cycle. See `Docs/superpowers/specs/2026-08-04-garch-mle-fit-design.md`
   and `backend/tests/quant/test_garch.py`.
+- **Ships disabled by default:** the final whole-branch review found that on
+  realistic ~60–90-observation series (the range this bot actually sees per
+  symbol), the MLE fit frequently converges to degenerate boundary solutions
+  (weights pinned near 0 or 1, e.g. γ≈1/α≈β≈0) that can swing `σ_annual` by
+  up to 30% on estimation noise alone — directly moving the `IV < σ_annual`
+  cheap-vol gate with no out-of-sample validation behind it. Per this repo's
+  P1 rule (no unvalidated changes to the vol edge), `garch_forecast.enable_mle_fit`
+  defaults to `false` in `trading_parameters.defaults.json` (and the
+  `quant_snapshot.py` call site also defaults to `False` if the key is
+  omitted), so production behavior is unchanged from before this fix until
+  walk-forward/OOS evidence justifies turning it on.
 - A single |log-return| > 25% anywhere in the 60-day lookback (`detect_price_gaps`,
   hardcoded `max_return_abs=0.25`) sets `garch_distorted=True` for the *whole*
   window, with no distinction between "one stale bad print 55 days ago" and "a real

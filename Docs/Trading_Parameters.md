@@ -312,16 +312,39 @@ From `Trading_Strategies.md` §Common Execution Framework — **Data Requirement
 
 Used by **Simple Volatility Trading** and **Gamma Scalping mode 1 (cheap vol)**.
 
-Weights are **MLE-fit per symbol** (`backend/quant/signals/garch.py::fit_garch_11_mle`,
+Weights can be **MLE-fit per symbol** (`backend/quant/signals/garch.py::fit_garch_11_mle`,
 `scipy.optimize.minimize`) when there's enough history to fit reliably;
 otherwise the fixed values below are used as a fallback. Three tiers, keyed
-off the number of log returns `n` for that symbol:
+off the number of log returns `n` for that symbol, apply when MLE fitting is
+enabled:
 
 | `n` | Weights used | `garch_distorted`? |
 |---|---|---|
 | `n < min_observations` (20) | none — no forecast | Yes (`insufficient_history`) |
 | `min_observations ≤ n < fit_min_observations` (60) | Fixed (H1–H3 below) | No |
 | `n ≥ fit_min_observations` (60) | MLE-fit per symbol | No, unless the fit fails to converge (`garch_fit_failed`) |
+
+**Status: disabled by default.** The MLE-fit path (`garch_forecast.enable_mle_fit`,
+config key in `backend/config/trading_parameters.defaults.json`) is implemented
+and available, but ships **off by default** pending out-of-sample (walk-forward)
+evidence that it beats the fixed-weight fallback for the cheap-vol entry gate.
+With the flag off (or omitted — the code-level default also resolves to
+`False`), every symbol uses the fixed weights (H1–H3) regardless of history
+length, i.e. today's behavior is unchanged. On short real return series
+(~60–90 observations, which is the range this bot actually sees per symbol)
+the MLE fit can converge to degenerate boundary solutions — weights pinned
+near 0 or 1 (e.g. γ≈1, α≈β≈0) — which can swing the annualized-vol forecast
+enough to flip the `IV < σ_annual` cheap-vol gate on estimation noise alone.
+This is part of why the flag stays off by default until walk-forward
+validation lands.
+
+Note: `fit_min_observations` (default 60) can only be reached if enough
+trading-day closes are actually being requested — `quant_snapshot`'s
+`daily_lookback_days` config drives how much price history is pulled (see
+`candle_history.py`, which widens the requested calendar-day window to get
+enough trading-day closes). Lowering `daily_lookback_days` far enough means
+the MLE tier stops being reachable at all, silently, with no distinct
+failure signal — it just always resolves to the fixed-weight tier.
 
 | # | Parameter | Symbol | Typical Value | Type | Required When |
 |---|---|---|---|---|---|
