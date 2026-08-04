@@ -428,7 +428,11 @@
         "alpha_weight": { "type": "number", "minimum": 0, "maximum": 1 },
         "beta_weight": { "type": "number", "minimum": 0, "maximum": 1 },
         "annualization_factor": { "type": "integer", "const": 252 },
-        "block_when_distorted": { "type": "boolean" }
+        "block_when_distorted": { "type": "boolean" },
+        "min_observations": { "type": "integer", "minimum": 1 },
+        "max_log_return_gap": { "type": "number", "minimum": 0 },
+        "enable_mle_fit": { "type": "boolean" },
+        "fit_min_observations": { "type": "integer", "minimum": 1 }
       }
     },
     "ExecutionConstraints": {

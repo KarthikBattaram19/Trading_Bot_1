@@ -98,7 +98,9 @@
     "annualization_factor": 252,
     "block_when_distorted": true,
     "min_observations": 20,
-    "max_log_return_gap": 0.25
+    "max_log_return_gap": 0.25,
+    "enable_mle_fit": true,
+    "fit_min_observations": 60
   },
   "iv_zscore": {
     "min_observations": 5,

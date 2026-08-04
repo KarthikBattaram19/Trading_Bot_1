@@ -112,6 +112,8 @@ def build_quant_snapshot(
             beta=float(gcfg.get("beta_weight", 0.9)),
             annualization_factor=int(gcfg.get("annualization_factor", 252)),
             min_observations=min_obs,
+            fit_weights=bool(gcfg.get("enable_mle_fit", True)),
+            fit_min_observations=int(gcfg.get("fit_min_observations", 60)),
         )
         if result.usable and result.sigma_annual is not None and not result.garch_distorted:
             garch_field = SignalField(float(result.sigma_annual), True, None)
