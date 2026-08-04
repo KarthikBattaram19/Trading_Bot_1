@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import math
+import random
 
 import pytest
 
 from backend.quant.signals.garch import (
+    FittedGarchWeights,
     detect_price_gaps,
+    fit_garch_11_mle,
     forecast_garch_11,
     garch_one_step,
     log_returns_from_prices,
@@ -67,3 +70,39 @@ def test_vl_is_mean_centered_not_mean_of_squares():
     result = forecast_garch_11(returns, min_observations=20)
     assert result.vl is not None
     assert result.vl == pytest.approx(0.0, abs=1e-12)
+
+
+def _simulate_garch_returns(
+    n: int, *, gamma: float, alpha: float, beta: float, vl: float, seed: int = 7
+) -> list[float]:
+    """Simulate a GARCH(1,1) return series from known weights (for fit-recovery tests)."""
+    rng = random.Random(seed)
+    sigma2 = vl
+    returns: list[float] = []
+    for _ in range(n):
+        r = rng.gauss(0.0, math.sqrt(sigma2))
+        returns.append(r)
+        sigma2 = gamma * vl + alpha * (r * r) + beta * sigma2
+    return returns
+
+
+def test_fit_garch_11_mle_recovers_known_weights_approximately():
+    true_gamma, true_alpha, true_beta = 0.10, 0.15, 0.75
+    vl = 0.0002
+    returns = _simulate_garch_returns(
+        400, gamma=true_gamma, alpha=true_alpha, beta=true_beta, vl=vl
+    )
+    fitted = fit_garch_11_mle(returns, vl)
+    assert fitted is not None
+    assert isinstance(fitted, FittedGarchWeights)
+    assert abs((fitted.gamma + fitted.alpha + fitted.beta) - 1.0) < 1e-6
+    # Loose tolerance: MLE on a single 400-point path is noisy, this only
+    # asserts the fit lands in the right neighborhood, not exact recovery.
+    assert abs(fitted.alpha - true_alpha) < 0.15
+    assert abs(fitted.beta - true_beta) < 0.20
+
+
+def test_fit_garch_11_mle_returns_none_on_degenerate_input():
+    # All-zero returns: sigma2 path collapses toward 0, likelihood is degenerate.
+    fitted = fit_garch_11_mle([0.0] * 100, vl=0.0)
+    assert fitted is None

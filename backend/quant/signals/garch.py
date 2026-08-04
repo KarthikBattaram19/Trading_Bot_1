@@ -14,6 +14,8 @@ import math
 from dataclasses import dataclass
 from typing import Sequence
 
+from scipy.optimize import minimize
+
 
 @dataclass(frozen=True, slots=True)
 class GarchForecastResult:
@@ -78,6 +80,72 @@ def _sigma2_path(
         sigma2 = gamma * vl + alpha * prior_u2 + beta * prior_sigma2
         path.append(sigma2)
     return path
+
+
+@dataclass(frozen=True, slots=True)
+class FittedGarchWeights:
+    """MLE-fit GARCH(1,1) weights for one symbol's return history."""
+
+    gamma: float
+    alpha: float
+    beta: float
+
+
+def _negative_log_likelihood(
+    params: Sequence[float], cleaned: Sequence[float], vl: float
+) -> float:
+    alpha, beta = params
+    gamma = 1.0 - alpha - beta
+    path = _sigma2_path(cleaned, vl=vl, gamma=gamma, alpha=alpha, beta=beta)
+    total = 0.0
+    for sigma2_t, r_next in zip(path[:-1], cleaned[1:]):
+        if sigma2_t <= 0 or math.isnan(sigma2_t) or math.isinf(sigma2_t):
+            return math.inf
+        total += math.log(sigma2_t) + (r_next * r_next) / sigma2_t
+    return 0.5 * total
+
+
+def fit_garch_11_mle(
+    cleaned_returns: Sequence[float],
+    vl: float,
+    *,
+    initial: tuple[float, float] = (0.05, 0.90),
+) -> FittedGarchWeights | None:
+    """MLE-fit (gamma, alpha, beta) to ``cleaned_returns`` via Gaussian log-likelihood.
+
+    Returns ``None`` if the optimizer doesn't converge or the fitted weights
+    produce a degenerate (non-positive/non-finite) variance path — caller
+    decides what "fit failed" means (Task 3: fail-closed to distorted).
+    """
+    if vl <= 0 or len(cleaned_returns) < 2:
+        return None
+
+    eps = 1e-6
+    bounds = [(eps, 1.0 - eps), (eps, 1.0 - eps)]
+    constraints = [{"type": "ineq", "fun": lambda p: (1.0 - eps) - (p[0] + p[1])}]
+
+    cleaned = list(cleaned_returns)
+    result = minimize(
+        _negative_log_likelihood,
+        x0=list(initial),
+        args=(cleaned, vl),
+        method="SLSQP",
+        bounds=bounds,
+        constraints=constraints,
+    )
+    if not result.success:
+        return None
+
+    alpha, beta = float(result.x[0]), float(result.x[1])
+    gamma = 1.0 - alpha - beta
+    if gamma <= 0 or alpha <= 0 or beta <= 0:
+        return None
+
+    path = _sigma2_path(cleaned, vl=vl, gamma=gamma, alpha=alpha, beta=beta)
+    if any(s <= 0 or math.isnan(s) or math.isinf(s) for s in path):
+        return None
+
+    return FittedGarchWeights(gamma=gamma, alpha=alpha, beta=beta)
 
 
 def garch_one_step(
