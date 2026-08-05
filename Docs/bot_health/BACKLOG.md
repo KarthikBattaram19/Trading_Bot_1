@@ -8,11 +8,45 @@ deprioritized behind any open P0/P1 item.
 
 ## P0 — integrity of the trading loop
 
-- [ ] Build real `POST /approve` and `POST /reject` endpoints in
+- [x] Build real `POST /approve` and `POST /reject` endpoints in
   `backend/routers/decisions.py`, make the `paper_sim` ledger the single
-  source of truth, and exclude seed/demo records from `/learning` metrics.
-  (first seen 2026-08-02, evidence: `backend/routers/decisions.py:1`,
+  source of truth. (first seen 2026-08-02, evidence: `backend/routers/decisions.py:1`,
   `backend/data/learning_store.json` — all records currently `"seed": true`)
+  - Re-confirmed 2026-08-04, still Not-done: `decisions.py` still exposes
+    only `GET`/`GET /pending`/`GET /{id}` (no `POST`); `trade_executor.py`
+    has zero references to `backend/paper_sim/` (confirmed by grep — the
+    only "paper_sim" string in the file is a docstring comment describing
+    `learning_store.json`, a different, still-separate ledger from
+    `backend/paper_sim/engine.py`/`ledger.py`, which itself still has zero
+    references to recommendations, confirmed by grep); `routers/
+    recommendations.py::_autonomous_execution_for` still fires on every
+    non-cached `GET /recommendations` (`force_refresh=True` or cold cache);
+    `execution_constraints.supervised_approval_required` is still only
+    present in `trading_parameters.defaults.json`/the schema, not read by
+    any `.py` file (grep, repo-wide); `learning_store.json.outcomes` still
+    holds exactly 3 records, all `trd_seed_*` — zero real closed trades.
+  - **Resolved 2026-08-04**, evidence: `backend/services/trade_executor.py`
+    (`resolve_atm_ce_leg`, `_submit_via_paper_sim`) now submits every
+    autonomous entry through `PaperEngine.submit_order()` — `trade_id` is a
+    real `paper_sim` `position_id`, confirmed by
+    `test_successful_execution_creates_a_real_paper_sim_position`.
+    `routers/recommendations.py::_autonomous_execution_for` now reads
+    `SUPERVISION_MODE` (default `supervised`, same env var/default
+    `routers/bot.py` already used) and skips execution entirely on a
+    passive `GET` unless `SUPERVISION_MODE=autonomous`, confirmed by
+    `test_supervised_mode_skips_autonomous_execution`/
+    `test_autonomous_mode_still_executes`. `backend/routers/decisions.py`
+    now exposes real `POST /{id}/approve` and `POST /{id}/reject`, backed
+    by a new persisted `backend/services/decision_state.py` store (same
+    restart-survival pattern as `kill_switch_state.py`), confirmed by
+    `backend/tests/test_decisions.py` (4/4, including a happy-path approve
+    that asserts a real position lands in `engine.ledger.positions`) and
+    `backend/tests/test_decision_state.py` (3/3, including a simulated-
+    restart test). **Not addressed by this fix:** excluding seed/demo
+    records from `/learning` metrics — separate half of this bullet, still
+    open; `learning_store.json.outcomes` still holds only the 3 seeded
+    records since this change doesn't produce or need a closed trade to
+    verify wiring.
 - [x] **Kill-switch armed state was an in-memory global, resetting to
   unarmed on every restart.** `backend/services/kill_switch_state.py` adds a
   small JSON-file-backed `KillSwitchState` (`backend/data/kill_switch_state.json`,
