@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from datetime import datetime, timedelta, timezone
 
+from backend.integrations.icici_direct.models import InstrumentRecord, NormalizedTick
 from backend.models.recommendations import (
     GateResult,
     HedgeInsight,
@@ -12,6 +14,8 @@ from backend.models.recommendations import (
     StrategyType,
     TradeEconomicsInsight,
 )
+from backend.paper_sim.engine import PaperEngine
+from backend.paper_sim.models import PaperSide
 from backend.services import trade_executor
 from backend.services.learning_service import LearningService
 
@@ -57,6 +61,96 @@ def _make_recommendation(rank: int, symbol: str = "NIFTY") -> InstrumentRecommen
         failure_modes=[],
         why_this_rank="test",
     )
+
+
+class _FakeFeed:
+    """Minimal MarketQuoteFeed double: one NIFTY expiry, two strikes, CE+PE each."""
+
+    def __init__(self) -> None:
+        self.expiry = (datetime.now(timezone.utc) + timedelta(days=17)).strftime("%d-%b-%Y")
+        self.instruments: dict[str, InstrumentRecord] = {
+            "1": InstrumentRecord(
+                exchange="NFO", tradingsymbol=f"NIFTY{self.expiry.upper()}22000CE",
+                symboltoken="1", name="NIFTY", expiry=self.expiry, strike=22000.0,
+                lotsize=50, instrumenttype="OPTIDX",
+            ),
+            "2": InstrumentRecord(
+                exchange="NFO", tradingsymbol=f"NIFTY{self.expiry.upper()}22000PE",
+                symboltoken="2", name="NIFTY", expiry=self.expiry, strike=22000.0,
+                lotsize=50, instrumenttype="OPTIDX",
+            ),
+            "3": InstrumentRecord(
+                exchange="NFO", tradingsymbol=f"NIFTY{self.expiry.upper()}22050CE",
+                symboltoken="3", name="NIFTY", expiry=self.expiry, strike=22050.0,
+                lotsize=50, instrumenttype="OPTIDX",
+            ),
+            "4": InstrumentRecord(
+                exchange="NFO", tradingsymbol=f"NIFTY{self.expiry.upper()}22050PE",
+                symboltoken="4", name="NIFTY", expiry=self.expiry, strike=22050.0,
+                lotsize=50, instrumenttype="OPTIDX",
+            ),
+        }
+        self.ltps = {"1": 120.0, "2": 110.0, "3": 100.0, "4": 130.0}
+        self.instruments_loaded_at = datetime.now(timezone.utc)
+
+    async def ensure_instruments(self, *, max_age_sec: float | None = None) -> int:
+        return len(self.instruments)
+
+    async def get_ltp(self, exchange, tradingsymbol, symboltoken=None) -> NormalizedTick:
+        token = symboltoken
+        if not token:
+            for rec in self.instruments.values():
+                if rec.tradingsymbol == tradingsymbol:
+                    token = rec.symboltoken
+                    break
+        return NormalizedTick(
+            exchange=exchange, symbol=tradingsymbol, provider_symbol_id=token,
+            ltp=float(self.ltps[token]), ts=datetime.now(timezone.utc), stale=False,
+        )
+
+    def list_options(self, *, name, exchange="NFO", expiry=None, limit=500):
+        rows = [
+            r for r in self.instruments.values()
+            if (r.name or "").upper() == name.upper() and r.exchange.upper() == exchange.upper()
+        ]
+        if expiry:
+            rows = [r for r in rows if r.expiry == expiry]
+        return rows[:limit]
+
+    def resolve(self, *, exchange=None, tradingsymbol=None, symboltoken=None):
+        if symboltoken and symboltoken in self.instruments:
+            return self.instruments[symboltoken]
+        for rec in self.instruments.values():
+            if tradingsymbol and rec.tradingsymbol == tradingsymbol:
+                return rec
+        return None
+
+
+def _make_engine() -> PaperEngine:
+    return PaperEngine(feed=_FakeFeed())
+
+
+async def test_resolve_atm_ce_leg_picks_nearest_strike_to_und_price():
+    engine = _make_engine()
+    rec = _make_recommendation(1)  # default und_price=100.0 in existing fixture — override below
+    rec = rec.model_copy(update={"parameters": rec.parameters.model_copy(update={"und_price": 22010.0})})
+
+    leg = await trade_executor.resolve_atm_ce_leg(rec, engine=engine)
+
+    assert leg is not None
+    assert leg.symbol.endswith("22000CE")
+    assert leg.side == PaperSide.buy
+    assert leg.quantity == 50
+    assert leg.option_type == "CE"
+
+
+async def test_resolve_atm_ce_leg_returns_none_for_unknown_underlying():
+    engine = _make_engine()
+    rec = _make_recommendation(1, symbol="NOTAREALSYMBOL")
+
+    leg = await trade_executor.resolve_atm_ce_leg(rec, engine=engine)
+
+    assert leg is None
 
 
 @pytest.fixture(autouse=True)

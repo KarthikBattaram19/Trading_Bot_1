@@ -13,7 +13,10 @@ from datetime import datetime, timezone
 from backend.analytics.confidence_calibration import is_seed_outcome
 from backend.models.recommendations import InstrumentRecommendation, StrategyType
 from backend.models.trades import AutonomousExecutionResult, TradeAttemptResult
+from backend.paper_sim.engine import PaperEngine
+from backend.paper_sim.models import PaperLegRequest, PaperSide
 from backend.services.learning_service import get_learning_service
+from backend.services.universe_enrichment import select_preferred_expiry
 
 
 def get_active_trade_id() -> str | None:
@@ -36,6 +39,46 @@ def is_one_trade_locked() -> bool:
 
 def _all_gates_pass(rec: InstrumentRecommendation) -> bool:
     return all(g.passed for g in rec.parameter_gates)
+
+
+async def resolve_atm_ce_leg(
+    rec: InstrumentRecommendation, *, engine: PaperEngine
+) -> PaperLegRequest | None:
+    """
+    Resolve a single ATM call-option entry leg for a recommendation's underlying.
+
+    Fixed convention: always buy ATM CE, 1 lot, nearest expiry with DTE >= 10
+    (matching the recommendation engine's own DTE gate). `structure_builder.py`
+    expands this single leg into the full strategy structure — see
+    Docs/superpowers/specs/2026-08-04-wire-trade-executor-paper-sim-design.md §1.
+    """
+    feed = engine.feed
+    await feed.ensure_instruments(max_age_sec=engine.config.instrument_master_max_age_sec)
+
+    symbol = rec.underlying_symbol.upper()
+    preferred = select_preferred_expiry(feed, symbol, min_dte=10)
+    if preferred is None:
+        return None
+    expiry, _dte = preferred
+
+    records = feed.list_options(name=symbol, exchange="NFO", expiry=expiry, limit=500)
+    ce_records = [r for r in records if (r.tradingsymbol or "").upper().endswith("CE")]
+    if not ce_records:
+        return None
+
+    spot = float(rec.parameters.und_price)
+    best = min(ce_records, key=lambda r: abs(float(r.strike or 0.0) - spot))
+
+    return PaperLegRequest(
+        symbol=best.tradingsymbol,
+        side=PaperSide.buy,
+        quantity=int(best.lotsize),
+        exchange=best.exchange,
+        symbol_token=best.symboltoken,
+        option_type="CE",
+        strike=float(best.strike) if best.strike is not None else None,
+        expiry=best.expiry,
+    )
 
 
 def _pre_submit_checks(rec: InstrumentRecommendation) -> str | None:
