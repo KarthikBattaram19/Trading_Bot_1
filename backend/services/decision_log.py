@@ -292,9 +292,13 @@ async def list_decisions() -> list[DecisionRecord]:
     decisions = _acted_on_decisions()
     seen_symbols = {d.underlying_symbol for d in decisions}
     seen_ids = {d.decision_id for d in decisions}
+    state_store = get_decision_state_store()
 
     for decision in await _live_decisions():
-        if decision.underlying_symbol in seen_symbols or decision.decision_id in seen_ids:
+        if decision.decision_id in seen_ids:
+            continue
+        has_explicit_verdict = state_store.get(decision.decision_id) is not None
+        if decision.underlying_symbol in seen_symbols and not has_explicit_verdict:
             continue
         decisions.append(decision)
 

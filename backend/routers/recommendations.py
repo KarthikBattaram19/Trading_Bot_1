@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
-
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from backend.models.recommendations import InstrumentRecommendation, RecommendationResponse
 from backend.models.trades import AutonomousExecutionResult
 from backend.services.recommendation_engine import generate_recommendations
+from backend.services.supervision_mode import get_supervision_mode
 from backend.services.trade_executor import (
     execute_autonomous_from_recommendations,
     is_one_trade_locked,
@@ -20,10 +19,11 @@ async def _autonomous_execution_for(
     recommendations: list[InstrumentRecommendation],
 ) -> AutonomousExecutionResult:
     """Run ranked fallback immediately after recommendations are generated —
-    only when SUPERVISION_MODE=autonomous. Under the default "supervised"
-    mode, a fresh GET never opens a trade; POST /decisions/{id}/approve does."""
-    supervision = os.getenv("SUPERVISION_MODE", "supervised").strip().lower()
-    if supervision == "supervised":
+    only when SUPERVISION_MODE=fully_autonomous. Under "supervised" or
+    "semi_autonomous" (and any blank/unset/typo value), a fresh GET never
+    opens a trade; POST /decisions/{id}/approve does."""
+    supervision = get_supervision_mode()
+    if supervision != "fully_autonomous":
         return AutonomousExecutionResult(
             executed=False,
             attempts=[],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
@@ -14,6 +15,12 @@ from backend.services.recommendation_engine import peek_cached_recommendations
 from backend.services.trade_executor import execute_autonomous_from_recommendations
 
 router = APIRouter(prefix="/api/v1/decisions", tags=["decisions"])
+
+# Coarse-grained, single-process lock: serializes all approvals so a
+# double-click/double-request cannot race past the pending check and open
+# two positions. Conservative but simple — this is a single-process
+# paper-trading deployment, not per-decision-id locking.
+_approve_lock = asyncio.Lock()
 
 
 class RejectRequest(BaseModel):
@@ -56,54 +63,55 @@ async def _get_pending_decision(decision_id: str) -> DecisionRecord:
 @router.post("/{decision_id}/approve")
 async def approve_decision(decision_id: str) -> dict:
     """Approve a pending decision — executes it through paper_sim (single candidate)."""
-    decision = await _get_pending_decision(decision_id)
+    async with _approve_lock:
+        decision = await _get_pending_decision(decision_id)
 
-    cached = peek_cached_recommendations()
-    rec = None
-    if cached is not None:
-        rec = next(
-            (
-                r
-                for r in cached.recommendations
-                if f"dec_{r.underlying_symbol.lower()}_{cached.generated_at.strftime('%Y%m%d')}" == decision_id
-            ),
-            None,
-        )
-        if rec is None:
-            # Fall back to matching by underlying_symbol against the already-fetched
-            # decision (per Docs/superpowers/specs/2026-08-04-wire-trade-executor-paper-sim-design.md
-            # §5) — covers decision_ids that don't follow the live dec_{symbol}_{date} pattern
-            # (e.g. acted-on decisions keyed off a trade_id).
+        cached = peek_cached_recommendations()
+        rec = None
+        if cached is not None:
             rec = next(
-                (r for r in cached.recommendations if r.underlying_symbol == decision.underlying_symbol),
+                (
+                    r
+                    for r in cached.recommendations
+                    if f"dec_{r.underlying_symbol.lower()}_{cached.generated_at.strftime('%Y%m%d')}" == decision_id
+                ),
                 None,
             )
-    if rec is None:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"Decision {decision_id} is no longer in the live recommendation cache — "
-                "re-fetch GET /decisions/pending and retry"
-            ),
-        )
+            if rec is None:
+                # Fall back to matching by underlying_symbol against the already-fetched
+                # decision (per Docs/superpowers/specs/2026-08-04-wire-trade-executor-paper-sim-design.md
+                # §5) — covers decision_ids that don't follow the live dec_{symbol}_{date} pattern
+                # (e.g. acted-on decisions keyed off a trade_id).
+                rec = next(
+                    (r for r in cached.recommendations if r.underlying_symbol == decision.underlying_symbol),
+                    None,
+                )
+        if rec is None:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"Decision {decision_id} is no longer in the live recommendation cache — "
+                    "re-fetch GET /decisions/pending and retry"
+                ),
+            )
 
-    result = await execute_autonomous_from_recommendations([rec])
+        result = await execute_autonomous_from_recommendations([rec])
 
-    store = get_decision_state_store()
-    if result.executed:
-        store.set(
-            decision_id,
-            DecisionState(
-                status="approved",
-                trade_id=result.trade_id,
-                acted_at=datetime.now(timezone.utc),
-            ),
-        )
-        updated = decision.model_copy(update={"status": DecisionStatus.approved})
-        return {"decision": updated, "execution": result}
+        store = get_decision_state_store()
+        if result.executed:
+            store.set(
+                decision_id,
+                DecisionState(
+                    status="approved",
+                    trade_id=result.trade_id,
+                    acted_at=datetime.now(timezone.utc),
+                ),
+            )
+            updated = decision.model_copy(update={"status": DecisionStatus.approved})
+            return {"decision": updated, "execution": result}
 
-    # paper_sim rejected it — leave the decision pending so the operator can retry/reject.
-    return {"decision": decision, "execution": result}
+        # paper_sim rejected it — leave the decision pending so the operator can retry/reject.
+        return {"decision": decision, "execution": result}
 
 
 @router.post("/{decision_id}/reject")

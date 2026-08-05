@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 
 from fastapi import APIRouter
 
@@ -16,6 +15,7 @@ from backend.integrations.registry import (
 from backend.models.recommendations import FeedSource
 from backend.services.feed_health import get_feed_sources
 from backend.services.kill_switch_state import get_kill_switch_state
+from backend.services.supervision_mode import get_supervision_mode
 from backend.services.trade_executor import get_active_trade_id, is_one_trade_locked
 
 logger = logging.getLogger(__name__)
@@ -30,7 +30,7 @@ def is_kill_switch_armed() -> bool:
 
 @router.get("/bot/status")
 async def bot_status():
-    supervision = os.getenv("SUPERVISION_MODE", "supervised").strip().lower()
+    supervision = get_supervision_mode()
     guard = paper_stack_guard_status()
     armed = is_kill_switch_armed()
     metrics: dict = {

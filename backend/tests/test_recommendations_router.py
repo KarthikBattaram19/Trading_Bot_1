@@ -43,8 +43,8 @@ async def test_supervised_mode_skips_autonomous_execution(monkeypatch):
     assert "supervision" in result.autonomous_execution.message.lower()
 
 
-async def test_autonomous_mode_still_executes(monkeypatch):
-    monkeypatch.setenv("SUPERVISION_MODE", "autonomous")
+async def test_fully_autonomous_mode_still_executes(monkeypatch):
+    monkeypatch.setenv("SUPERVISION_MODE", "fully_autonomous")
     calls: list[object] = []
 
     async def _fake_execute(recs, **kwargs):
@@ -69,3 +69,55 @@ async def test_autonomous_mode_still_executes(monkeypatch):
 
     assert len(calls) == 1
     assert result.autonomous_execution.executed is True
+
+
+async def test_semi_autonomous_mode_skips_autonomous_execution(monkeypatch):
+    monkeypatch.setenv("SUPERVISION_MODE", "semi_autonomous")
+    calls: list[object] = []
+
+    async def _fake_execute(recs, **kwargs):
+        calls.append(recs)
+        raise AssertionError("must not execute in semi_autonomous mode")
+
+    monkeypatch.setattr(
+        recommendations_router, "execute_autonomous_from_recommendations", _fake_execute
+    )
+
+    async def _fake_generate(*, force_refresh=False):
+        return _StubResponse([])
+
+    monkeypatch.setattr(recommendations_router, "generate_recommendations", _fake_generate)
+
+    result = await recommendations_router._recommendations_with_autonomous_execution(
+        force_refresh=True
+    )
+
+    assert calls == []
+    assert result.autonomous_execution.executed is False
+    assert "supervision" in result.autonomous_execution.message.lower()
+
+
+async def test_blank_or_unset_supervision_mode_skips_autonomous_execution(monkeypatch):
+    monkeypatch.setenv("SUPERVISION_MODE", "")
+    calls: list[object] = []
+
+    async def _fake_execute(recs, **kwargs):
+        calls.append(recs)
+        raise AssertionError("must not execute with a blank supervision mode")
+
+    monkeypatch.setattr(
+        recommendations_router, "execute_autonomous_from_recommendations", _fake_execute
+    )
+
+    async def _fake_generate(*, force_refresh=False):
+        return _StubResponse([])
+
+    monkeypatch.setattr(recommendations_router, "generate_recommendations", _fake_generate)
+
+    result = await recommendations_router._recommendations_with_autonomous_execution(
+        force_refresh=True
+    )
+
+    assert calls == []
+    assert result.autonomous_execution.executed is False
+    assert "supervision" in result.autonomous_execution.message.lower()

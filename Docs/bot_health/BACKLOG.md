@@ -42,11 +42,16 @@ deprioritized behind any open P0/P1 item.
     `backend/tests/test_decisions.py` (4/4, including a happy-path approve
     that asserts a real position lands in `engine.ledger.positions`) and
     `backend/tests/test_decision_state.py` (3/3, including a simulated-
-    restart test). **Not addressed by this fix:** excluding seed/demo
-    records from `/learning` metrics — separate half of this bullet, still
-    open; `learning_store.json.outcomes` still holds only the 3 seeded
-    records since this change doesn't produce or need a closed trade to
-    verify wiring.
+    restart test). **Not addressed by this fix:** `learning_store.json.outcomes`
+    still holds only the 3 seeded records since this change doesn't produce
+    or need a closed trade to verify wiring.
+- [ ] Exclude seed/demo records from `/learning` metrics — the other half
+  of the original P0 approve/reject item (see the resolved wiring bullet
+  above), still open. `learning_store.json.outcomes` still holds only
+  `trd_seed_*` records; real closed trades will start flowing once
+  `POST /decisions/{id}/approve` is used against live recommendations, but
+  the seed-exclusion filter itself has not been implemented. (first seen
+  2026-08-02, still open 2026-08-05)
 - [x] **Kill-switch armed state was an in-memory global, resetting to
   unarmed on every restart.** `backend/services/kill_switch_state.py` adds a
   small JSON-file-backed `KillSwitchState` (`backend/data/kill_switch_state.json`,
