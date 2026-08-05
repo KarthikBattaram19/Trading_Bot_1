@@ -353,6 +353,35 @@ def test_live_rss_ingest_mocked(monkeypatch: pytest.MonkeyPatch):
     assert "sample_headlines.json" not in (feed.detail or "")
 
 
+def test_rank_for_window_uses_trust_tier_not_window_membership():
+    """An off-window Tier-2 source (Reuters) must outrank an in-window Tier-5
+    source (Pulse) — windows are freshness labels, not a ranking penalty."""
+    from backend.services.market_news.ingest import RawHeadline, _rank_for_window
+
+    contract = load_curation_contract()
+    items = [
+        RawHeadline(
+            title="Pulse roundup",
+            summary="s",
+            source="Pulse by Zerodha",
+            source_id="pulse",
+            time_published="20260730T090000",
+        ),
+        RawHeadline(
+            title="Reuters news",
+            summary="s",
+            source="Reuters India",
+            source_id="reuters",
+            time_published="20260730T090000",
+        ),
+    ]
+    # "session" window includes pulse (in_window=0) but not reuters (in_window=1).
+    # With window-ranking, old code would rank pulse first despite lower trust tier.
+    # With trust-tier-only ranking, reuters should come first due to bot_priority order.
+    ranked = _rank_for_window(items, contract, "session")
+    assert ranked[0].source_id == "reuters"
+
+
 def test_parse_pubdate_formats():
     from backend.services.market_news.feeds import parse_pubdate
     from zoneinfo import ZoneInfo

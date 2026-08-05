@@ -178,12 +178,17 @@ def _rank_for_window(
     contract: CurationContract,
     workflow_window: str | None,
 ) -> list[RawHeadline]:
-    window_sources = set(contract.sources_for_window(workflow_window or ""))
+    """Rank by trust tier (``bot_priority`` order), then recency.
+
+    ``workflow_window`` is accepted for call-site compatibility but no
+    longer biases ranking — all curated sources are always in play
+    regardless of time of day (Market_News.txt).
+    """
+    _ = workflow_window
     priority = {sid: idx for idx, sid in enumerate(contract.bot_priority)}
 
-    def sort_key(item: RawHeadline) -> tuple[int, int, str]:
-        in_window = 0 if item.source_id in window_sources else 1
+    def sort_key(item: RawHeadline) -> tuple[int, str]:
         pri = priority.get(item.source_id, 100)
-        return (in_window, pri, item.time_published)
+        return (pri, item.time_published)
 
     return sorted(items, key=sort_key)
