@@ -30,6 +30,7 @@ from backend.models.decisions import (
     TradePlan,
 )
 from backend.models.recommendations import InstrumentRecommendation, StrategyType
+from backend.services.decision_state import get_decision_state_store
 from backend.services.learning_service import get_learning_service
 from backend.services.recommendation_engine import (
     generate_recommendations,
@@ -272,6 +273,20 @@ async def _live_decisions() -> list[DecisionRecord]:
     ]
 
 
+def _apply_decision_state_overlay(decisions: list[DecisionRecord]) -> list[DecisionRecord]:
+    """An operator's approve/reject verdict always wins over the derived status."""
+    store = get_decision_state_store()
+    overlaid: list[DecisionRecord] = []
+    for decision in decisions:
+        state = store.get(decision.decision_id)
+        if state is None:
+            overlaid.append(decision)
+            continue
+        status = DecisionStatus.approved if state.status == "approved" else DecisionStatus.rejected
+        overlaid.append(decision.model_copy(update={"status": status}))
+    return overlaid
+
+
 async def list_decisions() -> list[DecisionRecord]:
     """Full audit trail, newest first, with acted-on records taking precedence."""
     decisions = _acted_on_decisions()
@@ -283,6 +298,7 @@ async def list_decisions() -> list[DecisionRecord]:
             continue
         decisions.append(decision)
 
+    decisions = _apply_decision_state_overlay(decisions)
     decisions.sort(key=lambda d: d.created_at, reverse=True)
     return decisions
 
