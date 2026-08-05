@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { getLearningDashboard, recordTradeOutcome } from "@/lib/api";
-import type { LearningDashboard, TradeOutcomeLabel } from "@/types/learning";
+import { closePaperPosition, getLearningDashboard } from "@/lib/api";
+import type { LearningDashboard } from "@/types/learning";
 import { STRATEGY_LABELS } from "@/types/learning";
 import { Button, Icon, Panel, StatusPill } from "@/components/ui/primitives";
 import { formatDateTime, formatPct } from "@/lib/utils";
@@ -31,7 +31,8 @@ const LOOP_STEPS = [
   },
   {
     title: "Adjust",
-    detail: "Close win/loss/scratch → update module weights; losses write memory.",
+    detail:
+      "paper_sim close → win/loss/scratch from realized PnL; update module weights; losses write memory.",
   },
 ];
 
@@ -54,21 +55,12 @@ export function LearningView({ initial }: { initial: LearningDashboard }) {
   }, []);
 
   const closeTrade = useCallback(
-    async (
-      tradeId: string,
-      outcome: TradeOutcomeLabel,
-      pnl: number,
-      reason: string,
-    ) => {
+    async (tradeId: string) => {
       setClosingId(tradeId);
       setError(null);
       try {
-        await recordTradeOutcome({
-          trade_id: tradeId,
-          outcome,
-          realized_pnl_inr: pnl,
-          exit_reason: reason,
-        });
+        // Real ledger close — paper_sim computes PnL and feeds learning (§12.2).
+        await closePaperPosition(tradeId);
         await refresh();
       } catch (e) {
         setError(e instanceof Error ? e.message : "Close failed");
@@ -169,23 +161,25 @@ export function LearningView({ initial }: { initial: LearningDashboard }) {
         <section className="space-y-3">
           <div>
             <h2 className="text-headline-md text-on-surface">
-              Open Trades — record outcome
+              Open Trades — close via paper_sim
             </h2>
             <p className="mt-1 text-data-md text-on-surface-variant">
-              Closing a trade writes the result into learning. Losses become
-              failure-memory lessons that penalize similar future setups.
+              Closing flattens the paper_sim position at live marks. Realized
+              P&amp;L feeds learning automatically — losses become failure-memory
+              lessons that penalize similar future setups (§12).
             </p>
           </div>
           {data.open_trades.length === 0 ? (
             <div className="rounded-md border border-outline-variant bg-surface p-6 text-center text-data-md text-on-surface-variant">
-              No open trades awaiting an outcome. Open one from{" "}
+              No open trades awaiting an outcome. Approve a recommendation from{" "}
               <a
                 href="/recommendations"
                 className="text-primary underline-offset-2 hover:underline"
               >
                 Recommendations
               </a>{" "}
-              (ranked fallback), then return here to mark win / loss / scratch.
+              (supervised) or Positions, then return here after the paper_sim
+              position is open.
             </div>
           ) : (
             data.open_trades.map((t) => (
@@ -223,46 +217,11 @@ export function LearningView({ initial }: { initial: LearningDashboard }) {
                       size="sm"
                       variant="primary"
                       disabled={closingId === t.trade_id}
-                      onClick={() =>
-                        closeTrade(
-                          t.trade_id,
-                          "win",
-                          2500,
-                          "Target hit — IV mean reversion",
-                        )
-                      }
+                      onClick={() => closeTrade(t.trade_id)}
                     >
-                      Mark win (+₹2,500)
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="danger"
-                      disabled={closingId === t.trade_id}
-                      onClick={() =>
-                        closeTrade(
-                          t.trade_id,
-                          "loss",
-                          -3200,
-                          "Stop hit — adverse IV path",
-                        )
-                      }
-                    >
-                      Mark loss (−₹3,200)
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      disabled={closingId === t.trade_id}
-                      onClick={() =>
-                        closeTrade(
-                          t.trade_id,
-                          "scratch",
-                          -150,
-                          "Flattened near flat — costs only",
-                        )
-                      }
-                    >
-                      Scratch
+                      {closingId === t.trade_id
+                        ? "Closing…"
+                        : "Close via paper_sim"}
                     </Button>
                   </div>
                 </div>

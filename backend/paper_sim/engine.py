@@ -488,6 +488,19 @@ class PaperEngine:
         closed, fills, pnl = self.ledger.close_position(
             position_id, marks, self.config.slippage_bps
         )
+        # Architecture §12.2 / §12.7 — ledger close is the learning input.
+        try:
+            from backend.services.learning_service import get_learning_service
+
+            get_learning_service().record_ledger_close(
+                position_id,
+                realized_pnl_inr=float(pnl),
+                exit_reason="paper_sim close",
+            )
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).exception(
+                "learning record_ledger_close failed for position_id=%s", position_id
+            )
         return {
             "success": True,
             "path": "paper_sim",

@@ -247,12 +247,19 @@ async def test_lock_survives_simulated_process_restart(tmp_path, monkeypatch):
 async def test_seeded_demo_open_trade_does_not_lock(tmp_path, monkeypatch):
     """The bundled demo fixture trade (trade_id 'trd_seed_...') must never
     block real autonomous entries — only genuine open trades count."""
+    import json
+
     store_path = tmp_path / "learning_store.json"
     svc = LearningService(store_path=store_path)  # seeds a demo open trade
     monkeypatch.setattr(trade_executor, "get_learning_service", lambda: svc)
 
-    seeded = svc.list_open_trades()
-    assert any(t.trade_id.startswith("trd_seed") for t in seeded)
+    raw = json.loads(store_path.read_text(encoding="utf-8"))
+    assert any(
+        str(t.get("trade_id", "")).startswith("trd_seed")
+        for t in raw.get("open_trades", [])
+    )
+    # Public open-trade list excludes seeds so /learning Mark Win/Loss stays real.
+    assert svc.list_open_trades() == []
 
     assert trade_executor.is_one_trade_locked() is False
     assert trade_executor.get_active_trade_id() is None

@@ -28,9 +28,21 @@ def is_win(pnl: float, outcome_label: str | None, strategy: str) -> bool | None:
 
 
 def is_seed_outcome(row: dict[str, Any]) -> bool:
+    """True for bundled demo/fixture rows that must never enter §12 metrics."""
     tid = str(row.get("trade_id") or "")
     oid = str(row.get("outcome_id") or "")
-    return "_seed_" in tid or tid.startswith("trd_seed") or oid.startswith("out_seed") or "_seed_" in oid
+    fid = str(row.get("failure_id") or "")
+    snap = row.get("recommendation_snapshot")
+    snap_seed = isinstance(snap, dict) and bool(snap.get("seed"))
+    return (
+        snap_seed
+        or "_seed_" in tid
+        or tid.startswith("trd_seed")
+        or oid.startswith("out_seed")
+        or "_seed_" in oid
+        or fid.startswith("fm_seed")
+        or "_seed_" in fid
+    )
 
 
 def raw_x_from_outcome(row: dict[str, Any]) -> float:

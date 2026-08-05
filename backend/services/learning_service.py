@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from backend.analytics.confidence_calibration import is_seed_outcome
 from backend.models.learning import (
     AdaptationEvent,
     CloseTradeRequest,
@@ -34,7 +35,7 @@ from backend.models.recommendations import InstrumentRecommendation
 STORE_PATH = Path(__file__).resolve().parents[1] / "data" / "learning_store.json"
 
 # Bump when seed payload shape changes so existing paper stores can backfill.
-SEED_VERSION = 2
+SEED_VERSION = 3
 
 # §12.6 — confidence penalty when top failure contexts match
 FAILURE_CONFIDENCE_PENALTY = 0.10
@@ -198,24 +199,48 @@ def _seed_open_trade(opened_at: str | None = None) -> dict[str, Any]:
 
 
 def _build_seeded_store() -> dict[str, Any]:
-    """Full paper demo store — failures, matching outcomes, and one open trade."""
+    """Full paper demo store — failures, matching outcomes, and one open trade.
+
+    Fixtures stay on disk for migration/local UX only. Dashboard metrics,
+    failure-memory retrieval, and adaptation (§12) exclude every seed row.
+    """
     base = _now().isoformat()
     failures = _seed_failure_memories(base)
     outcomes = _seed_outcomes_from_failures(failures)
-    total_pnl = sum(float(o["realized_pnl_inr"]) for o in outcomes)
     store = _empty_store()
     store["failure_memories"] = failures
     store["outcomes"] = outcomes
     store["open_trades"] = [_seed_open_trade(base)]
+    # Neutral weights — seeded losses must not pre-bias module reweighting.
     store["module_weights"] = {
-        "simple_volatility": 0.95,
-        "gamma_scalping": 0.92,
-        "vega_scalping": 0.90,
+        "simple_volatility": 1.0,
+        "gamma_scalping": 1.0,
+        "vega_scalping": 1.0,
     }
-    store["equity_inr"] = total_pnl
+    store["equity_inr"] = 0.0
     store["peak_equity_inr"] = 0.0
     store["seed_version"] = SEED_VERSION
     return store
+
+
+def _real_outcomes(store: dict[str, Any]) -> list[dict[str, Any]]:
+    return [o for o in store.get("outcomes", []) if not is_seed_outcome(o)]
+
+
+def _real_open_trades(store: dict[str, Any]) -> list[dict[str, Any]]:
+    return [t for t in store.get("open_trades", []) if not is_seed_outcome(t)]
+
+
+def _real_failure_memories(store: dict[str, Any]) -> list[dict[str, Any]]:
+    return [f for f in store.get("failure_memories", []) if not is_seed_outcome(f)]
+
+
+def _outcome_label_from_pnl(pnl: float) -> TradeOutcomeLabel:
+    if pnl > 0:
+        return TradeOutcomeLabel.win
+    if pnl < 0:
+        return TradeOutcomeLabel.loss
+    return TradeOutcomeLabel.scratch
 
 
 class LearningService:
@@ -237,35 +262,44 @@ class LearningService:
 
     def _migrate_incomplete_seed(self, store: dict[str, Any]) -> bool:
         """
-        v1 stores only seeded failure_memories, leaving /learning looking frozen
-        (0 closed, empty attribution, no Mark Win/Loss). Backfill when the
-        operator has not recorded any real outcomes yet.
+        Keep fixture rows for local UX, but never let them bias §12 metrics.
+
+        v1→v2: backfill outcomes/open trade when the operator had only failures.
+        v2→v3: neutralize seed-derived equity / module weights so reporting is clean.
         """
         version = int(store.get("seed_version") or 1)
-        if version >= SEED_VERSION:
-            return False
+        changed = False
 
-        outcomes = store.get("outcomes") or []
-        # Do not rewrite stores that already have operator-recorded outcomes.
-        if outcomes:
+        if version < 2:
+            outcomes = store.get("outcomes") or []
+            # Do not rewrite stores that already have operator-recorded outcomes.
+            if not outcomes:
+                failures = store.get("failure_memories") or _seed_failure_memories()
+                store["failure_memories"] = failures
+                store["outcomes"] = _seed_outcomes_from_failures(failures)
+                open_trades = store.get("open_trades") or []
+                if not open_trades:
+                    store["open_trades"] = [_seed_open_trade()]
+                changed = True
+            store["seed_version"] = 2
+            version = 2
+            changed = True
+
+        if version < SEED_VERSION:
+            real = _real_outcomes(store)
+            store["module_weights"] = {
+                "simple_volatility": 1.0,
+                "gamma_scalping": 1.0,
+                "vega_scalping": 1.0,
+            }
+            # Equity / peak from real closes only (seed PnL excluded).
+            equity = sum(float(o.get("realized_pnl_inr") or 0.0) for o in real)
+            store["equity_inr"] = equity
+            store["peak_equity_inr"] = max(0.0, equity)
             store["seed_version"] = SEED_VERSION
-            return True
+            changed = True
 
-        failures = store.get("failure_memories") or _seed_failure_memories()
-        store["failure_memories"] = failures
-        store["outcomes"] = _seed_outcomes_from_failures(failures)
-        open_trades = store.get("open_trades") or []
-        if not open_trades:
-            store["open_trades"] = [_seed_open_trade()]
-        store["module_weights"] = {
-            "simple_volatility": 0.95,
-            "gamma_scalping": 0.92,
-            "vega_scalping": 0.90,
-        }
-        total_pnl = sum(float(o["realized_pnl_inr"]) for o in store["outcomes"])
-        store["equity_inr"] = float(store.get("equity_inr") or 0.0) or total_pnl
-        store["seed_version"] = SEED_VERSION
-        return True
+        return changed
 
     def _read(self) -> dict[str, Any]:
         self._ensure_store()
@@ -291,7 +325,7 @@ class LearningService:
     ) -> list[FailureMemoryMatch]:
         store = self._read()
         scored: list[tuple[float, dict[str, Any]]] = []
-        for fm in store.get("failure_memories", []):
+        for fm in _real_failure_memories(store):
             score = 0.0
             if fm.get("strategy") == strategy:
                 score += 0.45
@@ -420,7 +454,37 @@ class LearningService:
 
     def list_open_trades(self) -> list[OpenTradeRecord]:
         store = self._read()
-        return [OpenTradeRecord.model_validate(t) for t in store.get("open_trades", [])]
+        return [
+            OpenTradeRecord.model_validate(t) for t in _real_open_trades(store)
+        ]
+
+    def record_ledger_close(
+        self,
+        trade_id: str,
+        *,
+        realized_pnl_inr: float,
+        exit_reason: str = "paper_sim close",
+    ) -> TradeOutcomeRecord | None:
+        """
+        Map a real paper_sim ledger close into the learning loop (§12.2 / §12.7).
+
+        No-ops when the position was never registered as an open learning trade
+        (e.g. ad-hoc paper_sim positions without a recommendation lineage) or
+        when the open trade is a bundled seed fixture.
+        """
+        opened = self.get_open_trade(trade_id)
+        if opened is None:
+            return None
+        if is_seed_outcome({"trade_id": trade_id}):
+            return None
+        return self.record_outcome(
+            CloseTradeRequest(
+                trade_id=trade_id,
+                outcome=_outcome_label_from_pnl(float(realized_pnl_inr)),
+                realized_pnl_inr=float(realized_pnl_inr),
+                exit_reason=exit_reason,
+            )
+        )
 
     def record_outcome(self, request: CloseTradeRequest) -> TradeOutcomeRecord:
         """Close a trade, attribute P&L, write failure memory on loss, check adaptation."""
@@ -539,7 +603,7 @@ class LearningService:
     def _update_module_weight(self, store: dict[str, Any], strategy: str) -> None:
         outcomes = [
             o
-            for o in store.get("outcomes", [])
+            for o in _real_outcomes(store)
             if o.get("strategy") == strategy
         ]
         if len(outcomes) < 3:
@@ -553,12 +617,12 @@ class LearningService:
         weights[strategy] = round(max(0.5, min(1.5, current + delta)), 3)
 
     def _maybe_adapt(self, store: dict[str, Any]) -> AdaptationEvent | None:
-        outcomes = store.get("outcomes", [])
+        outcomes = _real_outcomes(store)
         if len(outcomes) < MIN_TRADES_FOR_ADAPTATION:
             return None
 
-        # Freeze on drawdown (§12.5)
-        equity = float(store.get("equity_inr", 0.0))
+        # Freeze on drawdown (§12.5) — equity from real closes only
+        equity = sum(float(o["realized_pnl_inr"]) for o in outcomes)
         peak = float(store.get("peak_equity_inr", 0.0))
         if peak > 0:
             dd_pct = max(0.0, (peak - equity) / abs(peak) * 100.0)
@@ -617,7 +681,7 @@ class LearningService:
         store = self._read()
         weights = store.get("module_weights", {})
         by_strat: dict[str, list[dict[str, Any]]] = {}
-        for o in store.get("outcomes", []):
+        for o in _real_outcomes(store):
             by_strat.setdefault(o["strategy"], []).append(o)
 
         result: dict[str, ModuleAttribution] = {}
@@ -648,14 +712,14 @@ class LearningService:
     def dashboard(self) -> LearningDashboard:
         store = self._read()
         outcomes = [
-            TradeOutcomeRecord.model_validate(o) for o in store.get("outcomes", [])
+            TradeOutcomeRecord.model_validate(o) for o in _real_outcomes(store)
         ]
         open_trades = [
-            OpenTradeRecord.model_validate(t) for t in store.get("open_trades", [])
+            OpenTradeRecord.model_validate(t) for t in _real_open_trades(store)
         ]
         failures = [
             FailureMemoryEntry.model_validate(f)
-            for f in store.get("failure_memories", [])
+            for f in _real_failure_memories(store)
         ]
         adaptations = [
             AdaptationEvent.model_validate(a)
@@ -670,7 +734,7 @@ class LearningService:
         gross_loss = abs(sum(o.realized_pnl_inr for o in outcomes if o.realized_pnl_inr < 0))
         pf = (gross_win / gross_loss) if gross_loss > 0 else None
 
-        equity = float(store.get("equity_inr", 0.0))
+        equity = total_pnl
         peak = float(store.get("peak_equity_inr", 0.0))
         frozen = False
         freeze_reason = None
@@ -686,14 +750,21 @@ class LearningService:
             reverse=True,
         )
 
+        seed_outcomes = sum(1 for o in store.get("outcomes", []) if is_seed_outcome(o))
         notes = [
             "Every closed trade feeds module attribution and failure memory (§12).",
             "Pre-trade: similar failure contexts penalize confidence by −0.10 (§12.6).",
             "Adaptation triggers (win rate, drawdown) run under walk-forward / freeze guards (§12.5).",
-            f"Failure memory entries: {len(failures)} (includes seeded historical losses).",
+            "Reporting metrics use real paper_sim ledger closes only — seed/demo fixtures are excluded.",
         ]
+        if seed_outcomes:
+            notes.append(
+                f"{seed_outcomes} bundled demo fixture(s) are stored but excluded from metrics."
+            )
         if wr is not None:
             notes.append(f"Rolling win rate on {len(decided)} decided trades: {wr:.0%}.")
+        elif not outcomes:
+            notes.append("No real closed trades yet — approve a recommendation and close via paper_sim.")
 
         return LearningDashboard(
             as_of=_now(),

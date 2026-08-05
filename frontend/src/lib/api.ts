@@ -278,6 +278,29 @@ export async function getPaperAutomationStatus(): Promise<PaperAutomationStatus>
   return fetchJson<PaperAutomationStatus>("/api/v1/paper-sim/automation/status");
 }
 
+/** Flatten an open paper_sim position; learning is fed from the ledger close (§12). */
+export async function closePaperPosition(
+  positionId: string,
+): Promise<Record<string, unknown>> {
+  if (useMockData()) {
+    return {
+      success: true,
+      path: "paper_sim",
+      realized_pnl: 0,
+      position: { position_id: positionId, status: "closed" },
+    };
+  }
+  const res = await fetch(
+    `${API_URL}/api/v1/paper-sim/positions/${encodeURIComponent(positionId)}/close`,
+    { method: "POST" },
+  );
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`Paper close failed: ${res.status} ${text}`);
+  }
+  return res.json() as Promise<Record<string, unknown>>;
+}
+
 export async function getRiskSnapshot(): Promise<RiskSnapshot> {
   if (useMockData()) {
     return {

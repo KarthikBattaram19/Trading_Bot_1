@@ -51,13 +51,19 @@ deprioritized behind any open P0/P1 item.
     restart test). **Not addressed by this fix:** `learning_store.json.outcomes`
     still holds only the 3 seeded records since this change doesn't produce
     or need a closed trade to verify wiring.
-- [ ] Exclude seed/demo records from `/learning` metrics — the other half
+- [x] Exclude seed/demo records from `/learning` metrics — the other half
   of the original P0 approve/reject item (see the resolved wiring bullet
-  above), still open. `learning_store.json.outcomes` still holds only
-  `trd_seed_*` records; real closed trades will start flowing once
-  `POST /decisions/{id}/approve` is used against live recommendations, but
-  the seed-exclusion filter itself has not been implemented. (first seen
-  2026-08-02, still open 2026-08-05)
+  above). (first seen 2026-08-02, still open 2026-08-05;
+  **resolved 2026-08-05**, evidence:
+  `backend/services/learning_service.py` `dashboard()` / `_module_stats()` /
+  `retrieve_failure_matches()` / `_maybe_adapt()` filter via
+  `is_seed_outcome`; `SEED_VERSION=3` neutralizes seed-derived module
+  weights/equity; `PaperEngine.close_position` calls
+  `LearningService.record_ledger_close` so real paper_sim closes feed §12;
+  confirmed by `backend/tests/test_learning_seed.py` —
+  `test_fresh_store_dashboard_excludes_seed_metrics`,
+  `test_seeded_failures_do_not_penalize_confidence`,
+  `test_paper_sim_close_feeds_learning_outcome`)
 - [x] **Kill-switch armed state was an in-memory global, resetting to
   unarmed on every restart.** `backend/services/kill_switch_state.py` adds a
   small JSON-file-backed `KillSwitchState` (`backend/data/kill_switch_state.json`,

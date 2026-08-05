@@ -28,6 +28,8 @@ def test_is_win_v1_pnl_positive():
 def test_is_seed_outcome():
     assert is_seed_outcome({"trade_id": "trd_seed_tatasteel_001"}) is True
     assert is_seed_outcome({"outcome_id": "out_seed_001"}) is True
+    assert is_seed_outcome({"failure_id": "fm_seed_tatasteel_vega"}) is True
+    assert is_seed_outcome({"recommendation_snapshot": {"seed": True}}) is True
     assert is_seed_outcome({"trade_id": "trd_live_001"}) is False
 
 
