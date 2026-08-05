@@ -87,6 +87,24 @@ _BEARISH_RE = re.compile(
 )
 _BREAKING_RE = re.compile(r"\b(breaking|flash|urgent|just.?in)\b", re.I)
 
+# Trust tier weight for dominant_tone aggregation — mirrors Market_News.txt's
+# "For the AI trading bot" priority order (Tier 1 official/regulatory down to
+# Tier 4 aggregator/TV). Higher tiers dominate when sources disagree on tone.
+_SOURCE_TRUST_WEIGHT: dict[str, float] = {
+    "nse": 2.0,
+    "sebi": 2.0,
+    "reuters": 1.5,
+    "moneycontrol": 1.0,
+    "economic_times": 1.0,
+    "pulse": 0.6,
+    "cnbc_tv18": 0.6,
+}
+_DEFAULT_TRUST_WEIGHT = 1.0
+
+
+def _trust_weight(source_id: str) -> float:
+    return _SOURCE_TRUST_WEIGHT.get(source_id, _DEFAULT_TRUST_WEIGHT)
+
 
 @dataclass
 class ClassifiedHeadline:
@@ -226,7 +244,10 @@ def aggregate_packet_flags(
     event_imminent = False
 
     for item in items:
-        tone_scores[item.tone] = tone_scores.get(item.tone, 0.0) + abs(item.sentiment_score) + 0.25
+        weight = _trust_weight(item.source_id)
+        tone_scores[item.tone] = (
+            tone_scores.get(item.tone, 0.0) + (abs(item.sentiment_score) + 0.25) * weight
+        )
         topics.extend(item.topics)
         symbols.extend(item.tickers)
         if "earnings" in item.topics:

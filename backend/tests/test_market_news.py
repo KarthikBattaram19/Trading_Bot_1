@@ -394,3 +394,36 @@ def test_parse_pubdate_formats():
     compact = parse_pubdate("20260731T073000")
     assert compact is not None
     assert compact.hour == 7
+
+
+def test_dominant_tone_weighted_by_source_trust_tier():
+    """A single Tier-1 (NSE) bearish headline must outweigh two Tier-4
+    (CNBC/Pulse) bullish headlines on dominant_tone."""
+    from backend.services.market_news.classifier import (
+        aggregate_packet_flags,
+        classify_headline,
+    )
+
+    bearish_nse = classify_headline(
+        title="NSE flags sharp guidance cut, downgrade wave hits sector",
+        summary="Regulatory filing shows weak outlook.",
+        source="NSE India",
+        source_id="nse",
+        time_published="20260730T090000",
+    )
+    bullish_cnbc = classify_headline(
+        title="Markets rally as traders cheer surge in sentiment",
+        summary="Upgrade chatter on CNBC panel.",
+        source="CNBC TV18",
+        source_id="cnbc_tv18",
+        time_published="20260730T090100",
+    )
+    bullish_pulse = classify_headline(
+        title="Rebound continues, gains extend into afternoon session",
+        summary="Roundup shows broad recovery.",
+        source="Pulse by Zerodha",
+        source_id="pulse",
+        time_published="20260730T090200",
+    )
+    flags = aggregate_packet_flags([bearish_nse, bullish_cnbc, bullish_pulse])
+    assert flags["dominant_tone"] == "bearish"
