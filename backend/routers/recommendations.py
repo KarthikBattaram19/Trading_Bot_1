@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
@@ -17,7 +19,20 @@ router = APIRouter(prefix="/api/v1/recommendations", tags=["recommendations"])
 async def _autonomous_execution_for(
     recommendations: list[InstrumentRecommendation],
 ) -> AutonomousExecutionResult:
-    """Run ranked fallback immediately after recommendations are generated."""
+    """Run ranked fallback immediately after recommendations are generated —
+    only when SUPERVISION_MODE=autonomous. Under the default "supervised"
+    mode, a fresh GET never opens a trade; POST /decisions/{id}/approve does."""
+    supervision = os.getenv("SUPERVISION_MODE", "supervised").strip().lower()
+    if supervision == "supervised":
+        return AutonomousExecutionResult(
+            executed=False,
+            attempts=[],
+            message=(
+                "Supervision mode requires explicit approval — "
+                "see POST /api/v1/decisions/{id}/approve"
+            ),
+        )
+
     if is_one_trade_locked():
         return AutonomousExecutionResult(
             executed=False,
