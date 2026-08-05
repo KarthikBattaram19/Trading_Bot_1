@@ -354,7 +354,7 @@ def test_live_rss_ingest_mocked(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_rank_for_window_uses_trust_tier_not_window_membership():
-    """An off-window Tier-2 source (Reuters) must outrank an in-window Tier-5
+    """An off-window Tier-1 source (NSE) must outrank an in-window Tier-4
     source (Pulse) — windows are freshness labels, not a ranking penalty."""
     from backend.services.market_news.ingest import RawHeadline, _rank_for_window
 
@@ -368,18 +368,17 @@ def test_rank_for_window_uses_trust_tier_not_window_membership():
             time_published="20260730T090000",
         ),
         RawHeadline(
-            title="Reuters news",
+            title="NSE circular",
             summary="s",
-            source="Reuters India",
-            source_id="reuters",
+            source="NSE India",
+            source_id="nse",
             time_published="20260730T090000",
         ),
     ]
-    # "session" window includes pulse (in_window=0) but not reuters (in_window=1).
-    # With window-ranking, old code would rank pulse first despite lower trust tier.
-    # With trust-tier-only ranking, reuters should come first due to bot_priority order.
-    ranked = _rank_for_window(items, contract, "session")
-    assert ranked[0].source_id == "reuters"
+    # "pre_open" window's in-window sources do not include nse or pulse,
+    # so with window-ranking removed, trust tier alone decides order.
+    ranked = _rank_for_window(items, contract, "pre_open")
+    assert ranked[0].source_id == "nse"
 
 
 def test_parse_pubdate_formats():
