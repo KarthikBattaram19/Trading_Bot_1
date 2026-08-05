@@ -2,7 +2,7 @@
 
 > **Used by:** Architecture §8.8, `Docs/Trading_Strategies.md` (Table SH-4 news overlay), `Docs/Paper_Simulator.md`, `Docs/Trading_Parameters.md` Part U
 
-Ops-editable list of preferred India news sources and pull windows for **sentiment / event flags**. Quant signals (GARCH, IV z-score) stay primary; this file defines **what to read and when** so the bot can gate strategy selection and paper-sim automation.
+Ops-editable list of preferred India news sources and pull windows for **sentiment / event flags**. Quant signals (GARCH, IV z-score) stay primary; this file defines **what to read, in what priority, and when it's expected to be fresh** so the bot can gate strategy selection and paper-sim automation.
 
 ## Monitor
 
@@ -11,8 +11,17 @@ Ops-editable list of preferred India news sources and pull windows for **sentime
 - The Economic Times – Markets — macroeconomic news
 - Reuters India — fast, factual coverage with minimal speculation
 - Pulse by Zerodha — consolidated headlines
+- SEBI circulars — regulatory notices
+- CNBC TV18 — market TV coverage
 
 ## Recommended daily workflow
+
+All 7 curated sources are ingested continuously, every cycle, regardless of
+time of day — nothing is skipped outside its window. The windows below
+describe when each source is *expected* to publish fresh headlines, for
+dashboard/staleness display only; they are **not** a ranking penalty. An
+off-window source with a real headline still ranks by its trust tier
+(below), never last by default.
 
 ### Before market open (8:00–9:00 AM IST)
 
@@ -35,17 +44,19 @@ Ops-editable list of preferred India news sources and pull windows for **sentime
 
 ## For the AI trading bot / paper-sim
 
-Build the news ingestion pipeline (`backend/services/market_news/` or equivalent) around this priority order:
+Build the news ingestion pipeline (`backend/services/market_news/` or equivalent) around this priority order — a trust tier, highest first. Within a tier, list order is the tie-break. This list is the actual ranking key the bot uses (`curation.py::_rank_for_window`), and also weights how much each source's tone counts toward `dominant_tone` when sources disagree (`classifier.py`) — higher tiers dominate lower ones.
 
-1. Reuters (high-quality, low-noise)
-2. Moneycontrol
-3. Economic Times
-4. NSE corporate announcements
-5. SEBI circulars
+1. NSE India (Tier 1 — official/regulatory)
+2. SEBI circulars (Tier 1 — official/regulatory)
+3. Reuters (Tier 2 — wire, low-noise)
+4. Moneycontrol (Tier 3 — general market press)
+5. Economic Times (Tier 3 — general market press)
+6. Pulse by Zerodha (Tier 4 — aggregator)
+7. CNBC TV18 (Tier 4 — TV)
 
 This mix feeds sentiment and event-driven gates for:
 
 - Live recommendations (`GET /api/v1/recommendations` → `market_news`)
 - Paper simulator (`GET /api/v1/paper-sim/news` + `/signals`) acting per `Trading_Strategies.md`
 
-Map classified tone / topics / symbol tags through Table SH-4 (Architecture §8.8.4). Unplanned earnings or news the setup was not designed to absorb → Shared Kill (`kill_event`).
+Map classified tone / topics / symbol tags through Table SH-4 (Architecture §8.8.4). Shock/crisis tone is still classified and shown (topic tag, bearish sentiment, macro risk flag) — it does not auto-flatten positions or auto-block entries on its own; it flows through the same bearish-tone `early_exit` path as any other adverse headline.

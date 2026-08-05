@@ -37,9 +37,15 @@ def _clear_news_cache(monkeypatch: pytest.MonkeyPatch):
 def test_curation_contract_loads_market_news_txt():
     contract = load_curation_contract()
     assert contract.loaded is True
-    assert "reuters" in contract.bot_priority
-    assert contract.bot_priority[0] == "reuters"
-    assert "moneycontrol" in contract.bot_priority
+    assert contract.bot_priority == (
+        "nse",
+        "sebi",
+        "reuters",
+        "moneycontrol",
+        "economic_times",
+        "pulse",
+        "cnbc_tv18",
+    )
     assert "nse" in contract.windows["session"] or "pulse" in contract.windows["session"]
     assert normalize_source_id("Reuters India") == "reuters"
     assert normalize_source_id("SEBI circulars") == "sebi"
