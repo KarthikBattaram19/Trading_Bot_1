@@ -8,13 +8,15 @@ until a paper broker submit succeeds or all candidates are exhausted.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
 
 from backend.analytics.confidence_calibration import is_seed_outcome
 from backend.models.recommendations import InstrumentRecommendation, StrategyType
 from backend.models.trades import AutonomousExecutionResult, TradeAttemptResult
 from backend.paper_sim.engine import PaperEngine
-from backend.paper_sim.models import PaperLegRequest, PaperSide
+from backend.paper_sim.freshness import StaleMarksError
+from backend.paper_sim.ledger import PaperLedgerError
+from backend.paper_sim.models import PaperLegRequest, PaperOrderRequest, PaperSide
+from backend.paper_sim.service import get_paper_engine
 from backend.services.learning_service import get_learning_service
 from backend.services.universe_enrichment import select_preferred_expiry
 
@@ -93,13 +95,14 @@ def _pre_submit_checks(rec: InstrumentRecommendation) -> str | None:
     return None
 
 
-async def _simulate_broker_submit(
+async def _submit_via_paper_sim(
     rec: InstrumentRecommendation,
     *,
     simulate_first_rank_failure: bool = False,
 ) -> tuple[bool, str | None, str | None]:
     """
-    Submit via broker router (ICICI Direct shadow dry-run by default).
+    Submit via the real paper_sim ledger — the only fill source for autonomous
+    execution (Docs/superpowers/specs/2026-08-04-wire-trade-executor-paper-sim-design.md §2).
 
     `simulate_first_rank_failure` is a test-only injection point for exercising
     the rank-1-rejects/fallback-to-rank-2 path — it must never be enabled from
@@ -115,8 +118,23 @@ async def _simulate_broker_submit(
     if rec.parameters.spread_pct > 2.0:
         return False, None, f"Broker reject: spread {rec.parameters.spread_pct}% exceeds 2% cap"
 
-    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    trade_id = f"trd_{rec.underlying_symbol.lower()}_{ts}"
+    engine = get_paper_engine()
+    leg = await resolve_atm_ce_leg(rec, engine=engine)
+    if leg is None:
+        return False, None, f"Could not resolve an ATM option contract for {rec.underlying_symbol}"
+
+    request = PaperOrderRequest(
+        strategy_tag=rec.strategy.selected_strategy.value,
+        underlying=rec.underlying_symbol,
+        legs=[leg],
+        auto_complete_multi_leg=True,
+    )
+    try:
+        result = await engine.submit_order(request)
+    except (PaperLedgerError, StaleMarksError) as exc:
+        return False, None, f"paper_sim reject: {exc}"
+
+    trade_id = result["position"]["position_id"]
 
     # Log a shadow ICICI Direct payload when the integration is wired (never live-submit here).
     use_icici = os.getenv("USE_ICICI_DIRECT_SHADOW", "true").lower() in ("1", "true", "yes")
@@ -162,7 +180,7 @@ async def execute_autonomous_from_recommendations(
     Try opening a trade on each ranked recommendation in order until one succeeds.
 
     `simulate_first_rank_failure` is a test-only injection point (see
-    `_simulate_broker_submit`) — production callers must leave it at the default.
+    `_submit_via_paper_sim`) — production callers must leave it at the default.
     """
     if not recommendations:
         return AutonomousExecutionResult(
@@ -187,7 +205,7 @@ async def execute_autonomous_from_recommendations(
             )
             continue
 
-        success, trade_id, broker_error = await _simulate_broker_submit(
+        success, trade_id, broker_error = await _submit_via_paper_sim(
             rec, simulate_first_rank_failure=simulate_first_rank_failure
         )
         if success and trade_id:

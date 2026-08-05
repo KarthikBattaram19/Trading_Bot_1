@@ -33,7 +33,7 @@ def _make_recommendation(rank: int, symbol: str = "NIFTY") -> InstrumentRecommen
             primary_signal="test",
         ),
         parameters=ParameterSnapshot(
-            und_price=100.0,
+            und_price=22010.0,
             iv_annualized=0.2,
             garch_forecast=0.18,
             atm_premium_inr=50.0,
@@ -155,10 +155,26 @@ async def test_resolve_atm_ce_leg_returns_none_for_unknown_underlying():
 
 @pytest.fixture(autouse=True)
 def _isolated_learning_service(tmp_path, monkeypatch):
-    """Point trade_executor at a throwaway learning store, not the real one."""
+    """Point trade_executor at throwaway learning + paper_sim stores, not the real ones."""
     svc = LearningService(store_path=tmp_path / "learning_store.json")
     monkeypatch.setattr(trade_executor, "get_learning_service", lambda: svc)
-    yield
+    engine = _make_engine()
+    monkeypatch.setattr(trade_executor, "get_paper_engine", lambda: engine)
+    yield engine
+
+
+async def test_successful_execution_creates_a_real_paper_sim_position(_isolated_learning_service):
+    engine = _isolated_learning_service
+    rec = _make_recommendation(1)
+    rec = rec.model_copy(update={"parameters": rec.parameters.model_copy(update={"und_price": 22010.0})})
+
+    result = await trade_executor.execute_autonomous_from_recommendations([rec])
+
+    assert result.executed is True
+    assert result.trade_id.startswith("pos_")
+    position = engine.ledger.positions[result.trade_id]
+    assert position.status == "open"
+    assert len(position.legs) >= 1
 
 
 async def test_default_never_simulates_rank_1_failure():
