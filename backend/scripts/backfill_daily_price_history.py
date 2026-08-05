@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import sys
 from typing import Any
 
 # Same pilot universe as Docs/superpowers/plans/2026-08-02-vega-reversion-evidence.md
