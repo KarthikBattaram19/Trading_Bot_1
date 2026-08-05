@@ -31,11 +31,17 @@ deprioritized behind any open P0/P1 item.
     real `paper_sim` `position_id`, confirmed by
     `test_successful_execution_creates_a_real_paper_sim_position`.
     `routers/recommendations.py::_autonomous_execution_for` now reads
-    `SUPERVISION_MODE` (default `supervised`, same env var/default
-    `routers/bot.py` already used) and skips execution entirely on a
-    passive `GET` unless `SUPERVISION_MODE=autonomous`, confirmed by
-    `test_supervised_mode_skips_autonomous_execution`/
-    `test_autonomous_mode_still_executes`. `backend/routers/decisions.py`
+    `SUPERVISION_MODE` via a shared `backend/services/supervision_mode.py`
+    accessor (default `supervised`, matching `Docs/architecture.md` §6.2.2's
+    `supervised`/`semi_autonomous`/`fully_autonomous` vocabulary, also now
+    used by `routers/bot.py`) and skips execution entirely on a passive
+    `GET` unless `SUPERVISION_MODE=fully_autonomous` — fails closed on any
+    other value including blank/unset/`semi_autonomous`/a typo — confirmed
+    by `test_supervised_mode_skips_autonomous_execution`/
+    `test_fully_autonomous_mode_still_executes`/
+    `test_semi_autonomous_mode_skips_autonomous_execution`/
+    `test_blank_or_unset_supervision_mode_skips_autonomous_execution`.
+    `backend/routers/decisions.py`
     now exposes real `POST /{id}/approve` and `POST /{id}/reject`, backed
     by a new persisted `backend/services/decision_state.py` store (same
     restart-survival pattern as `kill_switch_state.py`), confirmed by
