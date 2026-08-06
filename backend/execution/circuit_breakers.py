@@ -129,5 +129,5 @@ def evaluate_circuit_breakers(
 
 
 def active_breaker_ids(breakers: tuple[BreakerStatus, ...] | list[BreakerStatus]) -> list[str]:
-    """Ids currently in warn/danger (plus callers may append kill_switch)."""
+    """Ids currently in warn/danger."""
     return [b.id for b in breakers if b.tone in ("warn", "danger")]

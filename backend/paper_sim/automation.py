@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-AutomationState = Literal["stopped", "running", "paused_kill_switch", "degraded"]
+AutomationState = Literal["stopped", "running", "degraded"]
 
 
 def _parse_expiry(raw: str | None) -> datetime | None:
@@ -70,17 +70,16 @@ def _option_type_from_symbol(symbol: str, option_type: str | None = None) -> str
     return None
 
 
-def _is_kill_switch_armed() -> bool:
-    try:
-        from backend.routers.bot import is_kill_switch_armed
-
-        return bool(is_kill_switch_armed())
-    except Exception:  # noqa: BLE001
-        return False
-
-
 class PaperAutomation:
-    """Background tick loop: refresh marks → news kills → γ–θ re-hedge."""
+    """Background tick loop: refresh marks → γ–θ re-hedge.
+
+    News is surfaced here for observability only (``last_news_impact`` /
+    ``last_signal`` in ``status()``) — it never triggers a flatten or biases
+    the hedge. Open positions are managed solely by this mechanical
+    gamma-theta re-hedge and by the strategy's own stop/target/time-exit
+    rules (Docs/Trading_Strategies.md); news can only decline to open a NEW
+    trade via the SH-4 entry overlay (backend/services/strategy_selection.py).
+    """
 
     def __init__(self, engine: PaperEngine) -> None:
         self.engine = engine
@@ -93,7 +92,6 @@ class PaperAutomation:
         self._last_error: str | None = None
         self._ticks = 0
         self._hedges = 0
-        self._flattens = 0
         self._skips = 0
         self._last_news_impact: str | None = None
         self._last_signal: dict[str, Any] | None = None
@@ -102,8 +100,6 @@ class PaperAutomation:
     def state(self) -> AutomationState:
         if not self._running:
             return "stopped"
-        if _is_kill_switch_armed():
-            return "paused_kill_switch"
         if self._last_error:
             return "degraded"
         return "running"
@@ -152,7 +148,9 @@ class PaperAutomation:
             "tick_sec": self.engine.config.automation_tick_sec,
             "ticks": self._ticks,
             "hedges": self._hedges,
-            "flattens": self._flattens,
+            # News never flattens positions (see class docstring); kept as a
+            # literal 0 for API/frontend backward compatibility.
+            "flattens": 0,
             "skips": self._skips,
             "last_error": self._last_error,
             "last_news_impact": self._last_news_impact,
@@ -223,13 +221,6 @@ class PaperAutomation:
         self._last_tick_at = datetime.now(timezone.utc)
         actions: list[dict[str, Any]] = []
 
-        if _is_kill_switch_armed():
-            # PS-08: stop new hedges while kill-switch armed
-            actions.append({"action": "skip", "reason": "kill_switch_armed"})
-            self._skips += 1
-            self._record(actions[-1])
-            return {"actions": actions, "status": self.status()}
-
         # Refresh marks (PS-09: skip actions if refresh fails / stale)
         try:
             marks_result = await self.engine.refresh_marks()
@@ -258,18 +249,26 @@ class PaperAutomation:
             self._last_error = str(exc)
             return {"actions": actions, "status": self.status()}
 
-        from backend.services.market_news import get_market_news
-        from backend.services.strategy_selection import post_entry_news_action
+        # Read-only: news is surfaced on the status payload for operator visibility
+        # but never drives an action here. Open positions close only via the
+        # strategy's own stop/target/time-exit rules or the mechanical re-hedge
+        # below — never because of a news headline (see class docstring).
+        # This read must never be able to block the re-hedge loop below, which
+        # is the only mechanical position-management path left — an ingest /
+        # parse / network failure here degrades observability only.
+        try:
+            from backend.services.market_news import get_market_news
 
-        news = get_market_news()
-        self._last_news_impact = news.news_impact
-        news_action = post_entry_news_action(news, position_open=True)
-        self._last_signal = {
-            "news_impact": news.news_impact,
-            "post_entry_action": news_action,
-            "dominant_tone": news.dominant_tone,
-            "kill_event": news.kill_event,
-        }
+            news = get_market_news()
+            self._last_news_impact = news.news_impact
+            self._last_signal = {
+                "news_impact": news.news_impact,
+                "dominant_tone": news.dominant_tone,
+            }
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("paper_sim automation: news read failed (non-fatal): %s", exc)
+            self._last_news_impact = None
+            self._last_signal = None
 
         open_positions = list(self.engine.positions(status="open"))
         if not open_positions:
@@ -315,35 +314,10 @@ class PaperAutomation:
 
         open_positions = list(self.engine.positions(status="open"))
 
-        # PS-06: news kill / early exit / take_profit prefer flatten over re-hedge
-        if news_action in {"kill_event", "early_exit", "take_profit"}:
-            for position in open_positions:
-                try:
-                    closed = await self.engine.close_position(position.position_id)
-                    actions.append(
-                        {
-                            "action": "flatten",
-                            "reason": news_action,
-                            "position_id": position.position_id,
-                            "realized_pnl": closed.get("realized_pnl"),
-                        }
-                    )
-                    self._flattens += 1
-                    self._record(actions[-1])
-                except Exception as exc:  # noqa: BLE001
-                    actions.append(
-                        {
-                            "action": "flatten_failed",
-                            "position_id": position.position_id,
-                            "detail": str(exc),
-                        }
-                    )
-                    self._record(actions[-1])
-            return {"actions": actions, "status": self.status()}
-
-        aggressive = news_action == "rehedge_aggressive"
+        # Re-hedge is purely mechanical (gamma-theta breakeven), never news-derived.
+        # News can never close, flatten, or otherwise modify an open position.
         for position in open_positions:
-            result = await self._maybe_rehedge(position.position_id, aggressive=aggressive)
+            result = await self._maybe_rehedge(position.position_id)
             actions.append(result)
             self._record(result)
             if result.get("action") == "rehedge":
@@ -435,9 +409,7 @@ class PaperAutomation:
             "total_vega": float(marked.total_vega),
         }
 
-    async def _maybe_rehedge(
-        self, position_id: str, *, aggressive: bool = False
-    ) -> dict[str, Any]:
+    async def _maybe_rehedge(self, position_id: str) -> dict[str, Any]:
         position = self.engine.ledger.positions.get(position_id)
         if position is None or position.status != "open":
             return {"action": "skip", "reason": "position_gone", "position_id": position_id}
@@ -492,7 +464,7 @@ class PaperAutomation:
         )
         position = self.engine.ledger.positions[position_id]
 
-        use_half = bool(cfg.use_half_breakeven) or aggressive
+        use_half = bool(cfg.use_half_breakeven)
         method = position.rehedge_method or cfg.rehedge_method
 
         # §11.4 Greeks limits — skip hedge if portfolio Greeks already breach ceilings
@@ -531,7 +503,6 @@ class PaperAutomation:
             delta_threshold=cfg.delta_threshold,
             use_half_breakeven=use_half,
             method=method,  # type: ignore[arg-type]
-            force=aggressive and be_pct > 0,
         )
 
         if not decision.should_hedge:

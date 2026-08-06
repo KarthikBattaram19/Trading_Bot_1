@@ -147,8 +147,6 @@ class StrategySelectRequest(BaseModel):
         default=None,
         description="Optional MarketNewsSummary-compatible overrides for dry-run",
     )
-    setup_designed_for_event: bool = False
-    position_open: bool = False
 
 
 @router.post("/strategies/select")
@@ -178,12 +176,7 @@ async def paper_strategies_select(body: StrategySelectRequest):
         realized_vol_intraday=body.realized_vol_intraday,
         garch_distorted=body.garch_distorted,
     )
-    return select_strategy_packet(
-        quant,
-        news,
-        setup_designed_for_event=body.setup_designed_for_event,
-        position_open=body.position_open,
-    )
+    return select_strategy_packet(quant, news)
 
 
 class SignalEvaluateRequest(BaseModel):
@@ -210,8 +203,6 @@ class SignalEvaluateRequest(BaseModel):
         description="When true, reject as a stock/underlying hard-lock violation",
     )
     force_news: dict | None = None
-    setup_designed_for_event: bool = False
-    position_open: bool = False
 
 
 @router.get("/signals")
@@ -270,12 +261,7 @@ async def paper_signals_evaluate(body: SignalEvaluateRequest):
         includes_underlying=body.includes_underlying,
         atm_history_prior=seed_atm_history_prior(body.volume, body.open_interest),
     )
-    return evaluate_candidate(
-        inp,
-        news=news,
-        setup_designed_for_event=body.setup_designed_for_event,
-        position_open=body.position_open,
-    )
+    return evaluate_candidate(inp, news=news)
 
 
 @router.get("/chain")
@@ -309,7 +295,8 @@ class AutomationStartRequest(BaseModel):
 
 @router.post("/automation/start")
 async def paper_automation_start(body: AutomationStartRequest | None = None):
-    """Start signal + γ–θ re-hedge (+ news kill) loop — mechanical; no LLM."""
+    """Start signal + γ–θ re-hedge loop — mechanical; no LLM. News never closes
+    or modifies open positions (entry-side SH-4 overlay only)."""
     engine = get_paper_engine()
     if body:
         if body.tick_sec is not None:

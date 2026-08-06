@@ -52,7 +52,6 @@ export interface RiskSnapshot {
   greeks_failures: string[];
   circuit_breakers: RiskBreaker[];
   circuit_breakers_active: string[];
-  kill_switch_armed: boolean;
   feed_age_sec: number | null;
   events: RiskEvent[];
   shared_kill_conditions: string[];

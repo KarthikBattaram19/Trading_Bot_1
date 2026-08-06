@@ -109,7 +109,7 @@ Observe (market data) → Analyze (quant + AI) → Decide (signal + sizing)
 | **Continuous operation** | Runs on a schedule or event-driven loop during market hours |
 | **Self-evaluation** | Tracks win rate, profit factor, Sharpe, drawdown after every trade and rolling window |
 | **Self-adaptation** | Adjusts thresholds, pair selection, hedge frequency, and module weights based on outcomes (cannot auto-enable new modules) |
-| **Human oversight** | Kill-switch, monitoring, configuration; per-trade approval in `supervised`; auto-pause on anomaly |
+| **Human oversight** | Monitoring, configuration; per-trade approval in `supervised`; auto-pause on anomaly |
 
 ### 2.3.1 Execution Modes & Supervision Path
 
@@ -143,7 +143,7 @@ Observe (market data) → Analyze (quant + AI) → Decide (signal + sizing)
 
 **Build sequence (authoritative — `architecture.md` §21):** Phase 0 scaffold → Phase 1 `paper_sim` playbook → Phase 2 supervised → Phase 3 semi → Phase 4 full-auto soak → Phase 5 ICICI Direct live on GCP. RAG chatbot is parallel Track B.
 
-**Mechanical hedges** (delta drift, stop-loss, circuit-breaker closes) are **always automated** in every supervision mode. Fail-safe: auto-pause, drawdown breach, or kill-switch **pauses** new discretionary entries until operator resume. Full specification: `architecture.md` §6.2.1, §6.2.2, §6.4, §20.4.4.
+**Mechanical hedges** (delta drift, stop-loss, circuit-breaker closes) are **always automated** in every supervision mode. Fail-safe: auto-pause or drawdown breach **pauses** new discretionary entries until operator resume. There is no manual kill switch — open positions are never force-closed by this fail-safe; they continue to exit only via strategy exit rules and the mechanical γ–θ re-hedge. Full specification: `architecture.md` §6.2.1, §6.2.2, §6.4, §20.4.4.
 
 ### 2.4 Retail Constraints (Design Requirements)
 
@@ -446,7 +446,7 @@ Integrate with **third-party applications** required for autonomous strategy exe
 - Auto-hedge gamma and delta exposure per strategy rules (mechanical path — all modes)
 - Log all execution events for the learning loop and audit trail
 - Enforce pre-trade risk checks before every paper order
-- Pause discretionary execution when kill-switch is triggered, health metrics breach limits, or integrations are unhealthy
+- Pause discretionary execution when health metrics breach limits or integrations are unhealthy
 
 **Goal:** Observe → decide → (approve if needed) → execute loop on **`paper_sim`**, powered by live ICICI Direct marks / normalized feeds, feeding outcomes into the continuous learning loop before any ICICI Direct live submit.
 
@@ -510,7 +510,7 @@ The bot must **learn from every trade** and adapt its behavior without manual re
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                           FRONTEND (UI)                                 │
-│  Bot Monitor · Decision Queue · Live P&L · Positions · Recommendations · Kill Switch · Config   │
+│  Bot Monitor · Decision Queue · Live P&L · Positions · Recommendations · Config                 │
 └─────────────────────────────────┬───────────────────────────────────────┘
                                   │  REST / WebSocket API
                                   ▼
@@ -560,7 +560,7 @@ The **frontend** is the trader-facing presentation layer. It contains no busines
 | **Strategy views** | Active signals, module weights, adaptation history, **option strategy legs and Greeks table**, stat arb / gamma / vega exposure |
 | **Bot monitoring** | Trade log, fill history, open positions, decision explanations, one-trade lock status |
 | **Recommendations** | Top-3 ranked instruments with post-learning confidence ≥ **80%**; same-cycle auto-execute only when `fully_autonomous` (§6.4) |
-| **Controls** | Kill-switch (pause bot), strategy enable/disable, risk limit overrides, supervision promotion, paper-sim account config |
+| **Controls** | Strategy enable/disable, risk limit overrides, supervision promotion, paper-sim account config |
 | **AI assistant (user chatbot)** | Permanent `/chat` UI for RAG-powered Q&A over the four PDFs; on-demand trade/decision explanations; **Ask AI** from decision cards |
 | **Configuration** | Live data feed URL registry, **strategy ↔ feed bindings**, **option strategy trade inputs**, **broker / third-party connection config**, learning parameters, success-ratio thresholds |
 
@@ -828,7 +828,7 @@ The learning loop runs continuously alongside the trading bot, forming a **close
 | **Active** | Full trading loop during market hours; discretionary path follows `SUPERVISION_MODE` (§6.2.2); one trade at a time (§20.4.11) |
 | **Learning** | Paused trading; running optimization and backtest validation |
 | **Reduced exposure** | Trading at lower size after metric breach; recovering |
-| **Paused** | Kill-switch active; no new orders; existing positions managed |
+| **Paused** | Circuit breaker tripped (drawdown / daily-loss / consecutive-loss / feed-staleness); no new orders; existing positions managed |
 
 ---
 
@@ -1133,7 +1133,7 @@ Local development uses a **native** Python + Node toolchain (`Docs/LOCAL_DEV.md`
 
 | Tier | GCP product | Virtual compute ID | Role |
 |---|---|---|---|
-| Frontend | **Cloud Run** (Buildpacks from `frontend/`) | VC-FE-01 | Next.js dashboard, chat, kill-switch |
+| Frontend | **Cloud Run** (Buildpacks from `frontend/`) | VC-FE-01 | Next.js dashboard, chat |
 | Backend (MVP) | **Cloud Run** (Buildpacks) | VC-BE-01 | API + bot scheduler combined (`PROCESS_ROLE=all`) |
 | Backend API (prod) | **Cloud Run** | VC-BE-02 | REST + WebSocket only (`PROCESS_ROLE=api`) |
 | Backend worker (prod) | **Cloud Run** | VC-BE-03 | Bot scheduler loop (`PROCESS_ROLE=worker`, max-instances=1) |
@@ -1269,7 +1269,7 @@ The framework must explicitly handle:
 6. **Trading bot** — end-to-end signal generation with supervised decision queue (Phase 2), then semi / full autonomy after promotion (`architecture.md` §21)
 7. **Continuous learning & adaptation engine** — performance tracking, parameter optimization, module reweighting, regime switching
 8. **Backend API server** — FastAPI with REST/WebSocket, hosting the bot, RAG, quant engines, learning loop, and broker adapter
-9. **Frontend application** — supervised cockpit (decision queue), live metrics, recommendations, kill-switch, adaptation history, and **RAG user chatbot** (`Docs/UI_Dashboard.md`)
+9. **Frontend application** — supervised cockpit (decision queue), live metrics, recommendations, adaptation history, and **RAG user chatbot** (`Docs/UI_Dashboard.md`)
 10. **Integration layer** — ICICI Direct adapter (marks + live orders), in-house **`paper_sim`** (paper P&L), and live data providers (URL feeds)
 11. **Backtesting & walk-forward validation** — out-of-sample validation for every adaptation cycle
 12. **Risk dashboards** — win rate, Greeks, drawdowns, profit factor, scenario analyses
@@ -1288,7 +1288,7 @@ The bot succeeds when it can:
 - [ ] Register live data feed URLs and bind feeds to OSS strategies; fetch and normalize quotes and option chains during market hours
 - [ ] Integrate with **ICICI Direct** for live marks + (later) order execution; use **`paper_sim`** for paper P&L and position sync rehearsal
 - [ ] OSS parity tests pass — backend BSM/Greeks match OSS reference fixtures
-- [ ] Operate end-to-end bot in **`supervised`** with Approve / Reject; kill-switch functional
+- [ ] Operate end-to-end bot in **`supervised`** with Approve / Reject
 - [ ] **One trade at a time** gate enforced (§20.4.11); dashboard shows active discretionary trade and lock status
 - [ ] **`EXECUTION_MODE` shadow → paper-sim ramp** validated before ICICI Direct live submit enabled
 - [ ] **`SUPERVISION_MODE` promotion path** documented and checklist-gated (supervised → semi → fully autonomous)
@@ -1298,7 +1298,7 @@ The bot succeeds when it can:
 - [ ] Automatically detect performance degradation and adapt strategy parameters without manual intervention
 - [ ] Validate every adaptation through **walk-forward backtest** before deploying updated config
 - [ ] Operate as a fully functional end-to-end bot: observe → analyze → decide → (approve) → execute → learn → adapt
-- [ ] Frontend and backend operate as clearly separated tiers; frontend provides decision queue, monitoring, kill-switch, and chatbot
+- [ ] Frontend and backend operate as clearly separated tiers; frontend provides decision queue, monitoring, and chatbot
 - [ ] Deliver transparent, explainable decision logs for every trade
 - [ ] Complete **2–4 week paper soak test** meeting at least one success metric (Phase 4 gate — before any live)
 
@@ -1374,7 +1374,7 @@ Build Phase 0–1 (ICICI Direct data-only → `paper_sim` fills → P&L → SH-4
 
 ### 11.13 Vision Statement
 
-> The ultimate goal is to build a **continuously learning volatility trading bot** that sustains a **high success ratio** at retail scale, progressing from **paper rehearsal → supervised → semi-autonomous → fully autonomous → live**. Phase 2 starts with operator approval on `paper_sim`; autonomy is earned after paper evidence. **`EXECUTION_MODE`** ramps from shadow logging to paper-sim, then ICICI Direct live on GCP only. **One trade at a time** limits blast radius. By combining domain playbooks with RAG-grounded AI reasoning, statistical modeling, broker execution, and a closed-loop adaptation engine, the system aims to make sophisticated volatility trading **self-improving, explainable, and consistently profitable**—without requiring institutional infrastructure, while maintaining kill-switch and circuit-breaker safeguards throughout.
+> The ultimate goal is to build a **continuously learning volatility trading bot** that sustains a **high success ratio** at retail scale, progressing from **paper rehearsal → supervised → semi-autonomous → fully autonomous → live**. Phase 2 starts with operator approval on `paper_sim`; autonomy is earned after paper evidence. **`EXECUTION_MODE`** ramps from shadow logging to paper-sim, then ICICI Direct live on GCP only. **One trade at a time** limits blast radius. By combining domain playbooks with RAG-grounded AI reasoning, statistical modeling, broker execution, and a closed-loop adaptation engine, the system aims to make sophisticated volatility trading **self-improving, explainable, and consistently profitable**—without requiring institutional infrastructure, while maintaining circuit-breaker safeguards throughout.
 
 ---
 
@@ -1431,7 +1431,6 @@ Build Phase 0–1 (ICICI Direct data-only → `paper_sim` fills → P&L → SH-4
 | **Success Ratio** | Composite measure of bot performance: win rate, profit factor, Sharpe ratio, and drawdown control |
 | **Win Rate** | Percentage of closed trades with positive P&L |
 | **Profit Factor** | Gross profit divided by gross loss across all closed trades |
-| **Kill Switch** | Frontend control that immediately pauses trading and prevents new order submission |
 | **Adaptation Cycle** | Sequence of metric breach → optimization → backtest validation → config deployment |
 | **Rho** | Sensitivity of option price to interest rate changes |
 | **Option Strategy Simulator (OSS)** | Macroption multi-leg trade input UI and BSM pricing reference (`Docs/OSS (1).xlsm`) |

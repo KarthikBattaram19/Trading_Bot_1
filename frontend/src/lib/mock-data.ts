@@ -22,7 +22,6 @@ export const mockBotStatus: BotStatus = {
   circuit_breakers_active: [],
   pending_count: 0,
   one_trade_locked: false,
-  kill_switch_armed: false,
   api_health: "ok",
 };
 
@@ -122,7 +121,6 @@ export const mockPendingDecisions: PendingDecision[] = [
       { id: "margin", label: "Margin sufficient", status: "pass" },
       { id: "regime", label: "Regime classifier", status: "pass", detail: "event_vol" },
       { id: "liquidity", label: "Option liquidity / spread cap", status: "pass" },
-      { id: "kill_switch", label: "Kill-switch inactive", status: "pass" },
       { id: "autonomous", label: "Autonomous execution", status: "pass", detail: "Auto-submit" },
     ],
     created_at: created,

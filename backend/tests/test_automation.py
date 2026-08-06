@@ -60,7 +60,6 @@ def _neutral_news(**overrides) -> MarketNewsSummary:
         news_impact="none",
         source_freshness={"reuters": datetime.now(timezone.utc)},
         workflow_window="session",
-        kill_event=False,
         interpretation="test",
         items=[],
     )
@@ -185,21 +184,68 @@ async def test_increase_hedge_uses_options_only_adjustment():
 
 
 @pytest.mark.asyncio
-async def test_ps06_news_kill_flattens_instead_of_rehedge():
+async def test_adverse_post_shock_news_never_closes_open_position():
+    """News can never close, flatten, or otherwise modify an open position —
+    only the mechanical γ–θ re-hedge and the strategy's own stop/target/time
+    rules may act on it. This pins the guarantee that replaced PS-06's old
+    news-driven flatten behavior."""
     engine, feed = _engine()
-    await engine.submit_order(_simple_vol_order())
+    opened = await engine.submit_order(_simple_vol_order())
+    position_id = opened["position"]["position_id"]
     feed.ltps["3045"] = 560.0
 
     from unittest.mock import patch
 
     with patch(
         "backend.services.market_news.get_market_news",
-        return_value=_neutral_news(news_impact="kill_event", kill_event=True),
+        return_value=_neutral_news(
+            news_impact="adverse_tone",
+            news_post_shock=True,
+            dominant_tone="bearish",
+            news_not_blocking=False,
+        ),
     ):
         tick = await engine.automation.tick()
 
-    assert any(a.get("action") == "flatten" for a in tick["actions"])
-    assert engine.positions(status="open") == []
+    assert not any(a.get("action") in {"flatten", "flatten_failed"} for a in tick["actions"])
+    open_ids = {p.position_id for p in engine.positions(status="open")}
+    assert position_id in open_ids
+    # Guard against a vacuous pass: the tick must actually have reached the
+    # position-management loop (rehedge or skip), not short-circuited earlier
+    # (e.g. on a marks_stale gate) before ever considering the position.
+    assert any(a.get("action") in {"rehedge", "skip"} for a in tick["actions"])
+
+
+@pytest.mark.asyncio
+async def test_news_read_failure_does_not_block_rehedge_loop():
+    """A news ingest/parse/network failure must degrade observability only —
+    it must never abort the tick before the mechanical re-hedge loop, which
+    is the only surviving position-management path."""
+    engine, feed = _engine(use_half_breakeven=False)
+    opened = await engine.submit_order(_simple_vol_order())
+    position_id = opened["position"]["position_id"]
+    feed.ltps["3045"] = 530.0  # +6% — clears breakeven
+
+    from unittest.mock import patch
+
+    with patch(
+        "backend.services.market_news.get_market_news",
+        side_effect=RuntimeError("news feed unavailable"),
+    ):
+        tick = await engine.automation.tick()
+
+    # Re-hedge loop still ran despite the news failure.
+    assert any(a.get("action") in {"rehedge", "skip"} for a in tick["actions"])
+    rehedges = [a for a in tick["actions"] if a.get("action") == "rehedge"]
+    assert rehedges, f"expected rehedge despite news failure, got {tick['actions']}"
+
+    status = tick["status"]
+    assert status["last_news_impact"] is None
+    assert status["last_signal"] is None
+    assert status["last_error"] is None  # news failure must not surface as a tick error
+
+    open_ids = {p.position_id for p in engine.positions(status="open")}
+    assert position_id in open_ids
 
 
 @pytest.mark.asyncio
@@ -255,32 +301,6 @@ async def test_ps05_capital_cap_falls_back_to_reduce_options():
             a.get("method") in {"reduce_options", "adjust_call_put_mix"} for a in actions
         )
         assert all(leg.exchange == "NFO" for leg in engine.ledger.positions[position_id].legs)
-
-
-@pytest.mark.asyncio
-async def test_ps08_kill_switch_skips_hedges():
-    engine, feed = _engine()
-    await engine.submit_order(_simple_vol_order())
-    feed.ltps["3045"] = 560.0
-
-    from backend.services.kill_switch_state import get_kill_switch_state
-
-    state = get_kill_switch_state()
-    state.set_armed(True)
-    try:
-        from unittest.mock import patch
-
-        await engine.automation.start()
-        with patch(
-            "backend.services.market_news.get_market_news",
-            return_value=_neutral_news(),
-        ):
-            tick = await engine.automation.tick()
-        assert any(a.get("reason") == "kill_switch_armed" for a in tick["actions"])
-        assert tick["status"]["state"] == "paused_kill_switch"
-        await engine.automation.stop()
-    finally:
-        state.set_armed(False)
 
 
 @pytest.mark.asyncio

@@ -46,13 +46,6 @@
   }
 }
 
-@layer utilities {
-  /* The Kill Switch is the only element allowed a subtle outer glow. */
-  .kill-switch-glow {
-    box-shadow: 0 0 15px rgba(239, 68, 68, 0.4);
-  }
-}
-
 /* Material Symbols base sizing. */
 .material-symbols-outlined {
   font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 24;

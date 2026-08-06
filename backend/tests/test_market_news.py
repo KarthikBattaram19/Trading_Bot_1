@@ -37,9 +37,15 @@ def _clear_news_cache(monkeypatch: pytest.MonkeyPatch):
 def test_curation_contract_loads_market_news_txt():
     contract = load_curation_contract()
     assert contract.loaded is True
-    assert "reuters" in contract.bot_priority
-    assert contract.bot_priority[0] == "reuters"
-    assert "moneycontrol" in contract.bot_priority
+    assert contract.bot_priority == (
+        "nse",
+        "sebi",
+        "reuters",
+        "moneycontrol",
+        "economic_times",
+        "pulse",
+        "cnbc_tv18",
+    )
     assert "nse" in contract.windows["session"] or "pulse" in contract.windows["session"]
     assert normalize_source_id("Reuters India") == "reuters"
     assert normalize_source_id("SEBI circulars") == "sebi"
@@ -69,8 +75,8 @@ def test_classifier_tone_topics_symbols():
     assert "post_shock" in shock.topics
     flags = aggregate_packet_flags([shock])
     assert flags["news_post_shock"] is True
-    assert flags["kill_event"] is True
-    assert flags["news_impact"] == "kill_event"
+    assert "kill_event" not in flags
+    assert flags["news_impact"] == "adverse_tone"
     assert "post-shock" in flags["macro_risk_flags"]
 
 
@@ -84,10 +90,8 @@ def test_get_market_news_from_fixture():
     assert summary.workflow_window in {"pre_open", "session", "after_close"}
     assert summary.news_impact in {
         "none",
-        "take_profit",
-        "rehedge_aggressive",
-        "early_exit",
-        "kill_event",
+        "adverse_tone",
+        "breaking_bullish",
     }
     assert any("earnings" in (i.topics or []) for i in summary.items) or summary.earnings_mentions >= 0
 
@@ -347,6 +351,55 @@ def test_live_rss_ingest_mocked(monkeypatch: pytest.MonkeyPatch):
     assert "sample_headlines.json" not in (feed.detail or "")
 
 
+def test_rank_for_window_uses_trust_tier_not_window_membership():
+    """An off-window Tier-1 source (NSE) must outrank an in-window Tier-4
+    source (Pulse) — windows are freshness labels, not a ranking penalty."""
+    from backend.services.market_news.ingest import RawHeadline, _rank_for_window
+
+    contract = load_curation_contract()
+    items = [
+        RawHeadline(
+            title="Pulse roundup",
+            summary="s",
+            source="Pulse by Zerodha",
+            source_id="pulse",
+            time_published="20260730T090000",
+        ),
+        RawHeadline(
+            title="NSE circular",
+            summary="s",
+            source="NSE India",
+            source_id="nse",
+            time_published="20260730T090000",
+        ),
+    ]
+    # "pre_open" window's in-window sources do not include nse or pulse,
+    # so with window-ranking removed, trust tier alone decides order.
+    ranked = _rank_for_window(items, contract, "pre_open")
+    assert ranked[0].source_id == "nse"
+
+
+def test_source_trust_weight_matches_curated_bot_priority():
+    """_SOURCE_TRUST_WEIGHT must cover exactly the curated bot_priority set —
+    if Market_News.txt's numbered source list drifts, this must fail loudly
+    instead of silently falling back unknown sources to _DEFAULT_TRUST_WEIGHT."""
+    from backend.services.market_news.classifier import _SOURCE_TRUST_WEIGHT
+
+    contract = load_curation_contract()
+    assert set(_SOURCE_TRUST_WEIGHT) == set(contract.bot_priority)
+
+
+def test_default_trust_weight_at_or_below_lowest_curated_tier():
+    """An ops-added unknown source must never silently outrank the lowest
+    curated (Tier 4) source."""
+    from backend.services.market_news.classifier import (
+        _DEFAULT_TRUST_WEIGHT,
+        _SOURCE_TRUST_WEIGHT,
+    )
+
+    assert _DEFAULT_TRUST_WEIGHT <= min(_SOURCE_TRUST_WEIGHT.values())
+
+
 def test_parse_pubdate_formats():
     from backend.services.market_news.feeds import parse_pubdate
     from zoneinfo import ZoneInfo
@@ -360,3 +413,36 @@ def test_parse_pubdate_formats():
     compact = parse_pubdate("20260731T073000")
     assert compact is not None
     assert compact.hour == 7
+
+
+def test_dominant_tone_weighted_by_source_trust_tier():
+    """A single Tier-1 (NSE) bearish headline must outweigh two Tier-4
+    (CNBC/Pulse) bullish headlines on dominant_tone."""
+    from backend.services.market_news.classifier import (
+        aggregate_packet_flags,
+        classify_headline,
+    )
+
+    bearish_nse = classify_headline(
+        title="NSE flags sharp guidance cut, downgrade wave hits sector",
+        summary="Regulatory filing shows weak outlook.",
+        source="NSE India",
+        source_id="nse",
+        time_published="20260730T090000",
+    )
+    bullish_cnbc = classify_headline(
+        title="Markets rally as traders cheer surge in sentiment",
+        summary="Upgrade chatter on CNBC panel.",
+        source="CNBC TV18",
+        source_id="cnbc_tv18",
+        time_published="20260730T090100",
+    )
+    bullish_pulse = classify_headline(
+        title="Rebound continues, gains extend into afternoon session",
+        summary="Roundup shows broad recovery.",
+        source="Pulse by Zerodha",
+        source_id="pulse",
+        time_published="20260730T090200",
+    )
+    flags = aggregate_packet_flags([bearish_nse, bullish_cnbc, bullish_pulse])
+    assert flags["dominant_tone"] == "bearish"

@@ -360,9 +360,6 @@ def build_signal_packet(
     inp: SignalComputeInputs,
     news: MarketNewsSummary | None = None,
     cfg: dict[str, Any] | None = None,
-    *,
-    setup_designed_for_event: bool = False,
-    position_open: bool = False,
 ) -> dict[str, Any]:
     """Compute GARCH + IV z, run SH-4 + news, return paper-sim signals packet."""
     cfg = cfg or _load_config()
@@ -393,13 +390,7 @@ def build_signal_packet(
         realized_vol_intraday=inp.realized_vol_intraday,
         garch_distorted=distorted,
     )
-    selection = select_strategy_packet(
-        quant,
-        news,
-        cfg,
-        setup_designed_for_event=setup_designed_for_event,
-        position_open=position_open,
-    )
+    selection = select_strategy_packet(quant, news, cfg)
 
     iv_minus = (
         float(inp.option_iv_annual) - float(garch_annual)
@@ -440,7 +431,6 @@ def build_signal_packet(
         "primary_signal": selection["primary_signal"],
         "rejected_strategies": selection["rejected_strategies"],
         "recommendation": selection["recommendation"],
-        "post_entry_action": selection["post_entry_action"],
         "news_impact": selection["news_impact"],
         "market_news": selection["market_news"],
         "strategy": selection["strategy"],
@@ -463,19 +453,10 @@ def evaluate_candidate(
     inp: SignalComputeInputs,
     news: MarketNewsSummary | None = None,
     cfg: dict[str, Any] | None = None,
-    *,
-    setup_designed_for_event: bool = False,
-    position_open: bool = False,
 ) -> dict[str, Any]:
     """POST /signals/evaluate — signal packet + options-only retail gates."""
     cfg = cfg or _load_config()
-    packet = build_signal_packet(
-        inp,
-        news=news,
-        cfg=cfg,
-        setup_designed_for_event=setup_designed_for_event,
-        position_open=position_open,
-    )
+    packet = build_signal_packet(inp, news=news, cfg=cfg)
     gates = _retail_gates(inp, includes_underlying=inp.includes_underlying, cfg=cfg)
     all_gates_ok = all(g.passed for g in gates)
 

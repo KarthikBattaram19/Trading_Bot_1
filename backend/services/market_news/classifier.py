@@ -87,6 +87,26 @@ _BEARISH_RE = re.compile(
 )
 _BREAKING_RE = re.compile(r"\b(breaking|flash|urgent|just.?in)\b", re.I)
 
+# Trust tier weight for dominant_tone aggregation — mirrors Market_News.txt's
+# "For the AI trading bot" priority order (Tier 1 official/regulatory down to
+# Tier 4 aggregator/TV). Higher tiers dominate when sources disagree on tone.
+_SOURCE_TRUST_WEIGHT: dict[str, float] = {
+    "nse": 2.0,
+    "sebi": 2.0,
+    "reuters": 1.5,
+    "moneycontrol": 1.0,
+    "economic_times": 1.0,
+    "pulse": 0.6,
+    "cnbc_tv18": 0.6,
+}
+# At or below the lowest curated tier (Tier 4 == 0.6) — an ops-added unknown
+# source must never silently inherit Tier-3 (1.0) authority.
+_DEFAULT_TRUST_WEIGHT = 0.6
+
+
+def _trust_weight(source_id: str) -> float:
+    return _SOURCE_TRUST_WEIGHT.get(source_id, _DEFAULT_TRUST_WEIGHT)
+
 
 @dataclass
 class ClassifiedHeadline:
@@ -184,14 +204,17 @@ def _score_tone(text: str) -> tuple[str, str, float]:
 
 def _relevance(topics: list[str], tickers: list[str], tone: str) -> str:
     if "post_shock" in topics:
-        return "Post-shock / crisis tone — Shared Kill / block model trades (H11, K4)"
+        return (
+            "Post-shock / crisis tone — blocks NEW SH-4 entries (news overlay); "
+            "never closes or modifies an already-open position"
+        )
     if "earnings" in topics:
         sym = tickers[0] if tickers else "name"
         return f"Earnings / event risk for {sym} — gamma earnings_gap_mode candidate"
     if "sebi_regulatory" in topics:
         return "Regulatory surprise — elevate macro_risk_flags"
     if tickers and tone == "bearish":
-        return f"Adverse tone vs {', '.join(tickers[:3])} — early exit / kill check"
+        return f"Adverse tone vs {', '.join(tickers[:3])} — flagged for review"
     if tickers:
         return f"Symbol-tagged overlay for {', '.join(tickers[:3])}"
     return "Macro / market context for SH-4 overlay"
@@ -213,7 +236,6 @@ def aggregate_packet_flags(
             "news_event_imminent": False,
             "news_post_shock": False,
             "news_impact": "none",
-            "kill_event": False,
             "interpretation": "No Market_News headlines ingested this cycle.",
         }
 
@@ -226,7 +248,10 @@ def aggregate_packet_flags(
     event_imminent = False
 
     for item in items:
-        tone_scores[item.tone] = tone_scores.get(item.tone, 0.0) + abs(item.sentiment_score) + 0.25
+        weight = _trust_weight(item.source_id)
+        tone_scores[item.tone] = (
+            tone_scores.get(item.tone, 0.0) + (abs(item.sentiment_score) + 0.25) * weight
+        )
         topics.extend(item.topics)
         symbols.extend(item.tickers)
         if "earnings" in item.topics:
@@ -267,15 +292,15 @@ def aggregate_packet_flags(
 
     flags = list(dict.fromkeys(flags))
     news_not_blocking = not post_shock and dominant_tone != "bearish"
-    kill_event = post_shock
-    if post_shock:
-        news_impact = "kill_event"
-    elif event_imminent and dominant_tone == "bearish":
-        news_impact = "early_exit"
+    # Descriptive tone labels only — nothing acts on these automatically.
+    # They describe the NEWS (for operator/dashboard display), never an
+    # action taken on open positions or pending entries.
+    if event_imminent and dominant_tone == "bearish":
+        news_impact = "adverse_tone"
     elif _any_breaking_bullish(items):
-        news_impact = "rehedge_aggressive"
+        news_impact = "breaking_bullish"
     elif dominant_tone == "bearish":
-        news_impact = "early_exit"
+        news_impact = "adverse_tone"
     else:
         news_impact = "none"
 
@@ -297,7 +322,6 @@ def aggregate_packet_flags(
         "news_event_imminent": event_imminent,
         "news_post_shock": post_shock,
         "news_impact": news_impact,
-        "kill_event": kill_event,
         "interpretation": interpretation,
     }
 
@@ -321,7 +345,8 @@ def _interpretation(
     if post_shock:
         return (
             "Crisis / post-shock tone in curated India headlines — "
-            "block model-driven vol trades until normalization (SH-4, H11/K4)."
+            "tagged bearish; blocks NEW SH-4 entries via the news overlay, "
+            "but never closes or modifies an already-open position."
         )
     parts = [
         f"Dominant tone {dominant_tone} from Market_News.txt priority sources.",

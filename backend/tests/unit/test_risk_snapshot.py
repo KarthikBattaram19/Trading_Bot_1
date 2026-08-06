@@ -54,12 +54,12 @@ def test_risk_snapshot_flat_account():
     assert len(snap["circuit_breakers"]) == 4
     assert len(snap["greek_limits"]) == 4
     assert len(snap["shared_kill_conditions"]) >= 5
-    # Idle ledger: no quote age → feed breaker stays safe (kill_switch only if armed)
+    # Idle ledger: no quote age → feed breaker stays safe
     assert all(
         b["id"] != "feed_staleness" or b["tone"] == "safe"
         for b in snap["circuit_breakers"]
     )
-    assert set(snap["circuit_breakers_active"]).issubset({"kill_switch"})
+    assert snap["circuit_breakers_active"] == []
 
 
 def test_risk_snapshot_api():

@@ -118,10 +118,10 @@ Bot ingestion priority: Reuters → Moneycontrol → Economic Times → NSE corp
 | IV high; large realized moves; news confirms agitation | Gamma scalping | `gamma_scalping` + `high_realized_vol_mode` |
 | Intraday IV −2σ; news not blocking | Vega scalping | `vega_scalping`; same-day flatten |
 | Post-shock / crisis tone; GARCH distorted | Reduce / block | `stand_aside` / `blocked`; set `garch_distorted` / `block_model_trades` |
-| Breaking news after live long-vol entry | Favorable long vega/gamma | Take profit / re-hedge aggressively — do not widen stops |
-| Quiet tape + adverse news after entry | Theta / IV-fall risk | Early exit / stop per strategy rules |
+| Breaking news after live long-vol entry | Favorable long vega/gamma | Display-only tone (`breaking_bullish`) — no automatic action; position exits only via strategy exit rules |
+| Quiet tape + adverse news after entry | Theta / IV-fall risk | Display-only tone (`adverse_tone`) — no automatic early exit; exits only via strategy stop/target/time rules |
 
-Unplanned earnings/news the setup was not designed to absorb → Shared Kill → flatten or abort (`kill_event`).
+Unplanned earnings/news the setup was not designed to absorb never closes or flattens an open position — it can only block a *new* entry (SH-4 / `news_blocks_model_trades`). Open positions exit solely via strategy exit rules or the mechanical γ–θ re-hedge.
 
 ### GARCH / IV z-score signals
 
@@ -150,7 +150,7 @@ After an entry fills, if the bot **intends** a multi-leg opening structure (`int
 
 - Fresh marks gate (reject if any completing leg is stale / missing LTP)
 - Quantity multiple of NFO `lotsize`
-- Pre-trade risk gate (kill-switch, buying power, drawdown)
+- Pre-trade risk gate (buying power, drawdown, circuit breakers)
 - Options-only hard lock (`OPTIONS_ONLY_REQUIRED` for stock/underlying legs or cash-share hedge paths)
 - Per-leg max investment ₹1,00,000
 - **Cumulative** max investment to open the trade ₹1,00,000 (`opening_investment_inr` across entry + completion legs)

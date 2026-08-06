@@ -179,24 +179,6 @@ export async function rejectDecision(id: string, reason?: string): Promise<void>
   if (!res.ok) throw new Error(`Reject failed: ${res.status}`);
 }
 
-export async function pauseBot(): Promise<void> {
-  if (useMockData()) {
-    console.info("[mock] pause bot");
-    return;
-  }
-  const res = await fetch(`${API_URL}/api/v1/bot/pause`, { method: "POST" });
-  if (!res.ok) throw new Error(`Pause failed: ${res.status}`);
-}
-
-export async function resumeBot(): Promise<void> {
-  if (useMockData()) {
-    console.info("[mock] resume bot");
-    return;
-  }
-  const res = await fetch(`${API_URL}/api/v1/bot/resume`, { method: "POST" });
-  if (!res.ok) throw new Error(`Resume failed: ${res.status}`);
-}
-
 export async function getApiHealth(): Promise<{
   status: string;
   execution_mode: string;

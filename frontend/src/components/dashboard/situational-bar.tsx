@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { getMarketIndices, pauseBot, resumeBot } from "@/lib/api";
-import { formatCurrency, formatGreek, formatPct } from "@/lib/utils";
+import { getMarketIndices } from "@/lib/api";
+import { formatGreek, formatCurrency, formatPct } from "@/lib/utils";
 import type { BotStatus } from "@/types/decisions";
 import type { IndexMark } from "@/types/market";
 import { Icon, StatusPill } from "@/components/ui/primitives";
@@ -15,12 +15,10 @@ const INDEX_POLL_MS = 15_000;
 
 /**
  * Persistent "Global Metrics" command bar (Stitch: topbar-height 64px).
- * Market-wide metrics + bot state on the left, isolated Kill Switch on the right.
+ * Market-wide metrics + bot state on the left.
  * NIFTY / INDIA VIX come from GET /api/v1/market/indices (ICICI Direct quotes).
  */
 export function SituationalBar({ status }: SituationalBarProps) {
-  const [busy, setBusy] = useState(false);
-  const [armed, setArmed] = useState(Boolean(status.kill_switch_armed));
   const [indices, setIndices] = useState<IndexMark[]>([]);
 
   useEffect(() => {
@@ -43,25 +41,7 @@ export function SituationalBar({ status }: SituationalBarProps) {
     };
   }, []);
 
-  async function handleKillSwitch() {
-    setBusy(true);
-    try {
-      if (armed) {
-        await resumeBot();
-        setArmed(false);
-      } else {
-        await pauseBot();
-        setArmed(true);
-      }
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const breakers =
-    armed && !status.circuit_breakers_active.includes("kill_switch")
-      ? [...status.circuit_breakers_active, "kill_switch"]
-      : status.circuit_breakers_active;
+  const breakers = status.circuit_breakers_active;
 
   const nifty = indices.find((m) => m.stock_code === "NIFTY") ?? indices[0];
   const vix =
@@ -124,27 +104,13 @@ export function SituationalBar({ status }: SituationalBarProps) {
             />
             <GreekStrip greeks={status.portfolio_greeks} />
           </div>
-
-          <button
-            type="button"
-            disabled={busy}
-            onClick={handleKillSwitch}
-            className={
-              armed
-                ? "flex items-center gap-2 rounded-md border border-error/60 px-5 py-2 text-label-caps uppercase text-error transition-colors hover:bg-error/10 active:scale-95 disabled:opacity-50"
-                : "kill-switch-glow flex items-center gap-2 rounded-md bg-[#ef4444] px-5 py-2 text-label-caps uppercase text-white transition-colors hover:bg-error-container hover:text-on-error-container active:scale-95 disabled:opacity-50"
-            }
-          >
-            <Icon name="power_settings_new" className="text-[18px]" />
-            {busy ? "…" : armed ? "Disarm" : "Kill Switch"}
-          </button>
         </div>
       </div>
 
-      {(breakers.length > 0 || armed) && (
+      {breakers.length > 0 && (
         <div className="flex items-center gap-2 border-t border-error/30 bg-error/10 px-6 py-2 text-data-sm text-error">
           <Icon name="warning" className="text-[16px]" />
-          Active breakers: {breakers.join(", ") || "kill_switch"}
+          Active breakers: {breakers.join(", ")}
         </div>
       )}
     </header>

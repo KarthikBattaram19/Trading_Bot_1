@@ -30,14 +30,6 @@ RecommendationAction = Literal[
     "blocked",
 ]
 
-PostEntryAction = Literal[
-    "none",
-    "take_profit",
-    "rehedge_aggressive",
-    "early_exit",
-    "kill_event",
-]
-
 
 @dataclass(frozen=True)
 class QuantRegimeInputs:
@@ -80,9 +72,9 @@ def _topics_lower(news: MarketNewsSummary) -> set[str]:
 
 
 def news_blocks_model_trades(news: MarketNewsSummary) -> bool:
-    """True when crisis / kill / regulatory surprise should block model vol entries."""
+    """True when crisis / post-shock / regulatory surprise should block model vol entries."""
     flags = _macro_flags_lower(news)
-    if news.news_post_shock or news.kill_event:
+    if news.news_post_shock:
         return True
     if "crisis_tone" in flags or "post-shock" in flags:
         return True
@@ -136,7 +128,8 @@ def _symbols_from_items(news: MarketNewsSummary) -> set[str]:
 
 
 def symbol_has_adverse_news(symbol: str, news: MarketNewsSummary) -> bool:
-    """Symbol-tagged adverse / bearish item — prefer reduce / flatten (N-07)."""
+    """Symbol-tagged adverse / bearish item — blocks a NEW entry (N-07); never
+    flattens or reduces an already-open position."""
     sym = symbol.upper()
     for item in news.items:
         hit = sym in {t.upper() for t in item.tickers} or sym in item.title.upper()
@@ -189,11 +182,7 @@ def select_strategy_sh4(
         reason = (
             "garch_distorted=true"
             if quant.garch_distorted
-            else (
-                "kill_event=true"
-                if news.kill_event
-                else "news_post_shock / crisis / regulatory block"
-            )
+            else "news_post_shock / crisis / regulatory block"
         )
         return StrategySelectionLogic(
             selected_strategy=StrategyType.blocked,
@@ -206,7 +195,7 @@ def select_strategy_sh4(
                 "vega_scalping",
             ],
             news_impact=(
-                "Crisis / post-shock / kill — block model trades (SH-4, H11, K4)"
+                "Crisis / post-shock / regulatory — block model trades (SH-4, H11, K4)"
             ),
         )
 
@@ -315,13 +304,13 @@ def select_strategy_sh4(
             [
                 "simple_volatility — adverse symbol news blocks cheap-vol row",
                 "vega_scalping — news blocking",
-                "gamma_scalping — unplanned adverse news (prefer flatten / defer)",
+                "gamma_scalping — unplanned adverse news (blocks new entry / defer)",
             ]
         )
         return StrategySelectionLogic(
             selected_strategy=StrategyType.blocked,
             scenario_tag="Unplanned adverse symbol news",
-            cross_strategy_matrix_ref="Table SH-4 / Shared Kill — unplanned news",
+            cross_strategy_matrix_ref="Table SH-4 — unplanned news blocks new entries",
             primary_signal=f"adverse news tagged {quant.symbol}",
             rejected_strategies=rejected,
             news_impact=news_impact_for_symbol(quant.symbol, news)
@@ -407,53 +396,22 @@ def select_strategy_sh4(
     )
 
 
-def post_entry_news_action(
-    news: MarketNewsSummary,
-    *,
-    setup_designed_for_event: bool = False,
-    position_open: bool = True,
-) -> PostEntryAction:
-    """Map packet news_impact / kills to post-entry management (N-04–N-06).
-
-    Breaking favorable news → rehedge_aggressive / take_profit (do not widen stops).
-    Unplanned kill → kill_event flatten.
-    Quiet + adverse → early_exit.
-    """
-    if not position_open:
-        return "none"
-
-    if news.kill_event or news.news_impact == "kill_event":
-        if setup_designed_for_event and news.news_event_imminent and not news.news_post_shock:
-            # Earnings-gap mode was designed for the event — do not shared-kill.
-            return "none"
-        return "kill_event"
-
-    impact = (news.news_impact or "none").lower()
-    if impact in {"rehedge_aggressive", "take_profit"}:
-        return "rehedge_aggressive" if impact == "rehedge_aggressive" else "take_profit"
-    if impact == "early_exit":
-        return "early_exit"
-    if news.dominant_tone == "bearish" and not news.news_not_blocking:
-        return "early_exit"
-    return "none"
-
-
 def select_strategy_packet(
     quant: QuantRegimeInputs,
     news: MarketNewsSummary,
     cfg: dict[str, Any] | None = None,
-    *,
-    setup_designed_for_event: bool = False,
-    position_open: bool = False,
 ) -> dict[str, Any]:
-    """SH-4 selection plus recommendation verb and optional post-entry action."""
+    """SH-4 selection plus recommendation verb.
+
+    News is entry-side only here: it can gate/prefer rows within
+    ``select_strategy_sh4`` (SH-4 news overlay), but this packet carries no
+    post-entry action. Open positions are managed solely by the mechanical
+    gamma-theta re-hedge loop (``backend/paper_sim/automation.py``) and the
+    strategy's own stop/target/time-exit rules (Docs/Trading_Strategies.md) —
+    news never closes or modifies an already-open position.
+    """
     strategy = select_strategy_sh4(quant, news, cfg)
     action = recommendation_action(strategy)
-    post = post_entry_news_action(
-        news,
-        setup_designed_for_event=setup_designed_for_event,
-        position_open=position_open,
-    )
     return {
         "selected_strategy": strategy.selected_strategy.value,
         "entry_mode": strategy.entry_mode,
@@ -462,10 +420,7 @@ def select_strategy_packet(
         "primary_signal": strategy.primary_signal,
         "rejected_strategies": strategy.rejected_strategies,
         "news_impact": strategy.news_impact,
-        "recommendation": action if action != "blocked" else (
-            "stand_aside" if not news.kill_event else "blocked"
-        ),
-        "post_entry_action": post,
+        "recommendation": action if action != "blocked" else "stand_aside",
         "strategy": strategy.model_dump(mode="json"),
         "market_news": {
             "dominant_tone": news.dominant_tone,
@@ -476,6 +431,5 @@ def select_strategy_packet(
             "news_event_imminent": news.news_event_imminent,
             "news_post_shock": news.news_post_shock,
             "news_impact": news.news_impact,
-            "kill_event": news.kill_event,
         },
     }

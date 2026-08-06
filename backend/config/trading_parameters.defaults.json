@@ -215,7 +215,6 @@
     "kill_liquidity": false,
     "kill_hedge_unavailable": false,
     "kill_stale_data": false,
-    "kill_event": false,
     "kill_neutrality": false,
     "kill_greek_limit": false,
     "kill_thesis": false

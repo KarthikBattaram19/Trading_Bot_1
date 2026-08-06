@@ -33,8 +33,6 @@ export default async function DashboardPage() {
       : mode === "live"
         ? { tone: "danger" as const, text: "LIVE" }
         : { tone: "warning" as const, text: "SIM" };
-  const killArmed = Boolean(status.kill_switch_armed);
-
   return (
     <>
       <SituationalBar status={status} />
@@ -73,12 +71,6 @@ export default async function DashboardPage() {
                 tone: status.scheduler_mode === "paused" ? "warning" : "success",
                 text: status.scheduler_mode === "paused" ? "PAUSED" : "ACTIVE",
               }}
-            />
-            <StatCard
-              label="Kill Switch Status"
-              value={killArmed ? "ARMED" : "STANDBY"}
-              tone={killArmed ? "danger" : "default"}
-              icon={killArmed ? "warning" : undefined}
             />
           </section>
 

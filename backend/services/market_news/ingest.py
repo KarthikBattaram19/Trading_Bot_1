@@ -55,8 +55,10 @@ def load_raw_headlines(
     """
     Load headlines and stamp per-source freshness.
 
-    When ``workflow_window`` is set, prefer window sources first, then fill from
-    bot_priority (edge case S-09: wrong-window sources still allowed but ranked lower).
+    Ranking is always by trust tier (``bot_priority`` order), then recency —
+    ``workflow_window`` no longer biases source selection or ranking; all
+    curated sources are in play regardless of time of day (Market_News.txt).
+    The parameter is retained only for call-site compatibility.
     """
     override = resolve_headlines_path(path)
     if override is not None:
@@ -178,12 +180,17 @@ def _rank_for_window(
     contract: CurationContract,
     workflow_window: str | None,
 ) -> list[RawHeadline]:
-    window_sources = set(contract.sources_for_window(workflow_window or ""))
+    """Rank by trust tier (``bot_priority`` order), then recency.
+
+    ``workflow_window`` is accepted for call-site compatibility but no
+    longer biases ranking — all curated sources are always in play
+    regardless of time of day (Market_News.txt).
+    """
+    _ = workflow_window
     priority = {sid: idx for idx, sid in enumerate(contract.bot_priority)}
 
-    def sort_key(item: RawHeadline) -> tuple[int, int, str]:
-        in_window = 0 if item.source_id in window_sources else 1
+    def sort_key(item: RawHeadline) -> tuple[int, str]:
         pri = priority.get(item.source_id, 100)
-        return (in_window, pri, item.time_published)
+        return (pri, item.time_published)
 
     return sorted(items, key=sort_key)

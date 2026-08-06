@@ -152,7 +152,6 @@ Abort or flatten if any of the following becomes true:
 - liquidity collapses or spreads blow out beyond limits
 - a hedge leg becomes unavailable
 - the model input is stale or clearly corrupted
-- an earnings or news event appears that the setup was not designed to absorb
 - required neutrality cannot be restored within cost limits
 - residual delta or vega exposure exceeds portfolio limits
 - the strategy's core assumption no longer holds
@@ -1069,7 +1068,7 @@ Predecessor estimators from the same source series (useful as sanity checks / fa
 | P/L | +$581,923 ($333,640 → $915,563) in hours | Convexity, not prediction |
 | Prescribed action | **Neutralize delta or close the whole position** to protect the profit | Hard-code as a take-profit / re-hedge trigger; never "let it run" |
 
-**Interpretation:** This is the payoff the strategy exists to capture, but the source treats a black swan as an *exit event*, not a trend to ride. Pair with Shared Kill Conditions: an unplanned event the setup was not designed for is a flatten trigger even when it is currently profitable.
+**Interpretation:** This is the payoff the strategy exists to capture, but the source treats a black swan as an *exit event*, not a trend to ride: neutralize delta or close the whole position to protect the profit rather than letting an unplanned shock ride as if it were a trend.
 
 #### Table VT-10: Earnings IV Crush — Why Simple Vol Avoids The Event
 
@@ -1355,9 +1354,8 @@ Distinct from the "Company Z" walkthrough in Table VT-6 (sourced from the Volati
 |---|---|
 | No adverse event; normal tone | Allow cheap-vol / normal-regime row |
 | Earnings or company event imminent | Force earnings-gap row; block plain long-vega through event |
-| Crisis / post-shock tone | Force post-shock row; set `garch_distorted` / block model trades |
-| Breaking news after long-vol entry | Prefer take-profit / aggressive re-hedge (do not widen stops) |
-| Unplanned news the setup was not designed for | Shared Kill → abort or flatten |
+| Crisis / post-shock tone | Tag bearish + macro flag; block NEW SH-4 entries — never closes or modifies an already-open position |
+| Breaking news after long-vol entry (any tone) | No effect on the open position — news is entry-side only; exits follow the strategy's own stop/target/time-exit rules and the mechanical gamma-theta re-hedge loop |
 
 ---
 

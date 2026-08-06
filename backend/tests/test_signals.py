@@ -43,7 +43,6 @@ def _neutral_news(**overrides) -> MarketNewsSummary:
         news_impact="none",
         source_freshness={"reuters": datetime.now(timezone.utc)},
         workflow_window="session",
-        kill_event=False,
         interpretation="test",
         items=[],
     )
@@ -229,7 +228,6 @@ def test_post_signals_evaluate_endpoint():
             "news_not_blocking": True,
             "news_event_imminent": False,
             "news_post_shock": False,
-            "kill_event": False,
             "news_impact": "none",
             "macro_risk_flags": [],
             "topics": [],
@@ -268,7 +266,6 @@ def test_post_signals_evaluate_defaults_to_options_only_when_omitted():
             "news_not_blocking": True,
             "news_event_imminent": False,
             "news_post_shock": False,
-            "kill_event": False,
             "news_impact": "none",
             "macro_risk_flags": [],
             "topics": [],
