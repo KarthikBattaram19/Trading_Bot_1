@@ -70,7 +70,6 @@ export const mockRiskSnapshot: RiskSnapshot = {
     },
   ],
   circuit_breakers_active: [],
-  kill_switch_armed: false,
   feed_age_sec: null,
   events: [
     {

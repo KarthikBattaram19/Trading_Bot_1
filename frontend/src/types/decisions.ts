@@ -124,7 +124,6 @@ export interface BotStatus {
   pending_count: number;
   one_trade_locked: boolean;
   active_trade_id?: string | null;
-  kill_switch_armed?: boolean;
   api_health?: string;
 }
 

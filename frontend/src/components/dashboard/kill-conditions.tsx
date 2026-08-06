@@ -32,7 +32,6 @@ const DEFAULT_KILL_CONDITIONS = [
   "liquidity collapses or spreads blow out beyond limits",
   "a hedge leg becomes unavailable",
   "the model input is stale or clearly corrupted",
-  "an earnings or news event appears that the setup was not designed to absorb",
   "required neutrality cannot be restored within cost limits",
   "residual delta or vega exposure exceeds portfolio limits",
   "the strategy's core assumption no longer holds",

@@ -70,8 +70,7 @@ export default async function RiskPage() {
   const activeTone =
     risk.circuit_breakers_active.length === 0
       ? "success"
-      : risk.circuit_breakers.some((b) => b.tone === "danger") ||
-          risk.kill_switch_armed
+      : risk.circuit_breakers.some((b) => b.tone === "danger")
         ? "danger"
         : "warning";
 
