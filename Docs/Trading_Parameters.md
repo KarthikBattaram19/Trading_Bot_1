@@ -754,7 +754,7 @@ Use near expiry for long gamma/theta; far expiry for vega short hedge.
 | N6.3 | Stop (aggressive) | `stop_z_threshold_alt` | **−4.0** σ below mean |
 | N6.4 | Stop config | `stop_z_threshold` | Configurable risk tolerance |
 | N6.5 | Time exit | `flatten_at_session_close` | **Always true** |
-| N6.6 | News spike exit | `take_profit_on_iv_spike` | true — do not wait for perfect mean touch |
+| N6.6 | IV-spike take-profit | `take_profit_on_iv_spike` | true — do not wait for perfect mean touch. Triggered by the **IV move itself**, never by a news headline: market news can gate a new entry but never closes or modifies an open position (see `Market_News.txt`). |
 
 ### N7 — Attribution Parameters
 
