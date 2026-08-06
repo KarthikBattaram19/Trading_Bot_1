@@ -4156,10 +4156,12 @@ Push to main
               ├── OSS parity tests (§8.5.12)
               ├── RAG golden eval — faithfulness ≥ 0.85 (§7, §22)
               ├── Cloud Buildpacks → Artifact Registry
-              ├── Deploy gate (production, market hours):
-              │     (previously gated on POST /api/v1/bot/pause / /bot/resume; those
-              │      endpoints were removed with the kill-switch mechanism — deploy gate
-              │      needs a replacement mechanism before this pipeline is built)
+              ├── Deploy gate (production, market hours) — this whole Cloud Build
+              │     pipeline is aspirational (not yet implemented); the gate step
+              │     specifically previously planned to call POST /api/v1/bot/pause /
+              │     /bot/resume, but those endpoints were removed with the kill-switch
+              │     mechanism, so the gate needs a replacement mechanism when this
+              │     pipeline is built
               │     → gcloud run deploy → verify /health/bot
               └── Smoke test → staging/production
 ```

@@ -1051,7 +1051,7 @@ Predecessor estimators from the same source series (useful as sanity checks / fa
 | P/L | +$581,923 ($333,640 → $915,563) in hours | Convexity, not prediction |
 | Prescribed action | **Neutralize delta or close the whole position** to protect the profit | Hard-code as a take-profit / re-hedge trigger; never "let it run" |
 
-**Interpretation:** This is the payoff the strategy exists to capture, but the source treats a black swan as an *exit event*, not a trend to ride. Pair with Shared Kill Conditions: an unplanned event the setup was not designed for is a flatten trigger even when it is currently profitable.
+**Interpretation:** This is the payoff the strategy exists to capture, but the source treats a black swan as an *exit event*, not a trend to ride: neutralize delta or close the whole position to protect the profit rather than letting an unplanned shock ride as if it were a trend.
 
 #### Table VT-10: Earnings IV Crush — Why Simple Vol Avoids The Event
 
