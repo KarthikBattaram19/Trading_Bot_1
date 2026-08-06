@@ -35,7 +35,6 @@ PostEntryAction = Literal[
     "take_profit",
     "rehedge_aggressive",
     "early_exit",
-    "kill_event",
 ]
 
 
@@ -80,9 +79,9 @@ def _topics_lower(news: MarketNewsSummary) -> set[str]:
 
 
 def news_blocks_model_trades(news: MarketNewsSummary) -> bool:
-    """True when crisis / kill / regulatory surprise should block model vol entries."""
+    """True when crisis / post-shock / regulatory surprise should block model vol entries."""
     flags = _macro_flags_lower(news)
-    if news.news_post_shock or news.kill_event:
+    if news.news_post_shock:
         return True
     if "crisis_tone" in flags or "post-shock" in flags:
         return True
@@ -189,11 +188,7 @@ def select_strategy_sh4(
         reason = (
             "garch_distorted=true"
             if quant.garch_distorted
-            else (
-                "kill_event=true"
-                if news.kill_event
-                else "news_post_shock / crisis / regulatory block"
-            )
+            else "news_post_shock / crisis / regulatory block"
         )
         return StrategySelectionLogic(
             selected_strategy=StrategyType.blocked,
@@ -206,7 +201,7 @@ def select_strategy_sh4(
                 "vega_scalping",
             ],
             news_impact=(
-                "Crisis / post-shock / kill — block model trades (SH-4, H11, K4)"
+                "Crisis / post-shock / regulatory — block model trades (SH-4, H11, K4)"
             ),
         )
 
@@ -413,20 +408,13 @@ def post_entry_news_action(
     setup_designed_for_event: bool = False,
     position_open: bool = True,
 ) -> PostEntryAction:
-    """Map packet news_impact / kills to post-entry management (N-04–N-06).
+    """Map packet news_impact to post-entry management (N-05, N-06).
 
     Breaking favorable news → rehedge_aggressive / take_profit (do not widen stops).
-    Unplanned kill → kill_event flatten.
     Quiet + adverse → early_exit.
     """
     if not position_open:
         return "none"
-
-    if news.kill_event or news.news_impact == "kill_event":
-        if setup_designed_for_event and news.news_event_imminent and not news.news_post_shock:
-            # Earnings-gap mode was designed for the event — do not shared-kill.
-            return "none"
-        return "kill_event"
 
     impact = (news.news_impact or "none").lower()
     if impact in {"rehedge_aggressive", "take_profit"}:
@@ -462,9 +450,7 @@ def select_strategy_packet(
         "primary_signal": strategy.primary_signal,
         "rejected_strategies": strategy.rejected_strategies,
         "news_impact": strategy.news_impact,
-        "recommendation": action if action != "blocked" else (
-            "stand_aside" if not news.kill_event else "blocked"
-        ),
+        "recommendation": action if action != "blocked" else "stand_aside",
         "post_entry_action": post,
         "strategy": strategy.model_dump(mode="json"),
         "market_news": {
@@ -476,6 +462,5 @@ def select_strategy_packet(
             "news_event_imminent": news.news_event_imminent,
             "news_post_shock": news.news_post_shock,
             "news_impact": news.news_impact,
-            "kill_event": news.kill_event,
         },
     }
