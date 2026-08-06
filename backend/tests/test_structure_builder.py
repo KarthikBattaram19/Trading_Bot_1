@@ -341,3 +341,34 @@ async def test_build_intended_legs_gamma_scalping_falls_back_to_straddle_only():
 
     assert len(intended) == 2
     assert all(lg.side == PaperSide.buy for lg in intended)
+
+
+@pytest.mark.asyncio
+async def test_gamma_scalping_never_produces_same_side_second_strike_straddle():
+    """Regression guard for Improve_Recoemmendation_Engine.md §3.10: the old
+    implementation added a same-side (BUY), same-expiry second straddle at a
+    different strike. The correct structure never has a second strike at
+    all — only the entry strike, across two expiries."""
+    near_expiry = _expiry_str(15)
+    far_expiry = _expiry_str(15 + 35)
+    feed = _FullFeed(
+        [
+            _opt(near_expiry, SPOT, "CE", "N1"),
+            _opt(near_expiry, SPOT, "PE", "N2"),
+            _opt(far_expiry, SPOT, "CE", "F1"),
+            _opt(far_expiry, SPOT, "PE", "F2"),
+        ]
+    )
+    first, _record = _entry_leg(near_expiry)
+
+    intended = await build_intended_legs_from_entry(
+        strategy_tag="gamma_scalping",
+        underlying="SBIN",
+        entry_legs=[first],
+        feed=feed,
+        paper_sim_config=PaperSimConfig(),
+    )
+
+    strikes = {lg.strike for lg in intended}
+    assert strikes == {SPOT}
+    assert not any(lg.side == PaperSide.buy and lg.expiry == far_expiry for lg in intended)
