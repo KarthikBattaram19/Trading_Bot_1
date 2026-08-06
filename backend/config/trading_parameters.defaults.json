@@ -167,6 +167,9 @@
       "entry_signal": {
         "high_realized_vol_intraday_threshold": 0.015,
         "iv_elevated_vs_garch_multiplier": 1.05
+      },
+      "calendar_construction": {
+        "long_expiry_min_gap_days": 28
       }
     },
     "vega_scalping": {
