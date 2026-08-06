@@ -16,6 +16,7 @@ from typing import Any
 from backend.paper_sim.config import PaperSimConfig
 from backend.paper_sim.models import PaperLegRequest, PaperSide
 from backend.quant.pricing.bsm import BSMInputs, option_greeks
+from backend.services.strategy_selection import load_trading_config
 from backend.services.universe_enrichment import _dte_from_expiry
 
 logger = logging.getLogger(__name__)
@@ -88,18 +89,21 @@ def missing_intended_legs(
     return missing
 
 
-def build_intended_legs_from_entry(
+async def build_intended_legs_from_entry(
     *,
     strategy_tag: str | None,
     underlying: str | None,
     entry_legs: list[PaperLegRequest],
     feed: Any,
+    paper_sim_config: PaperSimConfig | None = None,
 ) -> list[PaperLegRequest]:
     """
     Infer the bot's intended multi-leg opening plan from strategy + first entry.
 
     - simple_volatility / vega_scalping: long ATM CE + PE (add missing option side)
-    - gamma_scalping: four-leg NFO shape (straddle + second-strike CE/PE)
+    - gamma_scalping: same-strike calendar spread — long near-dated CE+PE,
+      short far-dated CE+PE sized to zero portfolio vega
+      (Docs/Trading_Strategies.md Table GS-4)
     - If entry already has 2+ legs, treat that basket as the intended structure
     """
     if len(entry_legs) >= 2:
@@ -141,13 +145,22 @@ def build_intended_legs_from_entry(
             underlying=underlying,
             qty=qty,
         )
-        _append_second_strike_option_pair(
+        cfg = load_trading_config()
+        min_gap_days = int(
+            cfg.get("strategies", {})
+            .get("gamma_scalping", {})
+            .get("calendar_construction", {})
+            .get("long_expiry_min_gap_days", 28)
+        )
+        await _append_vega_neutral_far_dated_pair(
             intended,
             feed=feed,
             first=first,
             record=record,
             underlying=underlying,
             qty=qty,
+            paper_sim_config=paper_sim_config or PaperSimConfig(),
+            min_gap_days=min_gap_days,
         )
 
     return intended
@@ -204,63 +217,6 @@ def _append_opposite_option_at_strike(
             expiry=pair.expiry,
         )
     )
-
-
-def _append_second_strike_option_pair(
-    intended: list[PaperLegRequest],
-    *,
-    feed: Any,
-    first: PaperLegRequest,
-    record: Any,
-    underlying: str | None,
-    qty: int,
-) -> None:
-    """Add CE+PE at the nearest listed strike different from the entry (four-leg gamma)."""
-    base_strike = float(record.strike or 0.0)
-    if base_strike <= 0:
-        return
-    name = (record.name or underlying or "").upper()
-    options = feed.list_options(name=name, exchange="NFO", expiry=record.expiry, limit=500)
-    alt_strikes: set[float] = set()
-    for rec in options:
-        sym = (rec.tradingsymbol or "").upper()
-        if not (sym.endswith("CE") or sym.endswith("PE")):
-            continue
-        st = float(rec.strike or 0.0)
-        if st > 0 and st != base_strike:
-            alt_strikes.add(st)
-    if not alt_strikes:
-        return
-    alt_strike = min(alt_strikes, key=lambda s: abs(s - base_strike))
-    for want in ("CE", "PE"):
-        if any(
-            not _is_cash_leg(lg.exchange, lg.symbol)
-            and _option_type(lg.symbol) == want
-            and float(lg.strike or 0) == alt_strike
-            for lg in intended
-        ):
-            continue
-        pair = _find_matching_option(
-            feed,
-            name=name,
-            expiry=record.expiry,
-            strike=alt_strike,
-            option_type=want,
-        )
-        if pair is None:
-            continue
-        intended.append(
-            PaperLegRequest(
-                symbol=pair.tradingsymbol,
-                side=first.side,
-                quantity=qty,
-                exchange=pair.exchange,
-                symbol_token=pair.symboltoken,
-                option_type=want,  # type: ignore[arg-type]
-                strike=float(pair.strike) if pair.strike is not None else None,
-                expiry=pair.expiry,
-            )
-        )
 
 
 def _find_matching_option(

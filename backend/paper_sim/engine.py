@@ -283,11 +283,12 @@ class PaperEngine:
         if request.intended_legs:
             intended = list(request.intended_legs)
         elif strategy_implies_multi_leg(request.strategy_tag):
-            intended = build_intended_legs_from_entry(
+            intended = await build_intended_legs_from_entry(
                 strategy_tag=request.strategy_tag,
                 underlying=request.underlying,
                 entry_legs=list(request.legs),
                 feed=self.feed,
+                paper_sim_config=self.config,
             )
         else:
             intended = list(request.legs)

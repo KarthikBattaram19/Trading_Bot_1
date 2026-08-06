@@ -13,6 +13,7 @@ from backend.paper_sim.models import PaperLegRequest, PaperSide
 from backend.paper_sim.structure_builder import (
     _append_vega_neutral_far_dated_pair,
     _resolve_far_expiry,
+    build_intended_legs_from_entry,
 )
 from backend.quant.pricing.bsm import BSMInputs, option_greeks
 from backend.services.universe_enrichment import _dte_from_expiry
@@ -288,3 +289,55 @@ async def test_append_vega_neutral_far_dated_pair_reduces_net_vega():
     net_vega = unhedged_vega - far_contracts * (_vega(far_dte, "call") + _vega(far_dte, "put"))
 
     assert abs(net_vega) < abs(unhedged_vega) * 0.25
+
+
+@pytest.mark.asyncio
+async def test_build_intended_legs_gamma_scalping_produces_four_leg_calendar():
+    near_expiry = _expiry_str(15)
+    far_expiry = _expiry_str(15 + 35)
+    feed = _FullFeed(
+        [
+            _opt(near_expiry, SPOT, "CE", "N1"),
+            _opt(near_expiry, SPOT, "PE", "N2"),
+            _opt(far_expiry, SPOT, "CE", "F1"),
+            _opt(far_expiry, SPOT, "PE", "F2"),
+        ]
+    )
+    first, _record = _entry_leg(near_expiry)
+
+    intended = await build_intended_legs_from_entry(
+        strategy_tag="gamma_scalping",
+        underlying="SBIN",
+        entry_legs=[first],
+        feed=feed,
+        paper_sim_config=PaperSimConfig(),
+    )
+
+    assert len(intended) == 4
+    by_side = {PaperSide.buy: 0, PaperSide.sell: 0}
+    for lg in intended:
+        by_side[lg.side] += 1
+    assert by_side[PaperSide.buy] == 2
+    assert by_side[PaperSide.sell] == 2
+    sell_expiries = {lg.expiry for lg in intended if lg.side == PaperSide.sell}
+    assert sell_expiries == {far_expiry}
+    buy_expiries = {lg.expiry for lg in intended if lg.side == PaperSide.buy}
+    assert buy_expiries == {near_expiry}
+
+
+@pytest.mark.asyncio
+async def test_build_intended_legs_gamma_scalping_falls_back_to_straddle_only():
+    near_expiry = _expiry_str(15)
+    feed = _FullFeed([_opt(near_expiry, SPOT, "CE", "N1"), _opt(near_expiry, SPOT, "PE", "N2")])
+    first, _record = _entry_leg(near_expiry)
+
+    intended = await build_intended_legs_from_entry(
+        strategy_tag="gamma_scalping",
+        underlying="SBIN",
+        entry_legs=[first],
+        feed=feed,
+        paper_sim_config=PaperSimConfig(),
+    )
+
+    assert len(intended) == 2
+    assert all(lg.side == PaperSide.buy for lg in intended)

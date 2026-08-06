@@ -126,10 +126,11 @@ def _single_ce_leg() -> list[PaperLegRequest]:
     ]
 
 
-def test_build_intended_legs_gamma_vega_never_include_cash():
+@pytest.mark.asyncio
+async def test_build_intended_legs_gamma_vega_never_include_cash():
     feed = FakeFeed()
     for tag in ("gamma_scalping", "vega_scalping"):
-        intended = build_intended_legs_from_entry(
+        intended = await build_intended_legs_from_entry(
             strategy_tag=tag,
             underlying="SBIN",
             entry_legs=_single_ce_leg(),
