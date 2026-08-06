@@ -85,6 +85,36 @@ class AtmLiquidityHistoryStore:
             for r in rows
         ]
 
+    def latest_liquidity_by_underlying(
+        self, underlyings: set[str] | None = None
+    ) -> dict[str, float]:
+        """Most recent atm_volume + atm_oi per underlying, across any expiry_key.
+
+        Used as an ADV/liquidity proxy to rank which symbols get the limited
+        enrichment budget (see recommendation_engine._build_universe) — real
+        history once the bot has run a few sessions, 0.0 (neutral) for anything
+        never enriched before, which preserves today's alphabetical ordering
+        for a cold store.
+        """
+        data = self._read()
+        wanted = {u.upper().strip() for u in underlyings} if underlyings else None
+        latest: dict[str, tuple[str, float]] = {}
+        for key, rows in data.items():
+            underlying, _, _expiry_key = key.partition("|")
+            if wanted is not None and underlying not in wanted:
+                continue
+            if not rows:
+                continue
+            best_row = max(rows, key=lambda r: str(r.get("session_date") or ""))
+            session_date = str(best_row.get("session_date") or "")
+            liquidity = float(best_row.get("atm_volume") or 0) + float(
+                best_row.get("atm_oi") or 0
+            )
+            prior = latest.get(underlying)
+            if prior is None or session_date > prior[0]:
+                latest[underlying] = (session_date, liquidity)
+        return {underlying: value for underlying, (_, value) in latest.items()}
+
     def prune(self, *, keep_days: int = 60) -> None:
         data = self._read()
         changed = False

@@ -101,8 +101,10 @@ export function DecisionsLoader({
         <div>
           <h1 className="text-headline-lg text-on-surface">Decision Log</h1>
           <p className="mt-1 text-body-md text-on-surface-variant">
-            Real-time trace of algorithmic reasoning and trade executions
-            (read-only audit trail — no approval queue).
+            Real-time trace of algorithmic reasoning and trade executions.
+            Open a <span className="font-medium text-on-surface">Pending</span>{" "}
+            row&apos;s packet to approve or reject it — approved decisions execute
+            through <span className="font-mono">paper_sim</span>.
           </p>
         </div>
 
@@ -172,9 +174,13 @@ export function DecisionsLoader({
                     <td className="p-4 text-right">
                       <Link
                         href={`/decisions/${d.decision_id}`}
-                        className="inline-flex items-center gap-1 text-data-sm text-primary hover:underline"
+                        className={
+                          d.status === "pending"
+                            ? "inline-flex items-center gap-1 text-data-sm font-medium text-primary hover:underline"
+                            : "inline-flex items-center gap-1 text-data-sm text-primary hover:underline"
+                        }
                       >
-                        Packet
+                        {d.status === "pending" ? "Review & approve" : "Packet"}
                         <Icon name="arrow_forward" className="text-[14px]" />
                       </Link>
                     </td>

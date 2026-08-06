@@ -10,10 +10,11 @@ export const dynamic = "force-dynamic";
  */
 export default async function RecommendationsPage() {
   const status = await getBotStatus();
+  const supervisionMode = status.supervision_mode ?? status.autonomy;
   return (
     <>
       <SituationalBar status={status} />
-      <RecommendationsLoader />
+      <RecommendationsLoader supervisionMode={supervisionMode} />
     </>
   );
 }

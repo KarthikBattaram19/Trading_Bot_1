@@ -12,6 +12,7 @@ from backend.services.recommendation_engine import (
     _hedge_insight,
     _load_config,
     _prefer_options_only_for_high_spot,
+    _rank_symbols_for_enrichment,
     _stub_candidate,
     _structure_uses_underlying,
 )
@@ -134,3 +135,44 @@ def test_demo_fixture_helpers_are_tagged_and_never_called_from_build_universe():
     # And the real production path builds candidates the opposite way — via
     # `_candidate_from_live`, never the fixture spec builders.
     assert "_candidate_from_live" in source
+
+
+def test_rank_symbols_for_enrichment_priority_names_always_come_first():
+    priority = {"NIFTY": 0, "BANKNIFTY": 1}
+    ranked = _rank_symbols_for_enrichment(
+        ["ZEEL", "BANKNIFTY", "AAPL_NOT_REAL", "NIFTY"],
+        priority=priority,
+        liquidity={"AAPL_NOT_REAL": 999_999.0},
+    )
+    assert ranked[:2] == ["NIFTY", "BANKNIFTY"]
+
+
+def test_rank_symbols_for_enrichment_orders_non_priority_names_by_liquidity_desc():
+    ranked = _rank_symbols_for_enrichment(
+        ["ZEEL", "SBIN", "TCS"],
+        priority={},
+        liquidity={"ZEEL": 100.0, "SBIN": 5000.0, "TCS": 2000.0},
+    )
+    assert ranked == ["SBIN", "TCS", "ZEEL"]
+
+
+def test_rank_symbols_for_enrichment_falls_back_to_alphabetical_with_no_history():
+    """A cold liquidity store (or an unenriched name) must not perturb ordering —
+    same alphabetical fallback the enrichment budget used before this change."""
+    ranked = _rank_symbols_for_enrichment(
+        ["ZEEL", "SBIN", "TCS"],
+        priority={},
+        liquidity={},
+    )
+    assert ranked == ["SBIN", "TCS", "ZEEL"]
+
+
+def test_rank_symbols_for_enrichment_mixes_liquid_and_unknown_names():
+    ranked = _rank_symbols_for_enrichment(
+        ["ZEEL", "SBIN", "TCS"],
+        priority={},
+        liquidity={"SBIN": 5000.0},
+    )
+    # SBIN has real liquidity history and sorts first; ZEEL/TCS have no
+    # history (liquidity 0.0 default) and fall back to alphabetical.
+    assert ranked == ["SBIN", "TCS", "ZEEL"]

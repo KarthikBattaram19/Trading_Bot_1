@@ -8,6 +8,58 @@ deprioritized behind any open P0/P1 item.
 
 ## P0 — integrity of the trading loop
 
+- [x] **Frontend never wires the real approve/reject endpoints, so a
+  human operator has no discoverable way to act on a recommendation in
+  `SUPERVISION_MODE=supervised` (prod default) — the P0-1 loop is closed
+  in the backend but not operable end-to-end.** `frontend/src/app/recommendations/page.tsx`
+  renders `RecommendationsLoader` → `RecommendationCard`
+  (`frontend/src/components/recommendations/recommendation-card.tsx`), which
+  is a pure read-only insight packet with zero approve/reject action — its
+  footer literally reads "execution result attaches when `fully_autonomous`"
+  with no button. `frontend/src/app/decisions/page.tsx` →
+  `DecisionsLoader` (`frontend/src/components/decisions/decisions-loader.tsx:105-106`)
+  still hardcodes the stale copy "read-only audit trail — no approval
+  queue," even though `backend/routers/decisions.py` has shipped real
+  `POST /{id}/approve` / `POST /{id}/reject` since the 2026-08-04 P0 fix,
+  and the decisions table itself renders no action buttons. The only place
+  `ApprovalCard` (`frontend/src/components/dashboard/approval-card.tsx`,
+  which does call `approveDecision`/`rejectDecision`) is mounted is the
+  per-decision detail route `frontend/src/app/decisions/[id]/page.tsx`,
+  reachable only via a "Packet" link in the decisions table — not linked
+  from `/recommendations` at all. Net effect confirmed live against prod
+  2026-08-06 (`https://tradingbot1-production-a574.up.railway.app`,
+  `GET /api/v1/bot/status` → `"supervision_mode":"supervised"`): even on a
+  cycle that clears the confidence bar, there is no button anywhere in the
+  primary `/recommendations` flow for an operator to open the trade, and
+  the one page that has a working Approve button is undiscoverable without
+  already knowing the decision ID / clicking through the audit table.
+  Turning `SUPERVISION_MODE=fully_autonomous` would "fix" this but
+  reintroduces the exact unsupervised-auto-execute risk P0-1 removed — the
+  correct fix is wiring the existing `ApprovalCard` (or an equivalent
+  action) into `/recommendations` and correcting the stale
+  `decisions-loader.tsx` copy. (first seen 2026-08-06, evidence above)
+  - **Resolved 2026-08-06**, evidence: `frontend/src/lib/utils.ts` adds
+    `liveDecisionId()` (UTC-safe, matches
+    `decision_log.py::_live_decisions`'s `dec_{symbol}_{day}` id exactly
+    since both read the same response's `generated_at`).
+    `RecommendationsPage` → `RecommendationsLoader` → `RecommendationsView`
+    now thread `supervision_mode` (from `GET /bot/status`) and
+    `generated_at` down to `RecommendationCard`
+    (`frontend/src/components/recommendations/recommendation-card.tsx`),
+    which now renders a "Review & approve" button linking straight to
+    `/decisions/{id}` (the page hosting the real `ApprovalCard`) for every
+    packet, whenever `supervisionMode !== "fully_autonomous"` and the
+    packet hasn't already executed. `decisions-loader.tsx`'s stale
+    "read-only audit trail — no approval queue" copy is corrected, and its
+    per-row link now reads "Review & approve" for pending decisions
+    (still "Packet" for acted-on ones) instead of a uniform, non-actionable
+    "Packet" label. `npx tsc --noEmit` and `npm run build` both pass clean;
+    no backend contract changed, so no new backend tests were needed for
+    this half — verified the id-construction logic is behaviorally the
+    inverse of `decision_log.py::_to_decision`'s id format by inspection
+    (same `dec_{lower(symbol)}_{YYYYMMDD}` shape, both derived from the
+    same `generated_at` value in the same response).
+
 - [x] Build real `POST /approve` and `POST /reject` endpoints in
   `backend/routers/decisions.py`, make the `paper_sim` ledger the single
   source of truth. (first seen 2026-08-02, evidence: `backend/routers/decisions.py:1`,

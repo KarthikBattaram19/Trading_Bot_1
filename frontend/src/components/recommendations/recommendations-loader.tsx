@@ -6,7 +6,11 @@ import type { RecommendationResponse } from "@/types/recommendations";
 import { RecommendationsView } from "@/components/recommendations/recommendations-view";
 import { Icon } from "@/components/ui/primitives";
 
-export function RecommendationsLoader() {
+export function RecommendationsLoader({
+  supervisionMode,
+}: {
+  supervisionMode: string;
+}) {
   const [data, setData] = useState<RecommendationResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -48,5 +52,5 @@ export function RecommendationsLoader() {
     );
   }
 
-  return <RecommendationsView initial={data} />;
+  return <RecommendationsView initial={data} supervisionMode={supervisionMode} />;
 }
