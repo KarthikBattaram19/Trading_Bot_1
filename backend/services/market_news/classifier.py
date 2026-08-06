@@ -202,14 +202,14 @@ def _score_tone(text: str) -> tuple[str, str, float]:
 
 def _relevance(topics: list[str], tickers: list[str], tone: str) -> str:
     if "post_shock" in topics:
-        return "Post-shock / crisis tone — Shared Kill / block model trades (H11, K4)"
+        return "Post-shock / crisis tone — flagged for visibility (SH-4 news overlay); no automated block"
     if "earnings" in topics:
         sym = tickers[0] if tickers else "name"
         return f"Earnings / event risk for {sym} — gamma earnings_gap_mode candidate"
     if "sebi_regulatory" in topics:
         return "Regulatory surprise — elevate macro_risk_flags"
     if tickers and tone == "bearish":
-        return f"Adverse tone vs {', '.join(tickers[:3])} — early exit / kill check"
+        return f"Adverse tone vs {', '.join(tickers[:3])} — flagged for review"
     if tickers:
         return f"Symbol-tagged overlay for {', '.join(tickers[:3])}"
     return "Macro / market context for SH-4 overlay"
