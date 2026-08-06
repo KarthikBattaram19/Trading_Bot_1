@@ -55,8 +55,10 @@ def load_raw_headlines(
     """
     Load headlines and stamp per-source freshness.
 
-    When ``workflow_window`` is set, prefer window sources first, then fill from
-    bot_priority (edge case S-09: wrong-window sources still allowed but ranked lower).
+    Ranking is always by trust tier (``bot_priority`` order), then recency —
+    ``workflow_window`` no longer biases source selection or ranking; all
+    curated sources are in play regardless of time of day (Market_News.txt).
+    The parameter is retained only for call-site compatibility.
     """
     override = resolve_headlines_path(path)
     if override is not None:

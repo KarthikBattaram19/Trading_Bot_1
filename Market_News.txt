@@ -59,4 +59,4 @@ This mix feeds sentiment and event-driven gates for:
 - Live recommendations (`GET /api/v1/recommendations` → `market_news`)
 - Paper simulator (`GET /api/v1/paper-sim/news` + `/signals`) acting per `Trading_Strategies.md`
 
-Map classified tone / topics / symbol tags through Table SH-4 (Architecture §8.8.4). Shock/crisis tone is still classified and shown (topic tag, bearish sentiment, macro risk flag) — it does not auto-flatten positions or auto-block entries on its own; it flows through the same bearish-tone `early_exit` path as any other adverse headline.
+Map classified tone / topics / symbol tags through Table SH-4 (Architecture §8.8.4). Shock/crisis tone is still classified and shown (topic tag, bearish sentiment, macro risk flag) and can block a NEW model entry via the SH-4 news overlay — but news, including shock/crisis tone, never closes, flattens, or otherwise modifies an already-open position. Open positions exit only per the strategy's own stop/target/time-exit rules (`Trading_Strategies.md`) and the mechanical gamma-theta re-hedge loop.

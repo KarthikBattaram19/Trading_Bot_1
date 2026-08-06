@@ -1141,7 +1141,10 @@ def _event_risks(
     if news.earnings_mentions > 2:
         risks.append("Broad earnings season — IV crush risk for long-vega")
     if news.news_post_shock:
-        risks.append("Post-shock tone flagged — no automated flatten or block (U6)")
+        risks.append(
+            "Post-shock tone flagged — blocks new SH-4 entries, "
+            "never closes/modifies an already-open position (U6)"
+        )
     if not news.news_not_blocking:
         risks.append("news_not_blocking=false — SH-4 rows gated (U4)")
     if c.spread_pct > 1.5:

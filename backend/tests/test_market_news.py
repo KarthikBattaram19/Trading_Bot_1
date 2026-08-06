@@ -380,6 +380,27 @@ def test_rank_for_window_uses_trust_tier_not_window_membership():
     assert ranked[0].source_id == "nse"
 
 
+def test_source_trust_weight_matches_curated_bot_priority():
+    """_SOURCE_TRUST_WEIGHT must cover exactly the curated bot_priority set —
+    if Market_News.txt's numbered source list drifts, this must fail loudly
+    instead of silently falling back unknown sources to _DEFAULT_TRUST_WEIGHT."""
+    from backend.services.market_news.classifier import _SOURCE_TRUST_WEIGHT
+
+    contract = load_curation_contract()
+    assert set(_SOURCE_TRUST_WEIGHT) == set(contract.bot_priority)
+
+
+def test_default_trust_weight_at_or_below_lowest_curated_tier():
+    """An ops-added unknown source must never silently outrank the lowest
+    curated (Tier 4) source."""
+    from backend.services.market_news.classifier import (
+        _DEFAULT_TRUST_WEIGHT,
+        _SOURCE_TRUST_WEIGHT,
+    )
+
+    assert _DEFAULT_TRUST_WEIGHT <= min(_SOURCE_TRUST_WEIGHT.values())
+
+
 def test_parse_pubdate_formats():
     from backend.services.market_news.feeds import parse_pubdate
     from zoneinfo import ZoneInfo

@@ -71,7 +71,15 @@ def _option_type_from_symbol(symbol: str, option_type: str | None = None) -> str
 
 
 class PaperAutomation:
-    """Background tick loop: refresh marks → news kills → γ–θ re-hedge."""
+    """Background tick loop: refresh marks → γ–θ re-hedge.
+
+    News is surfaced here for observability only (``last_news_impact`` /
+    ``last_signal`` in ``status()``) — it never triggers a flatten or biases
+    the hedge. Open positions are managed solely by this mechanical
+    gamma-theta re-hedge and by the strategy's own stop/target/time-exit
+    rules (Docs/Trading_Strategies.md); news can only decline to open a NEW
+    trade via the SH-4 entry overlay (backend/services/strategy_selection.py).
+    """
 
     def __init__(self, engine: PaperEngine) -> None:
         self.engine = engine
@@ -240,15 +248,16 @@ class PaperAutomation:
             self._last_error = str(exc)
             return {"actions": actions, "status": self.status()}
 
+        # Read-only: news is surfaced on the status payload for operator visibility
+        # but never drives an action here. Open positions close only via the
+        # strategy's own stop/target/time-exit rules or the mechanical re-hedge
+        # below — never because of a news headline (see class docstring).
         from backend.services.market_news import get_market_news
-        from backend.services.strategy_selection import post_entry_news_action
 
         news = get_market_news()
         self._last_news_impact = news.news_impact
-        news_action = post_entry_news_action(news, position_open=True)
         self._last_signal = {
             "news_impact": news.news_impact,
-            "post_entry_action": news_action,
             "dominant_tone": news.dominant_tone,
         }
 
@@ -296,35 +305,10 @@ class PaperAutomation:
 
         open_positions = list(self.engine.positions(status="open"))
 
-        # PS-06: news early_exit / take_profit prefer flatten over re-hedge
-        if news_action in {"early_exit", "take_profit"}:
-            for position in open_positions:
-                try:
-                    closed = await self.engine.close_position(position.position_id)
-                    actions.append(
-                        {
-                            "action": "flatten",
-                            "reason": news_action,
-                            "position_id": position.position_id,
-                            "realized_pnl": closed.get("realized_pnl"),
-                        }
-                    )
-                    self._flattens += 1
-                    self._record(actions[-1])
-                except Exception as exc:  # noqa: BLE001
-                    actions.append(
-                        {
-                            "action": "flatten_failed",
-                            "position_id": position.position_id,
-                            "detail": str(exc),
-                        }
-                    )
-                    self._record(actions[-1])
-            return {"actions": actions, "status": self.status()}
-
-        aggressive = news_action == "rehedge_aggressive"
+        # Re-hedge is purely mechanical (gamma-theta breakeven), never news-derived.
+        # News can never close, flatten, or otherwise modify an open position.
         for position in open_positions:
-            result = await self._maybe_rehedge(position.position_id, aggressive=aggressive)
+            result = await self._maybe_rehedge(position.position_id, aggressive=False)
             actions.append(result)
             self._record(result)
             if result.get("action") == "rehedge":

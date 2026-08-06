@@ -30,13 +30,6 @@ RecommendationAction = Literal[
     "blocked",
 ]
 
-PostEntryAction = Literal[
-    "none",
-    "take_profit",
-    "rehedge_aggressive",
-    "early_exit",
-]
-
 
 @dataclass(frozen=True)
 class QuantRegimeInputs:
@@ -402,46 +395,22 @@ def select_strategy_sh4(
     )
 
 
-def post_entry_news_action(
-    news: MarketNewsSummary,
-    *,
-    setup_designed_for_event: bool = False,
-    position_open: bool = True,
-) -> PostEntryAction:
-    """Map packet news_impact to post-entry management (N-05, N-06).
-
-    Breaking favorable news → rehedge_aggressive / take_profit (do not widen stops).
-    Quiet + adverse → early_exit.
-    """
-    if not position_open:
-        return "none"
-
-    impact = (news.news_impact or "none").lower()
-    if impact in {"rehedge_aggressive", "take_profit"}:
-        return "rehedge_aggressive" if impact == "rehedge_aggressive" else "take_profit"
-    if impact == "early_exit":
-        return "early_exit"
-    if news.dominant_tone == "bearish" and not news.news_not_blocking:
-        return "early_exit"
-    return "none"
-
-
 def select_strategy_packet(
     quant: QuantRegimeInputs,
     news: MarketNewsSummary,
     cfg: dict[str, Any] | None = None,
-    *,
-    setup_designed_for_event: bool = False,
-    position_open: bool = False,
 ) -> dict[str, Any]:
-    """SH-4 selection plus recommendation verb and optional post-entry action."""
+    """SH-4 selection plus recommendation verb.
+
+    News is entry-side only here: it can gate/prefer rows within
+    ``select_strategy_sh4`` (SH-4 news overlay), but this packet carries no
+    post-entry action. Open positions are managed solely by the mechanical
+    gamma-theta re-hedge loop (``backend/paper_sim/automation.py``) and the
+    strategy's own stop/target/time-exit rules (Docs/Trading_Strategies.md) —
+    news never closes or modifies an already-open position.
+    """
     strategy = select_strategy_sh4(quant, news, cfg)
     action = recommendation_action(strategy)
-    post = post_entry_news_action(
-        news,
-        setup_designed_for_event=setup_designed_for_event,
-        position_open=position_open,
-    )
     return {
         "selected_strategy": strategy.selected_strategy.value,
         "entry_mode": strategy.entry_mode,
@@ -451,7 +420,6 @@ def select_strategy_packet(
         "rejected_strategies": strategy.rejected_strategies,
         "news_impact": strategy.news_impact,
         "recommendation": action if action != "blocked" else "stand_aside",
-        "post_entry_action": post,
         "strategy": strategy.model_dump(mode="json"),
         "market_news": {
             "dominant_tone": news.dominant_tone,

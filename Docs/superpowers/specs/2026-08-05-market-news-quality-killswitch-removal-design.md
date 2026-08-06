@@ -102,6 +102,18 @@ Out of scope:
   `PostEntryAction` literal and its branch in `post_entry_news_action`; remove
   the `news.kill_event` / `news.news_post_shock` checks from
   `news_blocks_model_trades` (regulatory-surprise blocking stays).
+
+  > **Correction (2026-08-06, task 11):** the `news.news_post_shock` check in
+  > `news_blocks_model_trades` did NOT ship and should not be removed — it is
+  > intentional and stays. Only `kill_event` (the field/branch) was removed.
+  > The governing rule clarified by the operator: news may still gate/decline
+  > a NEW entry (`news_post_shock` included), but news must never close,
+  > flatten, or modify an already-open position. `post_entry_news_action` and
+  > `PaperAutomation.tick()`'s news-flatten block were removed entirely
+  > instead of being narrowed — see
+  > `.superpowers/sdd/2026-08-05-market-news-quality-killswitch-removal/task-11-report.md`.
+  > A future reader should not "fix" `news_blocks_model_trades` toward this
+  > stale bullet.
 - `backend/paper_sim/automation.py`: remove `"kill_event"` from the
   flatten-trigger set and from `_last_signal`.
 - `backend/services/market_news/service.py`: remove `kill_event` from

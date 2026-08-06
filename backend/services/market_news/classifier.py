@@ -99,7 +99,9 @@ _SOURCE_TRUST_WEIGHT: dict[str, float] = {
     "pulse": 0.6,
     "cnbc_tv18": 0.6,
 }
-_DEFAULT_TRUST_WEIGHT = 1.0
+# At or below the lowest curated tier (Tier 4 == 0.6) — an ops-added unknown
+# source must never silently inherit Tier-3 (1.0) authority.
+_DEFAULT_TRUST_WEIGHT = 0.6
 
 
 def _trust_weight(source_id: str) -> float:
@@ -202,7 +204,10 @@ def _score_tone(text: str) -> tuple[str, str, float]:
 
 def _relevance(topics: list[str], tickers: list[str], tone: str) -> str:
     if "post_shock" in topics:
-        return "Post-shock / crisis tone — flagged for visibility (SH-4 news overlay); no automated block"
+        return (
+            "Post-shock / crisis tone — blocks NEW SH-4 entries (news overlay); "
+            "never closes or modifies an already-open position"
+        )
     if "earnings" in topics:
         sym = tickers[0] if tickers else "name"
         return f"Earnings / event risk for {sym} — gamma earnings_gap_mode candidate"
@@ -337,8 +342,8 @@ def _interpretation(
     if post_shock:
         return (
             "Crisis / post-shock tone in curated India headlines — "
-            "tagged bearish and flagged for visibility (SH-4 news overlay); "
-            "no automated flatten or block."
+            "tagged bearish; blocks NEW SH-4 entries via the news overlay, "
+            "but never closes or modifies an already-open position."
         )
     parts = [
         f"Dominant tone {dominant_tone} from Market_News.txt priority sources.",

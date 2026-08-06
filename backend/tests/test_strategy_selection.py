@@ -11,7 +11,6 @@ from backend.models.recommendations import MarketNewsSummary, NewsItem, Strategy
 from backend.services.market_news import reset_market_news_cache
 from backend.services.strategy_selection import (
     QuantRegimeInputs,
-    post_entry_news_action,
     recommendation_action,
     select_strategy_packet,
     select_strategy_sh4,
@@ -115,50 +114,22 @@ def test_n03_garch_distorted_blocks():
     assert sel.selected_strategy == StrategyType.blocked
 
 
-def test_n04_post_shock_after_entry_is_early_exit_not_a_hard_kill():
-    """N-04 (revised): Post-shock/unplanned news after entry is tagged
-    bearish and routes through the normal early_exit path — there is no
-    separate hard-kill action."""
-    news = _news(
-        news_impact="early_exit",
-        news_post_shock=True,
-        dominant_tone="bearish",
-        news_not_blocking=False,
-    )
-    assert (
-        post_entry_news_action(news, setup_designed_for_event=False, position_open=True)
-        == "early_exit"
-    )
+def test_n04_n05_n06_post_entry_news_no_longer_exists():
+    """N-04/N-05/N-06 (superseded): there is no post-entry news action at all.
 
+    ``post_entry_news_action`` and ``select_strategy_packet``'s
+    ``post_entry_action`` key were removed — news is entry-side only
+    (SH-4 overlay may decline to open a NEW trade; it can never act on an
+    already-open one). See backend/paper_sim/automation.py for the
+    guarantee that open positions are never closed by news
+    (test_adverse_post_shock_news_never_closes_open_position).
+    """
+    import backend.services.strategy_selection as ss
 
-def test_n04_designed_earnings_setup_not_killed_by_event_flag_alone():
-    news = _news(
-        news_event_imminent=True,
-        news_impact="early_exit",
-        news_post_shock=False,
-    )
-    assert (
-        post_entry_news_action(news, setup_designed_for_event=True, position_open=True)
-        == "early_exit"
-    )
-
-
-def test_n05_breaking_news_rehedge_aggressive():
-    """N-05: Breaking favorable news → rehedge_aggressive (do not widen stops)."""
-    news = _news(news_impact="rehedge_aggressive", dominant_tone="bullish")
-    assert (
-        post_entry_news_action(news, position_open=True) == "rehedge_aggressive"
-    )
-
-
-def test_n06_quiet_adverse_early_exit():
-    """N-06: Quiet tape + adverse news → early_exit."""
-    news = _news(
-        dominant_tone="bearish",
-        news_not_blocking=False,
-        news_impact="early_exit",
-    )
-    assert post_entry_news_action(news, position_open=True) == "early_exit"
+    assert not hasattr(ss, "post_entry_news_action")
+    news = _news(news_impact="early_exit", news_post_shock=True, dominant_tone="bearish")
+    packet = select_strategy_packet(_quant(), news)
+    assert "post_entry_action" not in packet
 
 
 def test_n07_symbol_tagged_adverse_defers_entry():

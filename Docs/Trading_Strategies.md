@@ -1317,8 +1317,8 @@ Source reference pair (same strike, two expiries): **35 DTE vs 63 DTE** calls �
 |---|---|
 | No adverse event; normal tone | Allow cheap-vol / normal-regime row |
 | Earnings or company event imminent | Force earnings-gap row; block plain long-vega through event |
-| Crisis / post-shock tone | Tag bearish + macro flag; route through early_exit like any adverse tone — no automated hard block |
-| Breaking news after long-vol entry | Prefer take-profit / aggressive re-hedge (do not widen stops) |
+| Crisis / post-shock tone | Tag bearish + macro flag; block NEW SH-4 entries — never closes or modifies an already-open position |
+| Breaking news after long-vol entry (any tone) | No effect on the open position — news is entry-side only; exits follow the strategy's own stop/target/time-exit rules and the mechanical gamma-theta re-hedge loop |
 
 ---
 

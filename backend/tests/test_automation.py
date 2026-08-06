@@ -184,21 +184,32 @@ async def test_increase_hedge_uses_options_only_adjustment():
 
 
 @pytest.mark.asyncio
-async def test_ps06_news_kill_flattens_instead_of_rehedge():
+async def test_adverse_post_shock_news_never_closes_open_position():
+    """News can never close, flatten, or otherwise modify an open position —
+    only the mechanical γ–θ re-hedge and the strategy's own stop/target/time
+    rules may act on it. This pins the guarantee that replaced PS-06's old
+    news-driven flatten behavior."""
     engine, feed = _engine()
-    await engine.submit_order(_simple_vol_order())
+    opened = await engine.submit_order(_simple_vol_order())
+    position_id = opened["position"]["position_id"]
     feed.ltps["3045"] = 560.0
 
     from unittest.mock import patch
 
     with patch(
         "backend.services.market_news.get_market_news",
-        return_value=_neutral_news(news_impact="early_exit", news_post_shock=True),
+        return_value=_neutral_news(
+            news_impact="early_exit",
+            news_post_shock=True,
+            dominant_tone="bearish",
+            news_not_blocking=False,
+        ),
     ):
         tick = await engine.automation.tick()
 
-    assert any(a.get("action") == "flatten" for a in tick["actions"])
-    assert engine.positions(status="open") == []
+    assert not any(a.get("action") in {"flatten", "flatten_failed"} for a in tick["actions"])
+    open_ids = {p.position_id for p in engine.positions(status="open")}
+    assert position_id in open_ids
 
 
 @pytest.mark.asyncio
