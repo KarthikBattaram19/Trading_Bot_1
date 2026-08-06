@@ -205,6 +205,23 @@ Annualization:
 
 Model-risk caveat from the source: econometric models only work when the market is reasonably normal. After extreme events (2008, 2020), GARCH gets distorted and produces **false cheap-vol signals** — many options will show `IV < GARCH` for the wrong reason. The source's advice is to wait for the market to normalize.
 
+### Black-Scholes And Basic Option Mechanics (Reference)
+The source books derive Greeks and IV from the Black-Scholes model rather than trading it directly, but the underlying formula and two mechanical facts recur across all three books and are recorded here for completeness:
+
+- `Call = S0·N(d1) - K·e^(-rT)·N(d2)`
+- `Put = K·e^(-rT)·N(-d2) - S0·N(-d1)`
+
+where `S0` is spot, `K` is strike, `r` is the risk-free rate, `T` is time to expiry, and `N()` is the standard normal CDF. The bot should treat this as the pricing engine's job (via a Greeks provider), not something to hand-roll per trade.
+
+Two second-order effects the source notes as directionally real but small enough to ignore in practice:
+
+- a **higher risk-free rate increases call value and decreases put value**
+- **dividends decrease call value and increase put value**
+
+Source's own caveat: "the effect... is minimal... no point worrying too much about that." These are documented for completeness, not encoded as trading signals.
+
+Basic payoff mechanics (source illustrative example, order-of-magnitude only): 100 call option contracts at a `$10` premium, `$450` strike, 1-month expiry — a loss of `$1,000` if the underlying settles at `$420` (below breakeven), breakeven at spot `$450` + premium, and a profit of `$3,000` (`$4,000` intrinsic value minus `$1,000` net premium cost) if the underlying settles at `$490`. This is options-101 arithmetic retained only so the payoff convention (premium paid vs. intrinsic value at expiry) is traceable to source.
+
 ### Common Option Exposures
 
 - `Delta`: directional sensitivity
@@ -420,7 +437,7 @@ Action:
 ## Strategy 2: Gamma Scalping
 
 ### Objective
-Capture price movement through positive gamma while reducing or neutralizing exposure to changes in implied volatility.
+Capture price movement through positive gamma while reducing or neutralizing exposure to changes in implied volatility. The source literature also refers to this trade as **"Volatility Surface"** trading; treat the two names as synonyms in search, tagging, and RAG retrieval.
 
 ### Core Thesis
 Simple volatility trading depends heavily on vega. Gamma scalping removes much of that dependency by combining short-dated and longer-dated options so that the portfolio remains:
@@ -929,10 +946,10 @@ This section preserves every execution-critical table and rule list from the thr
 | Source Document | Table / Rule Set | Primary Use For The Bot |
 |---|---|---|
 | Volatility Trading (54 pp.) | Option selection rules, trading rules 1–10, MA/EWMA/GARCH lineage + worked example, Company Z walkthrough, black-swan example, earnings IV-crush example, 10 practical aspects | Cheap-vol entry, delta hedge, gamma-theta management, event gating |
-| Gamma Scalping (55 pp.) | Greeks-vs-time (35 vs 63 DTE), three entry modes, options-only mirror construction, Intel earnings example, management rules 1–2, 10 practical aspects | Vega-neutral construction, earnings gap, intraday scalp |
+| Gamma Scalping (55 pp.) | Greeks-vs-time (35 vs 63 DTE), three entry modes, options-only mirror construction, own Chapter-5 Greeks example, Intel earnings example, management rules 1–2, 10 practical aspects, alt. name "Volatility Surface" | Vega-neutral construction, earnings gap, intraday scalp |
 | Vega Scalping (52 pp.) | Stationarity vs non-stationarity, seven intraday rules, IV mean-reversion worked example, 7 practical aspects | Intraday IV z-score entry and same-day exit |
 
-**Shared-chapter note:** chapters 1–6 (Introduction, Basics of Derivatives, Stock Option Properties, Black-Scholes, Option Greeks, Forecasting Volatility) are **identical across all three books**. The GARCH numbers, gamma-theta breakeven derivation, delta-hedge-without-stocks example, and the Greeks-vs-time relationship therefore apply to all three strategies and are consolidated here rather than repeated per strategy. Only chapters 7+ differ.
+**Shared-chapter note:** chapters 1–6 (Introduction, Basics of Derivatives, Stock Option Properties, Black-Scholes, Option Greeks, Forecasting Volatility) are **materially overlapping across all three books** — not byte-identical. The GARCH numbers, gamma-theta breakeven derivation, delta-hedge-without-stocks example, and the Greeks-vs-time relationship are shared across all three and are consolidated here rather than repeated per strategy. Two documented exceptions: (1) the Gamma Scalping book illustrates Chapter 5 (Option Greeks) with its own distinct worked numeric example rather than reusing "Company Z" — preserved separately as Table GS-10; (2) the Stationarity Intuition discussion (300-point series, `±2σ` empirical rule, "moving goalposts" warning) is sourced from the Vega Scalping book only and does not appear in the other two. Only chapters 7+ differ substantively in strategy-specific content.
 
 ---
 
@@ -1183,6 +1200,26 @@ Source reference pair (same strike, two expiries): **35 DTE vs 63 DTE** calls �
 | Only other loss source | IV term-structure distortion between the two expiries | Gate at entry (Table GS-8); monitor post-entry |
 | Intraday mode | Theta accrues day-to-day, so a same-session scalp is delta-neutral, vega-neutral, and effectively theta-free | Pure gamma extraction; term-structure distortion becomes the **sole** loss source |
 | Execution requirement | Source: "at least three simultaneous trades" (four in the options-only version) | Highest execution bar of the three strategies; algorithmic multi-leg submit is mandatory, manual legging will fail |
+
+#### Table GS-10: Greeks Worked Example (Source, Gamma Scalping Book's Own Chapter 5 Illustration)
+
+Distinct from the "Company Z" walkthrough in Table VT-6 (sourced from the Volatility Trading book), the Gamma Scalping book illustrates the same Chapter 5 material with its own numeric example. Preserved here for completeness since it is a fully worked, self-contained case study with no other home in this document.
+
+| Step | Field | Value |
+|---|---|---|
+| Setup | Stock price | $50 |
+| Setup | ATM call premium | $1.01901 |
+| Setup | Call delta | 52.27% |
+| Setup | Portfolio | 1,000 call option contracts |
+| Delta | Portfolio delta | 522.73 |
+| Delta hedge | Stock hedge | Short 523 shares |
+| Move +5% | Spot → $52.50 | P/L **+$453**; delta drifts to **+330.53** |
+| Move −5% | Spot → $47.50 | P/L **+$482**; delta drifts to **−361.02** |
+| Gamma | Portfolio gamma | 162.21 — a `$0.01` tick moves portfolio delta by `1.62` |
+| Theta | Portfolio theta | **−18.18** per day |
+| Vega | Portfolio vega | **56.21** — IV `17.40% → 18.40%` moves P/L by **+$56** |
+
+**Interpretation:** Both directional moves in this example show a *positive* P/L (`+$453` up, `+$482` down) because the stock hedge keeps the book delta-neutral while gamma captures the move in both directions — the same mechanism as Table VT-6, illustrated with a fresh dataset. This example uses the source-only `long calls + short stock` hedge path; the project executes the equivalent options-only construction (Table GS-4) instead, but the Greek magnitudes and directional logic transfer unchanged.
 
 ---
 
