@@ -231,7 +231,6 @@ def aggregate_packet_flags(
             "news_event_imminent": False,
             "news_post_shock": False,
             "news_impact": "none",
-            "kill_event": False,
             "interpretation": "No Market_News headlines ingested this cycle.",
         }
 
@@ -288,10 +287,7 @@ def aggregate_packet_flags(
 
     flags = list(dict.fromkeys(flags))
     news_not_blocking = not post_shock and dominant_tone != "bearish"
-    kill_event = post_shock
-    if post_shock:
-        news_impact = "kill_event"
-    elif event_imminent and dominant_tone == "bearish":
+    if event_imminent and dominant_tone == "bearish":
         news_impact = "early_exit"
     elif _any_breaking_bullish(items):
         news_impact = "rehedge_aggressive"
@@ -318,7 +314,6 @@ def aggregate_packet_flags(
         "news_event_imminent": event_imminent,
         "news_post_shock": post_shock,
         "news_impact": news_impact,
-        "kill_event": kill_event,
         "interpretation": interpretation,
     }
 
@@ -342,7 +337,8 @@ def _interpretation(
     if post_shock:
         return (
             "Crisis / post-shock tone in curated India headlines — "
-            "block model-driven vol trades until normalization (SH-4, H11/K4)."
+            "tagged bearish and flagged for visibility (SH-4 news overlay); "
+            "no automated flatten or block."
         )
     parts = [
         f"Dominant tone {dominant_tone} from Market_News.txt priority sources.",

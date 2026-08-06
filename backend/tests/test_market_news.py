@@ -75,8 +75,8 @@ def test_classifier_tone_topics_symbols():
     assert "post_shock" in shock.topics
     flags = aggregate_packet_flags([shock])
     assert flags["news_post_shock"] is True
-    assert flags["kill_event"] is True
-    assert flags["news_impact"] == "kill_event"
+    assert "kill_event" not in flags
+    assert flags["news_impact"] == "early_exit"
     assert "post-shock" in flags["macro_risk_flags"]
 
 
@@ -93,7 +93,6 @@ def test_get_market_news_from_fixture():
         "take_profit",
         "rehedge_aggressive",
         "early_exit",
-        "kill_event",
     }
     assert any("earnings" in (i.topics or []) for i in summary.items) or summary.earnings_mentions >= 0
 

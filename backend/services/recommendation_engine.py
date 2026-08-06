@@ -1100,11 +1100,11 @@ async def _generate_recommendations_uncached(
         )
     if news.macro_risk_flags:
         notes.append(f"News flags: {'; '.join(news.macro_risk_flags)}")
-    if not news.news_not_blocking or news.kill_event or news.news_post_shock:
+    if not news.news_not_blocking or news.news_post_shock:
         notes.append(
             "News overlay gating SH-4 rows "
             f"(news_not_blocking={news.news_not_blocking}, "
-            f"post_shock={news.news_post_shock}, kill_event={news.kill_event})."
+            f"post_shock={news.news_post_shock})."
         )
     if not top3:
         notes.append(
@@ -1140,8 +1140,8 @@ def _event_risks(
         risks.append("Market_News: earnings/company event imminent (U5)")
     if news.earnings_mentions > 2:
         risks.append("Broad earnings season — IV crush risk for long-vega")
-    if news.news_post_shock or news.kill_event:
-        risks.append("Post-shock / kill_event — model trades blocked (U6/U10)")
+    if news.news_post_shock:
+        risks.append("Post-shock tone flagged — no automated flatten or block (U6)")
     if not news.news_not_blocking:
         risks.append("news_not_blocking=false — SH-4 rows gated (U4)")
     if c.spread_pct > 1.5:

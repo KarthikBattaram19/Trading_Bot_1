@@ -81,7 +81,6 @@ def mock_market_news() -> MarketNewsSummary:
         news_impact="none",
         source_freshness={},
         workflow_window=workflow_window_at(),
-        kill_event=False,
         interpretation=(
             "Mock news layer active. Sentiment will come from curated India sources "
             "listed in Market_News.txt (Architecture §8.8)."
@@ -219,7 +218,6 @@ def paper_news_packet(*, now: datetime | None = None, force_refresh: bool = Fals
         "news_not_blocking": summary.news_not_blocking,
         "news_event_imminent": summary.news_event_imminent,
         "news_post_shock": summary.news_post_shock,
-        "kill_event": summary.kill_event,
         "workflow_window": summary.workflow_window,
         "feed_health": feed.health.value,
         "feed_status": feed.status.value,
@@ -296,7 +294,6 @@ def _build_summary(*, now: datetime | None = None) -> MarketNewsSummary:
         news_impact=str(flags["news_impact"]),
         source_freshness=adjusted,
         workflow_window=window,
-        kill_event=bool(flags["kill_event"]),
         interpretation=str(flags["interpretation"]),
         items=news_items,
     )

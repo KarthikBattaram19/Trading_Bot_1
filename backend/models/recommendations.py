@@ -162,7 +162,6 @@ class MarketNewsSummary(BaseModel):
     news_impact: str = "none"  # U7
     source_freshness: dict[str, datetime | None] = Field(default_factory=dict)  # U8
     workflow_window: str = "session"  # U9: pre_open | session | after_close
-    kill_event: bool = False  # U10
     interpretation: str
     items: list[NewsItem]
 
