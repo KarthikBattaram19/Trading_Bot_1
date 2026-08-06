@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Any
 
 from backend.paper_sim.models import PaperLegRequest, PaperSide
+from backend.services.universe_enrichment import _dte_from_expiry
 
 # Strategy tags that imply a multi-leg opening structure.
 _SIMPLE_VOL_TAGS = frozenset({"simple_vol", "simple_volatility"})
@@ -281,3 +282,34 @@ def _find_matching_option(
             best_dist = dist
             best = rec
     return best
+
+
+def _resolve_far_expiry(
+    feed: Any,
+    *,
+    name: str,
+    near_expiry: str | None,
+    min_gap_days: int,
+) -> tuple[str, int] | None:
+    """Nearest listed expiry with DTE >= near-leg DTE + ``min_gap_days``.
+
+    Table GS-1: use a near/far separation comparable to the source's 35-DTE-
+    vs-63-DTE reference pair; too small a gap leaves nothing to hedge with.
+    """
+    near_dte = _dte_from_expiry(near_expiry or "")
+    records = feed.list_options(name=name, exchange="NFO", limit=5000)
+    expiries: dict[str, int] = {}
+    for rec in records:
+        if not rec.expiry:
+            continue
+        dte = _dte_from_expiry(rec.expiry)
+        key = rec.expiry
+        if key not in expiries or dte < expiries[key]:
+            expiries[key] = dte
+    candidates = [
+        (exp, dte) for exp, dte in expiries.items() if dte >= near_dte + min_gap_days
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda x: (x[1], x[0]))
+    return candidates[0]
