@@ -9,10 +9,16 @@ Options-only hard lock: intended plans never include NSE/BSE cash underlying leg
 
 from __future__ import annotations
 
+import logging
+from math import isfinite
 from typing import Any
 
+from backend.paper_sim.config import PaperSimConfig
 from backend.paper_sim.models import PaperLegRequest, PaperSide
+from backend.quant.pricing.bsm import BSMInputs, option_greeks
 from backend.services.universe_enrichment import _dte_from_expiry
+
+logger = logging.getLogger(__name__)
 
 # Strategy tags that imply a multi-leg opening structure.
 _SIMPLE_VOL_TAGS = frozenset({"simple_vol", "simple_volatility"})
@@ -313,3 +319,129 @@ def _resolve_far_expiry(
         return None
     candidates.sort(key=lambda x: (x[1], x[0]))
     return candidates[0]
+
+
+async def _append_vega_neutral_far_dated_pair(
+    intended: list[PaperLegRequest],
+    *,
+    feed: Any,
+    first: PaperLegRequest,
+    record: Any,
+    underlying: str | None,
+    qty: int,
+    paper_sim_config: PaperSimConfig,
+    min_gap_days: int,
+) -> None:
+    """Short a longer-dated CE/PE pair sized to zero portfolio vega.
+
+    Table GS-4 steps 3-4: solve the short-dated/long-dated call pair for
+    vega neutrality first, then mirror the identical quantity into puts
+    (delta identity in step 4's callout) rather than re-solving both sides
+    independently.
+    """
+    strike = float(record.strike or 0.0)
+    if strike <= 0:
+        return
+    name = (record.name or underlying or "").upper()
+
+    near_dte = _dte_from_expiry(record.expiry or "")
+    far = _resolve_far_expiry(feed, name=name, near_expiry=record.expiry, min_gap_days=min_gap_days)
+    if far is None:
+        logger.warning(
+            "gamma_scalping calendar skip: no far expiry >= near_dte(%d)+%d days for %s",
+            near_dte,
+            min_gap_days,
+            name,
+        )
+        return
+    far_expiry, far_dte = far
+
+    und_rec = feed.resolve(exchange="NSE", tradingsymbol=(underlying or name).upper())
+    if und_rec is None:
+        und_rec = feed.resolve(tradingsymbol=(underlying or name).upper())
+    if und_rec is None:
+        logger.warning("gamma_scalping calendar skip: no underlying spot record for %s", name)
+        return
+    tick = await feed.get_ltp(und_rec.exchange, und_rec.tradingsymbol, und_rec.symboltoken)
+    spot = float(tick.ltp)
+    if spot <= 0:
+        return
+
+    def _greeks(days: float, option_type: str) -> dict[str, float]:
+        inputs = BSMInputs.from_api(
+            und_price=spot,
+            strike=strike,
+            days_to_expiry=days,
+            int_rate=paper_sim_config.risk_free_rate_pct,
+            div_yield=paper_sim_config.dividend_yield_pct,
+            volatility=paper_sim_config.default_iv_annual_pct,
+            option_type=option_type,  # type: ignore[arg-type]
+        )
+        return option_greeks(inputs)
+
+    near_call = _greeks(near_dte, "call")
+    far_call = _greeks(far_dte, "call")
+    vega_far = far_call["vega"]
+    if not isfinite(vega_far) or abs(vega_far) < 1e-9:
+        logger.warning(
+            "gamma_scalping calendar skip: degenerate far vega (%s) for %s far_expiry=%s",
+            vega_far,
+            name,
+            far_expiry,
+        )
+        return
+
+    near_lotsize = max(int(record.lotsize or 1), 1)
+    near_contracts = max(int(qty // near_lotsize), 1) if qty >= near_lotsize else 1
+    far_contracts = max(round(near_contracts * near_call["vega"] / vega_far), 1)
+
+    appended: list[PaperLegRequest] = []
+    for want in ("CE", "PE"):
+        pair = _find_matching_option(feed, name=name, expiry=far_expiry, strike=strike, option_type=want)
+        if pair is None:
+            logger.warning(
+                "gamma_scalping calendar skip leg: no %s at strike=%.2f expiry=%s for %s",
+                want,
+                strike,
+                far_expiry,
+                name,
+            )
+            continue
+        far_lotsize = max(int(pair.lotsize or near_lotsize), 1)
+        leg = PaperLegRequest(
+            symbol=pair.tradingsymbol,
+            side=PaperSide.sell,
+            quantity=far_contracts * far_lotsize,
+            exchange=pair.exchange,
+            symbol_token=pair.symboltoken,
+            option_type=want,  # type: ignore[arg-type]
+            strike=float(pair.strike) if pair.strike is not None else None,
+            expiry=pair.expiry,
+        )
+        intended.append(leg)
+        appended.append(leg)
+
+    if len(appended) == 2:
+        near_put = _greeks(near_dte, "put")
+        far_put = _greeks(far_dte, "put")
+        residual_delta = near_contracts * (near_call["delta"] + near_put["delta"]) - far_contracts * (
+            far_call["delta"] + far_put["delta"]
+        )
+        residual_vega = near_contracts * (near_call["vega"] + near_put["vega"]) - far_contracts * (
+            far_call["vega"] + far_put["vega"]
+        )
+        logger.info(
+            "gamma_scalping calendar solve symbol=%s strike=%.2f near_dte=%d far_dte=%d "
+            "vega_near_call=%.4f vega_far_call=%.4f near_contracts=%d far_contracts=%d "
+            "residual_delta=%.4f residual_vega=%.4f",
+            name,
+            strike,
+            near_dte,
+            far_dte,
+            near_call["vega"],
+            vega_far,
+            near_contracts,
+            far_contracts,
+            residual_delta,
+            residual_vega,
+        )
