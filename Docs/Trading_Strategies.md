@@ -152,7 +152,6 @@ Abort or flatten if any of the following becomes true:
 - liquidity collapses or spreads blow out beyond limits
 - a hedge leg becomes unavailable
 - the model input is stale or clearly corrupted
-- an earnings or news event appears that the setup was not designed to absorb
 - required neutrality cannot be restored within cost limits
 - residual delta or vega exposure exceeds portfolio limits
 - the strategy's core assumption no longer holds
@@ -1318,9 +1317,8 @@ Source reference pair (same strike, two expiries): **35 DTE vs 63 DTE** calls �
 |---|---|
 | No adverse event; normal tone | Allow cheap-vol / normal-regime row |
 | Earnings or company event imminent | Force earnings-gap row; block plain long-vega through event |
-| Crisis / post-shock tone | Force post-shock row; set `garch_distorted` / block model trades |
+| Crisis / post-shock tone | Tag bearish + macro flag; route through early_exit like any adverse tone — no automated hard block |
 | Breaking news after long-vol entry | Prefer take-profit / aggressive re-hedge (do not widen stops) |
-| Unplanned news the setup was not designed for | Shared Kill → abort or flatten |
 
 ---
 

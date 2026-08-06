@@ -621,7 +621,6 @@
         "kill_liquidity": { "type": "boolean" },
         "kill_hedge_unavailable": { "type": "boolean" },
         "kill_stale_data": { "type": "boolean" },
-        "kill_event": { "type": "boolean" },
         "kill_neutrality": { "type": "boolean" },
         "kill_greek_limit": { "type": "boolean" },
         "kill_thesis": { "type": "boolean" }

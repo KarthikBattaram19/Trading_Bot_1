@@ -75,6 +75,10 @@ deprioritized behind any open P0/P1 item.
   `_kill_switch_armed = False`; resolved 2026-08-04, evidence:
   `test_armed_state_survives_simulated_process_restart`,
   `test_bot_router_reads_persisted_state`)
+  **Superseded 2026-08-05:** the kill-switch mechanism itself (this
+  persisted-state fix included) was removed entirely per operator decision —
+  the bot now has no manual kill switch. See
+  `Docs/superpowers/specs/2026-08-05-market-news-quality-killswitch-removal-design.md`.
 - [x] **One-trade lock / active-trade-id were in-memory globals, resetting
   on every restart and letting a second discretionary entry through while
   a position was still open.** `backend/services/trade_executor.py` now

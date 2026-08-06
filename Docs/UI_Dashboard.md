@@ -219,7 +219,6 @@ Kill-switch and Pause always in Zone A — one click.
 | `POST /api/v1/decisions/{id}/approve` | Approve |
 | `POST /api/v1/decisions/{id}/reject` | Reject |
 | `GET /api/v1/bot/supervision` | Supervision mode |
-| `POST /api/v1/bot/pause` | Kill-switch |
 | `GET /api/v1/paper-sim/account` | Paper cash / equity / P&L |
 | `GET /api/v1/paper-sim/news` | Market_News summary for paper path |
 | `GET /api/v1/paper-sim/signals` | GARCH / IV z + SH-4 + news recommendation |

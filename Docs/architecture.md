@@ -3846,9 +3846,6 @@ Parquet files are written by the replay recorder (§8.7); metadata index in Post
 | `GET`  | `/api/v1/bot/status`                          | Bot mode, health, last activity, `EXECUTION_MODE`, `SUPERVISION_MODE` |
 | `GET`  | `/api/v1/bot/supervision`                     | Supervision mode + promotion checklist status (§6.2.2) |
 | `PUT`  | `/api/v1/bot/supervision`                     | Promote / demote `SUPERVISION_MODE` (audit-logged) |
-| `POST` | `/api/v1/bot/kill-switch`                     | Pause trading                                                  |
-| `POST` | `/api/v1/bot/pause`                           | Pause bot (alias for kill-switch)                          |
-| `POST` | `/api/v1/bot/resume`                          | Resume from paused state                                   |
 | `GET`  | `/api/v1/metrics`                             | Performance metrics                                        |
 | `GET`  | `/api/v1/positions`                           | Open positions                                             |
 | `GET`  | `/api/v1/trades`                              | Trade history                                              |
@@ -4160,8 +4157,10 @@ Push to main
               ├── RAG golden eval — faithfulness ≥ 0.85 (§7, §22)
               ├── Cloud Buildpacks → Artifact Registry
               ├── Deploy gate (production, market hours):
-              │     POST /api/v1/bot/pause → wait for safe state
-              │     → gcloud run deploy → verify /health/bot → POST /api/v1/bot/resume
+              │     (previously gated on POST /api/v1/bot/pause / /bot/resume; those
+              │      endpoints were removed with the kill-switch mechanism — deploy gate
+              │      needs a replacement mechanism before this pipeline is built)
+              │     → gcloud run deploy → verify /health/bot
               └── Smoke test → staging/production
 ```
 
@@ -4786,7 +4785,6 @@ Operator involvement scales with `SUPERVISION_MODE` (§6.2.2):
 
 | Control            | Mechanism                                                                                                      |
 | ------------------ | -------------------------------------------------------------------------------------------------------------- |
-| Kill-switch        | Frontend → `POST /api/v1/bot/pause` (immediate)                                                                |
 | Scheduler modes    | Active / Learning / Reduced / Paused (§6.2)                                                                    |
 | Supervision mode   | `GET`/`PUT /api/v1/bot/supervision` — promote / demote with checklist gates (§6.2.2)                           |
 | Decision queue     | `GET /api/v1/decisions/pending`; Approve / Reject endpoints                                                    |
