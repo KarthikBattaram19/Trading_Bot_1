@@ -60,7 +60,6 @@ def _neutral_news(**overrides) -> MarketNewsSummary:
         news_impact="none",
         source_freshness={"reuters": datetime.now(timezone.utc)},
         workflow_window="session",
-        kill_event=False,
         interpretation="test",
         items=[],
     )
@@ -194,7 +193,7 @@ async def test_ps06_news_kill_flattens_instead_of_rehedge():
 
     with patch(
         "backend.services.market_news.get_market_news",
-        return_value=_neutral_news(news_impact="kill_event", kill_event=True),
+        return_value=_neutral_news(news_impact="early_exit", news_post_shock=True),
     ):
         tick = await engine.automation.tick()
 

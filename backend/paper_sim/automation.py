@@ -268,7 +268,6 @@ class PaperAutomation:
             "news_impact": news.news_impact,
             "post_entry_action": news_action,
             "dominant_tone": news.dominant_tone,
-            "kill_event": news.kill_event,
         }
 
         open_positions = list(self.engine.positions(status="open"))
@@ -315,8 +314,8 @@ class PaperAutomation:
 
         open_positions = list(self.engine.positions(status="open"))
 
-        # PS-06: news kill / early exit / take_profit prefer flatten over re-hedge
-        if news_action in {"kill_event", "early_exit", "take_profit"}:
+        # PS-06: news early_exit / take_profit prefer flatten over re-hedge
+        if news_action in {"early_exit", "take_profit"}:
             for position in open_positions:
                 try:
                     closed = await self.engine.close_position(position.position_id)
