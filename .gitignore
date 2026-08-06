@@ -154,4 +154,11 @@ Docs/Untitled
 .vercel
 .env*
 .worktrees/
+.claude/worktrees/
 .superpowers/
+
+# Scratch output from ad-hoc debug runs
+out.txt
+
+# Large binary design exports — keep a durable copy outside git (they never diff)
+Docs/*.zip
