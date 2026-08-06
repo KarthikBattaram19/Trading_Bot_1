@@ -493,6 +493,15 @@ triggers are news-driven (`news_action in {kill_event, early_exit, take_profit}`
 `automation.py:319`) — there is no time-of-day check and no IV-mean-reversion check
 at all.
 
+**Superseded 2026-08-05:** news-driven exits (`kill_event`, `early_exit`, and the rest
+of `post_entry_news_action`) were removed from `automation.py` entirely per operator
+decision — market news now only blocks new entries (SH-4), never closes or flattens
+an open position. That closes off the one exit trigger described above, so the
+underlying gap this finding raised (no time-of-day flatten, no IV-mean-reversion
+stop) is now total, not partial: `automation.py`'s only remaining exit paths are the
+strategy exit rules and the mechanical γ–θ re-hedge. See
+`Docs/superpowers/specs/2026-08-05-market-news-quality-killswitch-removal-design.md`.
+
 Table VS-2 rules 6–7 and Table SH-3's "Session close always" row are treated by
 `Trading_Strategies.md` as hard, non-optional constraints specifically because vega
 scalping is defined as intraday-only with theta "largely ignored" on the assumption
@@ -628,6 +637,12 @@ recommendation-engine's autonomous execution path: a process restart mid-"trade"
 loses all record that a position was ever opened, with no reconciliation step to
 notice the discrepancy.
 
+**Superseded 2026-08-05:** the kill-switch mechanism itself was removed entirely per
+operator decision — the bot now has no manual kill switch. Only the
+active-trade-id/one-trade-lock restart-survival half of this item remains open. See
+`Docs/bot_health/BACKLOG.md` and
+`Docs/superpowers/specs/2026-08-05-market-news-quality-killswitch-removal-design.md`.
+
 ### 4.4 Shadow broker-router call is fire-and-forget with a bare `except: pass`
 `trade_executor.py:80-108` — the ICICI Direct shadow submit (`USE_ICICI_DIRECT_SHADOW`,
 default `true`) wraps the entire broker-router call in `try/except Exception: pass`
@@ -761,8 +776,9 @@ flowchart TD
    production-reachable flag) — as shipped, the bot is structurally biased against
    ever executing its own top pick (§4.2).
 3. Make `_one_trade_locked`/`_active_trade_id` durable (file/DB), matching the
-   already-open kill-switch persistence item — this module is one of the concrete
-   places that item must land.
+   already-open position-book persistence item (the kill-switch half of that item
+   was closed by its removal — see §4.3 note) — this module is one of the concrete
+   places the remaining half must land.
 
 **P1 (proof of edge — blocked on P0-1 producing real trades):**
 4. Once real trades exist, confirm `confidence_calibrator.py` actually deploys a

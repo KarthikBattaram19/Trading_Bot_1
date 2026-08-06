@@ -102,10 +102,10 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 | N-01 | News service stale / empty at open | Gate automated entries; expose freshness on packet | P0 | §8.8; plan 1.3 |
 | N-02 | Earnings / company event + plain long-vega | Reject simple vol through event; prefer gamma + `earnings_gap_mode` | P0 | SH-4; §8.8.4 |
 | N-03 | Post-shock / crisis tone; GARCH distorted | `stand_aside` / `blocked`; `block_model_trades` | P0 | §8.8.4; Paper_Simulator |
-| N-04 | Unplanned news after entry (Shared Kill) | Flatten / abort (`kill_event`) | P0 | §8.8.4 |
-| N-05 | Breaking news favorable after long-vol entry | Take profit / re-hedge aggressively — **do not widen stops** | P0 | §8.8.4 |
-| N-06 | Quiet tape + adverse news after entry | Early exit / stop per rules | P1 | §8.8.4 |
-| N-07 | Symbol-tagged adverse news vs open position | Prefer flatten / reduce; log `news_impact` | P1 | §8.8 |
+| N-04 | Unplanned news after entry | No effect on open position — news never flattens/closes; exits only via strategy exit rules / γ–θ re-hedge | P1 | §8.8.4 |
+| N-05 | Breaking news favorable after long-vol entry | Display-only tone (`breaking_bullish`); no automatic action — **position exits only via strategy rules, never news** | P1 | §8.8.4 |
+| N-06 | Quiet tape + adverse news after entry | Display-only tone (`adverse_tone`); no automatic early exit — exits only via strategy stop/target/time rules | P1 | §8.8.4 |
+| N-07 | Symbol-tagged adverse news vs open position | No flatten/reduce action; log `news_impact` (`adverse_tone`) for display only | P1 | §8.8 |
 | N-08 | Conflicting source tones (Reuters vs Moneycontrol) | Prefer ingestion priority order; surface disagreement in packet | P2 | §8.8.2 |
 | N-09 | US/global news used as India regime truth | Explicit non-goal; ignore or down-weight | P1 | §8.8.1 |
 | N-10 | SEBI circular / regulatory surprise flag | Macro risk flag → defer / block model trades | P1 | §8.8.3 |
@@ -171,7 +171,7 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 | SU-02 | Approve after marks moved / feeds went stale | Re-run pre-trade gate on approve; reject if fail | P0 | §6.3, §11.4 |
 | SU-03 | Double Approve / double-click | Idempotent; second is no-op | P0 | §20.4.3 |
 | SU-04 | Approve and Reject race | First wins; second conflict error | P0 | §6.2.2 APIs |
-| SU-05 | Approve while kill-switch active | Reject | P0 | §11.4 |
+| SU-05 | Approve while circuit breaker tripped | Reject | P0 | §11.4 |
 | SU-06 | Second discretionary signal while one open | `deferred_one_trade_scope`; hedges exempt | P0 | §20.4.11 |
 | SU-07 | Pending decision + new higher-confidence signal | Do not open second; optionally expire/supersede per policy (document); never two opens | P0 | §20.4.11 |
 | SU-08 | Semi-auto: confidence ≥ 0.85 but gate fails | Residual queue or skip; no submit | P0 | §6.2.2 |
@@ -211,7 +211,6 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 | R-06 | Max open positions exceeded | Reject discretionary; hedges exempt | P0 | §11.4.1 |
 | R-07 | Broker reject rate > 10% / 1h | Pause all new orders | P0 | §11.4, §20.4.4 |
 | R-08 | Bot error rate ≥ 5% / 1h | Reject | P0 | §11.4 |
-| R-09 | Kill-switch | Reject all new; manage existing | P0 | §6.2, §20.4.7 |
 | R-10 | Insufficient buying power / paper cash | Reject | P0 | §11.4; Paper_Simulator caps |
 | R-11 | Capital: > ₹1L trade or leg / > ₹10L book | Reject | P0 | Trading_Strategies; Paper_Simulator |
 | R-12 | Symbol not in whitelist | Reject | P0 | §11.4 |
@@ -236,9 +235,9 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 | PS-03 | Multi-leg paper order with missing LTP on one leg | Reject whole basket | P0 | Paper_Simulator |
 | PS-04 | Reset account while positions open | Define: flatten or forbid reset until flat | P1 | `/reset` |
 | PS-05 | Re-hedge when capital caps would breach | Skip hedge / reduce_options path; enforce caps | P0 | Part J; Paper_Simulator |
-| PS-06 | Spot move ≥ breakeven but news kill active | Prefer kill/flatten over re-hedge | P0 | Paper_Simulator |
+| PS-06 | Spot move ≥ breakeven; adverse news tone present | Re-hedge proceeds normally — news tone never blocks/overrides γ–θ re-hedge | P0 | Paper_Simulator |
 | PS-07 | Continuous re-hedge loop thrash (spot oscillating) | Cooldown / max `breakeven_paid_count`; cost gate | P1 | Part J |
-| PS-08 | Automation running + kill-switch | Stop new entries/hedges per pause policy | P0 | §6.2 |
+| PS-08 | Automation running + circuit breaker tripped | Stop new discretionary entries per pause policy; mechanical γ–θ re-hedge continues | P0 | §6.2 |
 | PS-09 | Marks refresh fails mid-automation tick | Skip actions; mark degraded | P0 | Paper_Simulator `/marks/refresh` |
 | PS-11 | Post-entry multi-leg auto-complete under same open rules | Completing legs re-gate freshness / lot / pre-trade / Part T / cumulative ₹1L; **no** second consent; reject if caps fail | P0 | Paper_Simulator; §11.7 |
 | PS-10 | Partial fills / depth | v1 does **not** model — document limitation; live path separate | P2 | Paper_Simulator “Does not” |
@@ -329,7 +328,6 @@ NSE / NFO default **09:15–15:30 IST**; news windows; ICICI Direct session expi
 
 | ID | Scenario | EO | Sev | Refs |
 | -- | -------- | -- | --- | ---- |
-| UI-01 | Kill-switch network fail | Retry; show error; assume not paused until ACK — prefer optimistic UI + confirm from API | P0 | §20.4.7 |
 | UI-02 | Decision card shows MCP / `mcp_sources` | Must use `feed_sources` | P1 | plan §1 |
 | UI-03 | Recommendations SSR shows trade already opened | Display `autonomous_execution`; do not re-trigger | P0 | §6.4 |
 | UI-04 | Operator role without Approve permission | 403 | P1 | §16.3 |
@@ -393,7 +391,7 @@ From §20.4.8, §22.1, plan Phase 3.4.
 | ----- | -------------------------------- |
 | **0** | ICICI Direct auth fail; no `place_order` possible; health without bot loop; CORS/WS wiring |
 | **1** | News stale; SH-4 kill; lotsize reject; conservative slippage; γ–θ + capital cap; GARCH distorted |
-| **2** | Approval timeout; one-trade defer; kill-switch; circuit breakers; idempotency; Track B green before LLM gate |
+| **2** | Approval timeout; one-trade defer; circuit breakers; idempotency; Track B green before LLM gate |
 | **3** | Semi-auto threshold boundary (0.849 vs 0.85); demotion; chaos CH-01–CH-04; config rollback |
 | **4** | All ranks fail; RF double-fetch; soak with conservative fills; rank-1-rejects path exercised only via test DI, never in prod |
 | **5** | Static IP; sequential multi-leg rollback; micro-size; re-supervise on live; market-hours deploy pause; A6 no stubs |

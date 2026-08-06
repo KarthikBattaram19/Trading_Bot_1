@@ -83,7 +83,7 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 | 0.5 | Instrument master + LTP REST → normalized ticks; on-demand marks | Manual / integration | Yes |
 | 0.6 | `GET /api/v1/paper-sim/health` stub; shadow mode documented | API smoke | Yes |
 | 0.7 | Frontend hits Railway API (`CORS_ORIGINS`, `NEXT_PUBLIC_*`) | Manual | Yes |
-| 0.8 | UI shell: bot status, health, kill-switch placeholder | Manual vs `UI_Dashboard.md` | Yes |
+| 0.8 | UI shell: bot status, health | Manual vs `UI_Dashboard.md` | Yes |
 
 ### 2.2 Exit gates
 
@@ -176,7 +176,7 @@ From `implementation_plan.md` §10 — must remain true through Phase 5:
 | 2.1 | Scheduler; ≥ 1 week shadow then paper single-module | Soak log (M-07) | Yes |
 | 2.2 | Approve / Reject APIs; no auto-submit on timeout | Integration (SU-01) | Yes |
 | 2.3 | Supervised cockpit (decision queue) | Manual vs `UI_Dashboard.md` | Yes |
-| 2.4 | One-trade gate, circuit breakers, auto-pause, kill-switch | Integration + Manual | Yes |
+| 2.4 | One-trade gate, circuit breakers, auto-pause | Integration + Manual | Yes |
 | 2.5 | AI validator only if Track B **B6** PASS | CI faithfulness ≥ 0.85 with EB-G green | Yes |
 | 2.6 | Live-path multi-leg builder polish; ICICI Direct multi-leg dry-run only (paper auto-complete = Phase 1.1a) | Integration | Yes |
 
@@ -192,7 +192,7 @@ Also required (architecture §21 Phase 2):
 | Gate | Pass when |
 | ---- | --------- |
 | **E2-A** | Full market day supervised: Approve/Reject path works |
-| **E2-B** | Kill-switch blocks new discretionary; hedges policy documented (R-09, SU-05) |
+| **E2-B** | Circuit breaker blocks new discretionary; hedges policy documented (SU-05) |
 | **E2-C** | Second discretionary signal deferred (`deferred_one_trade_scope`) (SU-06) |
 | **E2-D** | Re-gate on Approve if marks stale (SU-02) |
 | **E2-E** | Promotion checklist artifact ready for Phase 3 (≥ 30 closed supervised trades target starts counting) |
@@ -203,7 +203,7 @@ Also required (architecture §21 Phase 2):
 | ID | Focus |
 | -- | ----- |
 | SU-01–SU-07, SU-10 | Timeout, race, one-trade, hedge vs pending |
-| R-01–R-09, R-18–R-19 | Breakers, kill-switch, no silent resume |
+| R-01–R-08, R-10, R-18–R-19 | Breakers, no silent resume |
 | AI-01–AI-07, AI-11 | Groq degrade; RAG skip; confidence; malformed JSON |
 | UI-02 | No MCP copy in FeedStatusPanel |
 | CH-05 | Duplicate tick idempotent |

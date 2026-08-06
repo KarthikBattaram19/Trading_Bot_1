@@ -288,7 +288,7 @@ From `Trading_Strategies.md` §Common Execution Framework — **Data Requirement
 | G7 | **Corporate actions calendar** | `corp_actions` | Events | Yes | Dividend / split risk |
 | G8 | **Short-option borrow / margin status** | `short_option_status` | Enum + rate/cost | Conditional | Short option legs and margin checks |
 | G9 | **Margin estimate** | `margin_estimate` | Decimal | Yes | Pre-approval packet, size limits |
-| G10 | **Feed freshness timestamp** | `feed_as_of` | Datetime | Yes | Stale-data kill switch |
+| G10 | **Feed freshness timestamp** | `feed_as_of` | Datetime | Yes | Stale-data circuit breaker |
 | G11 | **Underlying symbol** | `underlying_symbol` | String | Yes | Chain and spot binding. **Feed-bound universe:** every NSE F&O underlying from ICICI Direct `FONSEScripMaster.txt` (SecurityMaster.zip), mapped to NSE display tickers (e.g. `RELIND`→`RELIANCE`, `STABAN`→`SBIN`) |
 | G12 | **Data feed bindings** | `data_feed_bindings` | Map | Yes | Auto-bound per G11 member: `und_price` → `icici_direct:NSE:{symbol}:quotes`, `option_chain` → `icici_direct:NFO:{stock_code}:option_chain` |
 
@@ -418,7 +418,6 @@ Abort or flatten if any become true:
 | Liquidity collapse / spread blowout | `kill_liquidity=true` |
 | Re-hedge option leg unavailable | `kill_hedge_unavailable=true` |
 | Stale / corrupt model input | `kill_stale_data=true` |
-| Unplanned earnings / news | `kill_event=true` |
 | Neutrality not restorable within cost | `kill_neutrality=true` |
 | Residual delta/vega exceeds limits | `kill_greek_limit=true` |
 | Core assumption failed | `kill_thesis=true` |
@@ -479,9 +478,8 @@ Authoritative curation: project-root `Market_News.txt`. Mapping to strategies: `
 | U7 | **News tone label (display only)** | `news_impact` | Enum | `none` \| `adverse_tone` \| `breaking_bullish` — descriptive tone label only; nothing in `paper_sim` acts on it automatically (open positions are managed solely by the mechanical γ–θ re-hedge and the strategy's own stop/target/time-exit rules) |
 | U8 | **Source freshness** | `news_source_freshness` | ISO datetime map | Per-source last pull; stale → degrade confidence / warn |
 | U9 | **Workflow window** | `news_workflow_window` | Enum | `pre_open` \| `session` \| `after_close` — honor `Market_News.txt` windows |
-| U10 | **Kill from unplanned news** | `kill_event` | Boolean | Shared kill when event not designed into setup |
 
-**Source:** U1–U10 are produced by the Market_News ingest path (`Market_News.txt`, Architecture §8.8).
+**Source:** U1–U9 are produced by the Market_News ingest path (`Market_News.txt`, Architecture §8.8). `kill_event` (formerly U10) no longer exists — news never flattens or force-closes an open position; it can only block a new entry (SH-4 / `news_blocks_model_trades`).
 
 ---
 

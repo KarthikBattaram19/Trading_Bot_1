@@ -81,7 +81,7 @@ Track B **must not block** Phase 0–1. **B0–B6 must all pass before Phase 2**
 | 0.5 | ICICI Direct **A1:** instrument master + LTP REST → normalized ticks; **G11–G12 universe = all NSE F&O underlyings** from `FONSEScripMaster.txt` | Marks refresh on demand; recommendations scan full FNO list |
 | 0.6 | `GET /api/v1/paper-sim/health` stub; `EXECUTION_MODE=shadow` default                                              | Mode documented                                                                 |
 | 0.7 | Railway (`backend/`) + Vercel (`frontend/`) wire-up                                                               | Frontend hits Railway API                                                       |
-| 0.8 | Frontend shell: bot status, health, kill-switch placeholder                                                       | Per `UI_Dashboard.md`                                                           |
+| 0.8 | Frontend shell: bot status, health                                                                               | Per `UI_Dashboard.md`                                                           |
 
 
 **Exit:** ICICI Direct marks on Railway; no Breeze API `place_order`; news path stubbed but schema present.
@@ -124,7 +124,7 @@ Track B **must not block** Phase 0–1. **B0–B6 must all pass before Phase 2**
 | 2.1 | Bot scheduler; shadow week then paper single-module                           |
 | 2.2 | `SUPERVISION_MODE=supervised` + Approve / Reject APIs                         |
 | 2.3 | Supervised cockpit (decision queue — `UI_Dashboard.md`)                       |
-| 2.4 | One-trade gate, circuit breakers, auto-pause, kill-switch                     |
+| 2.4 | One-trade gate, circuit breakers, auto-pause                                  |
 | 2.5 | AI validator only after Track B golden eval green                             |
 | 2.6 | Live-path multi-leg builder polish; ICICI Direct sequential multi-leg dry-run only (paper auto-complete already Phase 1) |
 
