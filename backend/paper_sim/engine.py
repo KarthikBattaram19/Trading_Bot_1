@@ -211,12 +211,6 @@ class PaperEngine:
 
         freshness = self._gate_ticks(ticks_for_gate)
 
-        try:
-            from backend.routers.bot import is_kill_switch_armed
-
-            kill_armed = bool(is_kill_switch_armed())
-        except Exception:  # noqa: BLE001
-            kill_armed = False
         snap = self.ledger.snapshot()
         buying_ok = snap.cash_inr > 0
         drawdown_pct = 0.0
@@ -229,7 +223,6 @@ class PaperEngine:
         gate = evaluate_pre_trade_gate(
             PreTradeContext(
                 feeds_fresh=bool(freshness.get("ok", True)),
-                kill_switch_armed=kill_armed,
                 buying_power_ok=buying_ok,
                 drawdown_pct=drawdown_pct,
                 quantity=int(resolved_legs[0]["quantity"]) if resolved_legs else None,

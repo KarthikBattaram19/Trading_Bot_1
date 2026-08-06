@@ -87,7 +87,6 @@ class PreTradeContext:
 
     drawdown_pct: float | None = None
     error_rate_1h: float | None = None
-    kill_switch_armed: bool = False
     buying_power_ok: bool | None = None
     confidence: float | None = None
     recommendation_confidence: float | None = None
@@ -246,16 +245,6 @@ def evaluate_pre_trade_gate(
         )
     else:
         checks.append(_check("bot_health", "Bot health metrics within bounds", status="skip"))
-
-    # Kill-switch
-    checks.append(
-        _check(
-            "kill_switch",
-            "Kill-switch inactive",
-            status="fail" if ctx.kill_switch_armed else "pass",
-            detail="armed" if ctx.kill_switch_armed else None,
-        )
-    )
 
     # Buying power
     if ctx.buying_power_ok is not None:

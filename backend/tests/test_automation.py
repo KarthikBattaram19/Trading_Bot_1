@@ -257,32 +257,6 @@ async def test_ps05_capital_cap_falls_back_to_reduce_options():
 
 
 @pytest.mark.asyncio
-async def test_ps08_kill_switch_skips_hedges():
-    engine, feed = _engine()
-    await engine.submit_order(_simple_vol_order())
-    feed.ltps["3045"] = 560.0
-
-    from backend.services.kill_switch_state import get_kill_switch_state
-
-    state = get_kill_switch_state()
-    state.set_armed(True)
-    try:
-        from unittest.mock import patch
-
-        await engine.automation.start()
-        with patch(
-            "backend.services.market_news.get_market_news",
-            return_value=_neutral_news(),
-        ):
-            tick = await engine.automation.tick()
-        assert any(a.get("reason") == "kill_switch_armed" for a in tick["actions"])
-        assert tick["status"]["state"] == "paused_kill_switch"
-        await engine.automation.stop()
-    finally:
-        state.set_armed(False)
-
-
-@pytest.mark.asyncio
 async def test_ps09_stale_marks_skip_actions():
     engine, feed = _engine(require_fresh_marks=True, quote_stale_threshold_sec=1.0)
     await engine.submit_order(_simple_vol_order())

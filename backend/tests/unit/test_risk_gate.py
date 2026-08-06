@@ -57,18 +57,11 @@ def test_greeks_limits_pass_and_fail():
     assert "total_theta" in bad_theta.failures
 
 
-def test_kill_switch_blocks():
-    result = evaluate_pre_trade_gate(PreTradeContext(kill_switch_armed=True))
-    assert not result.passed
-    assert "kill_switch" in result.failed_ids
-
-
 def test_fresh_feeds_and_confidence_gates():
     thr = PreTradeThresholds(min_confidence=0.70)
     result = evaluate_pre_trade_gate(
         PreTradeContext(
             feeds_fresh=True,
-            kill_switch_armed=False,
             confidence=0.65,
             is_discretionary=True,
             buying_power_ok=True,
@@ -81,7 +74,6 @@ def test_fresh_feeds_and_confidence_gates():
     ok = evaluate_pre_trade_gate(
         PreTradeContext(
             feeds_fresh=True,
-            kill_switch_armed=False,
             confidence=0.85,
             is_discretionary=True,
             buying_power_ok=True,
@@ -97,7 +89,6 @@ def test_fresh_feeds_and_confidence_gates():
 def test_transaction_cost_gate_on_hedge():
     fail = evaluate_pre_trade_gate(
         PreTradeContext(
-            kill_switch_armed=False,
             is_hedge=True,
             net_hedge_edge=0.0,
         )
@@ -106,7 +97,6 @@ def test_transaction_cost_gate_on_hedge():
 
     passed = evaluate_pre_trade_gate(
         PreTradeContext(
-            kill_switch_armed=False,
             is_hedge=True,
             net_hedge_edge=12.5,
         )
@@ -117,7 +107,6 @@ def test_transaction_cost_gate_on_hedge():
 def test_regime_and_lot_tick_checks():
     blocked = evaluate_pre_trade_gate(
         PreTradeContext(
-            kill_switch_armed=False,
             is_discretionary=True,
             regime="high_vol_stress",
             confidence=0.9,
@@ -129,7 +118,6 @@ def test_regime_and_lot_tick_checks():
 
     lot_fail = evaluate_pre_trade_gate(
         PreTradeContext(
-            kill_switch_armed=False,
             quantity=40,
             lotsize=25,
             limit_price=100.03,
@@ -142,14 +130,14 @@ def test_regime_and_lot_tick_checks():
 
 def test_spread_liquidity_gate():
     result = evaluate_pre_trade_gate(
-        PreTradeContext(kill_switch_armed=False, spread_pct=3.5),
+        PreTradeContext(spread_pct=3.5),
         thresholds=PreTradeThresholds(max_spread_pct=2.0),
     )
     assert "liquidity_spread" in result.failed_ids
 
 
 def test_gate_result_as_dict():
-    result = evaluate_pre_trade_gate(PreTradeContext(kill_switch_armed=False))
+    result = evaluate_pre_trade_gate(PreTradeContext())
     payload = result.as_dict()
     assert payload["passed"] is True
     assert isinstance(payload["checks"], list)

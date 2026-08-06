@@ -1,8 +1,8 @@
 """Persisted approve/reject state for decisions.py — survives a process restart.
 
-Same pattern as backend/services/kill_switch_state.py. Decisions themselves are
-still derived (recommendation cache + learning store, see decision_log.py) —
-this store only records what an operator decided about a given decision_id.
+Decisions themselves are still derived (recommendation cache + learning store,
+see decision_log.py) — this store only records what an operator decided about
+a given decision_id.
 """
 
 from __future__ import annotations

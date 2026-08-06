@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-AutomationState = Literal["stopped", "running", "paused_kill_switch", "degraded"]
+AutomationState = Literal["stopped", "running", "degraded"]
 
 
 def _parse_expiry(raw: str | None) -> datetime | None:
@@ -70,15 +70,6 @@ def _option_type_from_symbol(symbol: str, option_type: str | None = None) -> str
     return None
 
 
-def _is_kill_switch_armed() -> bool:
-    try:
-        from backend.routers.bot import is_kill_switch_armed
-
-        return bool(is_kill_switch_armed())
-    except Exception:  # noqa: BLE001
-        return False
-
-
 class PaperAutomation:
     """Background tick loop: refresh marks → news kills → γ–θ re-hedge."""
 
@@ -102,8 +93,6 @@ class PaperAutomation:
     def state(self) -> AutomationState:
         if not self._running:
             return "stopped"
-        if _is_kill_switch_armed():
-            return "paused_kill_switch"
         if self._last_error:
             return "degraded"
         return "running"
@@ -222,13 +211,6 @@ class PaperAutomation:
         self._ticks += 1
         self._last_tick_at = datetime.now(timezone.utc)
         actions: list[dict[str, Any]] = []
-
-        if _is_kill_switch_armed():
-            # PS-08: stop new hedges while kill-switch armed
-            actions.append({"action": "skip", "reason": "kill_switch_armed"})
-            self._skips += 1
-            self._record(actions[-1])
-            return {"actions": actions, "status": self.status()}
 
         # Refresh marks (PS-09: skip actions if refresh fails / stale)
         try:

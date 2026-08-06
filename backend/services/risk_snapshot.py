@@ -17,7 +17,6 @@ SHARED_KILL_CONDITIONS = [
     "liquidity collapses or spreads blow out beyond limits",
     "a hedge leg becomes unavailable",
     "the model input is stale or clearly corrupted",
-    "an earnings or news event appears that the setup was not designed to absorb",
     "required neutrality cannot be restored within cost limits",
     "residual delta or vega exposure exceeds portfolio limits",
     "the strategy's core assumption no longer holds",
@@ -128,7 +127,6 @@ def _feed_age_sec(marks: dict[str, Any], feeds: list[Any]) -> float | None:
 def _risk_events(
     *,
     breakers: list[dict[str, Any]],
-    kill_armed: bool,
     freeze_reason: str | None,
     greeks_passed: bool,
     account_updated_at: datetime | None,
@@ -147,8 +145,6 @@ def _risk_events(
             }
         )
 
-    if kill_armed:
-        add("danger", "Kill switch armed — discretionary entries paused.")
     if freeze_reason:
         add("warn", f"Learning adaptation frozen: {freeze_reason}")
     for b in breakers:
@@ -170,7 +166,6 @@ def _risk_events(
 def build_risk_snapshot() -> dict[str, Any]:
     """Live risk dashboard payload for GET /api/v1/risk/snapshot."""
     from backend.paper_sim.service import get_paper_engine
-    from backend.routers.bot import is_kill_switch_armed
     from backend.services.feed_health import get_feed_sources
     from backend.services.learning_service import get_learning_service
 
@@ -203,9 +198,6 @@ def build_risk_snapshot() -> dict[str, Any]:
     )
     breaker_dicts = [b.as_dict() for b in breakers]
     active = active_breaker_ids(breakers)
-    kill_armed = bool(is_kill_switch_armed())
-    if kill_armed and "kill_switch" not in active:
-        active = ["kill_switch", *active]
 
     greeks = _portfolio_greeks(open_positions)
     greek_thr = GreeksLimitThresholds(
@@ -254,11 +246,9 @@ def build_risk_snapshot() -> dict[str, Any]:
         "greeks_failures": list(greek_check.failures),
         "circuit_breakers": breaker_dicts,
         "circuit_breakers_active": active,
-        "kill_switch_armed": kill_armed,
         "feed_age_sec": feed_age,
         "events": _risk_events(
             breakers=breaker_dicts,
-            kill_armed=kill_armed,
             freeze_reason=learning.freeze_reason,
             greeks_passed=bool(greek_check.passed),
             account_updated_at=account.updated_at,

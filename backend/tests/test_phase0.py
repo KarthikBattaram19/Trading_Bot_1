@@ -51,16 +51,7 @@ def test_health_and_feeds(monkeypatch):
     assert bot.status_code == 200
     bot_body = bot.json()
     assert bot_body["execution_mode"] == "shadow"
-    assert "kill_switch_armed" in bot_body
     assert bot_body.get("place_order_enabled") is False
-
-    pause = client.post("/api/v1/bot/pause")
-    assert pause.status_code == 200
-    assert pause.json()["kill_switch_armed"] is True
-    assert client.get("/api/v1/bot/status").json()["kill_switch_armed"] is True
-    resume = client.post("/api/v1/bot/resume")
-    assert resume.status_code == 200
-    assert resume.json()["kill_switch_armed"] is False
 
 
 def test_recommendation_uses_feed_sources(monkeypatch):
