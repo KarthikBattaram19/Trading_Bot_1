@@ -507,7 +507,12 @@ class UniverseEnricher:
         await self._limiter.acquire()
         return await coro
 
-    async def _spot_ltp(self, symbol: str, stats: EnrichmentStats) -> float | None:
+    async def _spot_ltp(
+        self,
+        symbol: str,
+        stats: EnrichmentStats,
+        stock_code: str | None = None,
+    ) -> float | None:
         if not self.fetch_spot_ltp:
             return None
         und = symbol.upper()
@@ -519,7 +524,13 @@ class UniverseEnricher:
             if und != primary:
                 fallbacks.append(und)
         else:
-            fallbacks = [und]
+            # Equities: the resolved ICICI stock_code (already used for the
+            # option-chain fetch) first — many Breeze short codes differ from
+            # the NSE tradingsymbol. Fall back to the raw symbol if unmapped.
+            primary = (stock_code or und).upper()
+            fallbacks = [primary]
+            if und != primary:
+                fallbacks.append(und)
 
         for code in fallbacks:
             try:
@@ -606,7 +617,7 @@ class UniverseEnricher:
             await local_stats.add_error(f"{und}: bad expiry '{expiry_raw}'")
             return None
 
-        spot = await self._spot_ltp(und, local_stats)
+        spot = await self._spot_ltp(und, local_stats, stock_code=stock_code)
 
         try:
             rows = await self._fetch_option_chain_sides(

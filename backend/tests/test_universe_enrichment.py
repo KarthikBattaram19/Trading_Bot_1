@@ -164,9 +164,11 @@ async def test_enrich_many_fetches_spot_and_chain(monkeypatch):
             self.spot_calls += 1
             self.ltp_symbols.append(tradingsymbol)
             # Indices must use Breeze cash stock_codes, not display names.
+            # Equities must use the resolved Breeze stock_code (STABAN for
+            # SBIN), not the raw NSE tradingsymbol.
             if tradingsymbol == "NIFTY":
                 return _FakeTick(24500.0)
-            if tradingsymbol == "SBIN":
+            if tradingsymbol == "STABAN":
                 return _FakeTick(812.0)
             raise ValueError(f"unexpected spot symbol {tradingsymbol}")
 
@@ -303,6 +305,76 @@ async def test_index_spot_uses_breeze_stock_code_first():
     assert "BANKNIFTY" in out
     assert md.ltp_symbols[0] == "CNXBAN"
     assert "BANKNIFTY" not in md.ltp_symbols
+
+
+@pytest.mark.asyncio
+async def test_equity_spot_uses_resolved_stock_code_first():
+    """RELIANCE cash quotes must hit the mapped Breeze code (RELIND) — not the
+    NSE tradingsymbol — first; the option-chain fetch already relies on this
+    same mapping via stock_code_for_underlying()."""
+    reset_universe_enricher_for_tests()
+    expiry = _future_expiry(21)
+    master = InstrumentMaster()
+    master.load_from_zip_bytes(_fonse_zip(expiry))
+
+    class _FakeTick:
+        def __init__(self, ltp: float) -> None:
+            self.ltp = ltp
+
+    class _FakeMD:
+        def __init__(self) -> None:
+            self.ltp_symbols: list[str] = []
+
+            class _Sess:
+                async def ensure_session(self):
+                    return object()
+
+            self.session_manager = _Sess()
+
+        async def get_ltp(self, exchange: str, tradingsymbol: str, symboltoken=None):  # noqa: ANN001
+            self.ltp_symbols.append(tradingsymbol)
+            if tradingsymbol == "RELIANCE":
+                raise AssertionError(
+                    "must not quote raw NSE tradingsymbol before the resolved Breeze stock_code"
+                )
+            if tradingsymbol == "RELIND":
+                return _FakeTick(2810.0)
+            raise ValueError(tradingsymbol)
+
+        async def get_option_chain(self, **kwargs):  # noqa: ANN003
+            right = str(kwargs.get("right") or "").lower()
+            if right not in {"call", "put"}:
+                raise ValueError("Either Right or Strike-Price cannot be empty.")
+            side = "Call" if right == "call" else "Put"
+            return [
+                {
+                    "strike_price": 2800.0,
+                    "right": side,
+                    "ltp": 40.0,
+                    "best_bid_price": 39.5,
+                    "best_offer_price": 40.5,
+                    "total_quantity_traded": "6000",
+                    "open_interest": 30000,
+                    "spot_price": "2810",
+                    "stock_code": "RELIND",
+                }
+            ]
+
+    md = _FakeMD()
+    enricher = UniverseEnricher(
+        market_data=md,  # type: ignore[arg-type]
+        instruments=master,
+        cache_ttl_sec=60,
+        max_concurrency=1,
+        min_interval_ms=1,
+        fetch_spot_ltp=True,
+    )
+    out, stats = await enricher.enrich_many(["RELIANCE"])
+    assert stats.failed == 0
+    assert "RELIANCE" in out
+    assert md.ltp_symbols[0] == "RELIND"
+    assert "RELIANCE" not in md.ltp_symbols
+    assert out["RELIANCE"].und_price == 2810.0
 
 
 @pytest.mark.asyncio

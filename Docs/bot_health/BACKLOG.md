@@ -174,6 +174,64 @@ deprioritized behind any open P0/P1 item.
   `grep -rli "reconcile\|fill_state\|order_state" backend --include=*.py`
   excluding tests → no matches)
 
+- [ ] **`_spot_ltp` sends the raw display symbol, not the ICICI stock_code, for
+  non-index equities — live spot LTP fails for names whose Breeze short code
+  differs from the NSE tradingsymbol.** `backend/services/universe_enrichment.py`
+  `enrich_one()` (line 591) correctly resolves
+  `stock_code = self._instruments.stock_code_for_underlying(und) or und` and
+  passes it to `_fetch_option_chain_sides(stock_code=stock_code, ...)` (line 613)
+  — but line 609 calls `self._spot_ltp(und, ...)` with the raw `und` (display
+  symbol), not `stock_code`. `_spot_ltp` (line 510-538) only substitutes a
+  mapped code for the 5 index underlyings (`_INDEX_SPOT_STOCK_CODE`); every
+  other symbol's `fallbacks = [und]` — so any equity whose Breeze stock_code
+  differs from its NSE tradingsymbol (option-chain fetch already assumes this
+  is common, hence the `stock_code_for_underlying` lookup existing at all)
+  will always fail spot LTP with a vendor "stock may not be available" error,
+  even though the option chain for the same symbol fetches fine via the
+  correct code. Directly matches the error pattern seen live 2026-08-06 on
+  `https://trading-bot-1-pi.vercel.app/recommendations`: `RELIANCE spot: Check
+  stock code:Stock may not be available...`, `ICICIBANK spot: Check stock
+  code:...`, `HDFCBANK spot: Non-JSON response (503)` alongside a working
+  option-chain fetch pattern (`chain_calls=24` succeeding while `spot_calls=5`
+  and only 12/40 underlyings fully enriched). Because `_live_marks_ok()`
+  (`strategy_coverage.py:53-58`) requires `snap.und_price.usable`, a failed
+  spot fetch alone is enough to make a symbol ineligible for every strategy —
+  this single-line bug is a plausible primary driver of the observed
+  `eligible=0/40` coverage abort across all three strategies that cycle (spot
+  fetch failing before the option chain result even matters for that name).
+  Not yet fixed or test-covered; the BANKNIFTY 503 in the same error sample
+  looks like a separate transient vendor issue (index code already correct),
+  not this bug. **Fix:** pass `stock_code` (already resolved one line above)
+  into `_spot_ltp` instead of `und` for the non-index branch. (first seen
+  2026-08-06, evidence: `backend/services/universe_enrichment.py:591,609`)
+  - Blocks generating real recommendations/trades in prod today, which in
+    turn blocks accumulating the real closed-trade history P1 item 3 (OOS
+    walk-forward) needs — even though P0 itself (approve/reject wiring) is
+    fully Done per the items above.
+  - **Resolved 2026-08-06**, evidence: `_spot_ltp()` now accepts an optional
+    `stock_code` param and uses it (falling back to the raw symbol) as the
+    primary lookup for every non-index underlying, mirroring the existing
+    index-code fallback pattern; `enrich_one()` passes the already-resolved
+    `stock_code` through. New test
+    `test_equity_spot_uses_resolved_stock_code_first`
+    (`backend/tests/test_universe_enrichment.py`) asserts RELIANCE's spot
+    fetch hits `RELIND` (its real mapped code) before ever trying the raw
+    `RELIANCE` string, and fails the test if it doesn't. Full backend suite:
+    320 passed / 0 failed (was 319). Live-verified the mapping itself is
+    correct against the real downloaded FONSEScripMaster:
+    `INFY→INFTEC`, `RELIANCE→RELIND`, `HDFCBANK→HDFBAN`, `ICICIBANK→ICIBAN`
+    all resolve correctly via `stock_code_for_underlying()`. A live
+    `refresh=true` cycle run locally post-fix (2026-08-06, ~16:22 IST, after
+    NSE market close) confirmed the primary spot attempt for INFY now uses
+    the resolved code (no longer a raw-symbol "Check stock code" rejection
+    on the first try) — but still returned only 6-8/40 live marks and the
+    same `STRATEGY_COVERAGE_ABORT` outcome, because outside market hours
+    Breeze's quote endpoint itself returns transient 503s regardless of
+    which code is used. **Not yet confirmed:** whether this fix alone gets
+    coverage over the 80%/`min_eligible_symbols=20` floor during live NSE
+    market hours (09:15-15:30 IST) — needs a same-day intraday re-check,
+    which this session couldn't run since market was already closed.
+
 ## Other — deferred behind open P0/P1
 
 - [ ] RAG chat was shipped then un-shipped pending a Track B rebuild plan —
