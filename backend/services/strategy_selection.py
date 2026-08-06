@@ -128,7 +128,8 @@ def _symbols_from_items(news: MarketNewsSummary) -> set[str]:
 
 
 def symbol_has_adverse_news(symbol: str, news: MarketNewsSummary) -> bool:
-    """Symbol-tagged adverse / bearish item — prefer reduce / flatten (N-07)."""
+    """Symbol-tagged adverse / bearish item — blocks a NEW entry (N-07); never
+    flattens or reduces an already-open position."""
     sym = symbol.upper()
     for item in news.items:
         hit = sym in {t.upper() for t in item.tickers} or sym in item.title.upper()
@@ -303,13 +304,13 @@ def select_strategy_sh4(
             [
                 "simple_volatility — adverse symbol news blocks cheap-vol row",
                 "vega_scalping — news blocking",
-                "gamma_scalping — unplanned adverse news (prefer flatten / defer)",
+                "gamma_scalping — unplanned adverse news (blocks new entry / defer)",
             ]
         )
         return StrategySelectionLogic(
             selected_strategy=StrategyType.blocked,
             scenario_tag="Unplanned adverse symbol news",
-            cross_strategy_matrix_ref="Table SH-4 / Shared Kill — unplanned news",
+            cross_strategy_matrix_ref="Table SH-4 — unplanned news blocks new entries",
             primary_signal=f"adverse news tagged {quant.symbol}",
             rejected_strategies=rejected,
             news_impact=news_impact_for_symbol(quant.symbol, news)

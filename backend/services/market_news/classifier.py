@@ -292,12 +292,15 @@ def aggregate_packet_flags(
 
     flags = list(dict.fromkeys(flags))
     news_not_blocking = not post_shock and dominant_tone != "bearish"
+    # Descriptive tone labels only — nothing acts on these automatically.
+    # They describe the NEWS (for operator/dashboard display), never an
+    # action taken on open positions or pending entries.
     if event_imminent and dominant_tone == "bearish":
-        news_impact = "early_exit"
+        news_impact = "adverse_tone"
     elif _any_breaking_bullish(items):
-        news_impact = "rehedge_aggressive"
+        news_impact = "breaking_bullish"
     elif dominant_tone == "bearish":
-        news_impact = "early_exit"
+        news_impact = "adverse_tone"
     else:
         news_impact = "none"
 

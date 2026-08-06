@@ -199,7 +199,7 @@ async def test_adverse_post_shock_news_never_closes_open_position():
     with patch(
         "backend.services.market_news.get_market_news",
         return_value=_neutral_news(
-            news_impact="early_exit",
+            news_impact="adverse_tone",
             news_post_shock=True,
             dominant_tone="bearish",
             news_not_blocking=False,
@@ -208,6 +208,42 @@ async def test_adverse_post_shock_news_never_closes_open_position():
         tick = await engine.automation.tick()
 
     assert not any(a.get("action") in {"flatten", "flatten_failed"} for a in tick["actions"])
+    open_ids = {p.position_id for p in engine.positions(status="open")}
+    assert position_id in open_ids
+    # Guard against a vacuous pass: the tick must actually have reached the
+    # position-management loop (rehedge or skip), not short-circuited earlier
+    # (e.g. on a marks_stale gate) before ever considering the position.
+    assert any(a.get("action") in {"rehedge", "skip"} for a in tick["actions"])
+
+
+@pytest.mark.asyncio
+async def test_news_read_failure_does_not_block_rehedge_loop():
+    """A news ingest/parse/network failure must degrade observability only —
+    it must never abort the tick before the mechanical re-hedge loop, which
+    is the only surviving position-management path."""
+    engine, feed = _engine(use_half_breakeven=False)
+    opened = await engine.submit_order(_simple_vol_order())
+    position_id = opened["position"]["position_id"]
+    feed.ltps["3045"] = 530.0  # +6% — clears breakeven
+
+    from unittest.mock import patch
+
+    with patch(
+        "backend.services.market_news.get_market_news",
+        side_effect=RuntimeError("news feed unavailable"),
+    ):
+        tick = await engine.automation.tick()
+
+    # Re-hedge loop still ran despite the news failure.
+    assert any(a.get("action") in {"rehedge", "skip"} for a in tick["actions"])
+    rehedges = [a for a in tick["actions"] if a.get("action") == "rehedge"]
+    assert rehedges, f"expected rehedge despite news failure, got {tick['actions']}"
+
+    status = tick["status"]
+    assert status["last_news_impact"] is None
+    assert status["last_signal"] is None
+    assert status["last_error"] is None  # news failure must not surface as a tick error
+
     open_ids = {p.position_id for p in engine.positions(status="open")}
     assert position_id in open_ids
 

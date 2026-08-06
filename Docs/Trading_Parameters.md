@@ -476,7 +476,7 @@ Authoritative curation: project-root `Market_News.txt`. Mapping to strategies: `
 | U4 | **News not blocking** | `news_not_blocking` | Boolean | true when tone/topics do not contradict chosen SH-4 row |
 | U5 | **Earnings / event imminent** | `news_event_imminent` | Boolean | Company event from news + calendar → prefer gamma earnings mode |
 | U6 | **Post-shock / crisis tone** | `news_post_shock` | Boolean | Sets / reinforces `garch_distorted` and `block_model_trades` |
-| U7 | **News impact on open book** | `news_impact` | Enum | `none` \| `take_profit` \| `rehedge_aggressive` \| `early_exit` \| `kill_event` |
+| U7 | **News tone label (display only)** | `news_impact` | Enum | `none` \| `adverse_tone` \| `breaking_bullish` — descriptive tone label only; nothing in `paper_sim` acts on it automatically (open positions are managed solely by the mechanical γ–θ re-hedge and the strategy's own stop/target/time-exit rules) |
 | U8 | **Source freshness** | `news_source_freshness` | ISO datetime map | Per-source last pull; stale → degrade confidence / warn |
 | U9 | **Workflow window** | `news_workflow_window` | Enum | `pre_open` \| `session` \| `after_close` — honor `Market_News.txt` windows |
 | U10 | **Kill from unplanned news** | `kill_event` | Boolean | Shared kill when event not designed into setup |

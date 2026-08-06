@@ -96,7 +96,7 @@ def test_n03_post_shock_blocks_all_vol():
         dominant_tone="bearish",
         news_post_shock=True,
         news_not_blocking=False,
-        news_impact="early_exit",
+        news_impact="adverse_tone",
         macro_risk_flags=["post-shock", "crisis_tone"],
     )
     sel = select_strategy_sh4(
@@ -127,7 +127,7 @@ def test_n04_n05_n06_post_entry_news_no_longer_exists():
     import backend.services.strategy_selection as ss
 
     assert not hasattr(ss, "post_entry_news_action")
-    news = _news(news_impact="early_exit", news_post_shock=True, dominant_tone="bearish")
+    news = _news(news_impact="adverse_tone", news_post_shock=True, dominant_tone="bearish")
     packet = select_strategy_packet(_quant(), news)
     assert "post_entry_action" not in packet
 
@@ -180,7 +180,7 @@ def test_n12_iv_flush_but_news_blocking_no_vega():
     news = _news(
         dominant_tone="bearish",
         news_not_blocking=False,
-        news_impact="early_exit",
+        news_impact="adverse_tone",
     )
     sel = select_strategy_sh4(
         _quant(iv_annualized=0.22, garch_forecast=0.28, iv_z_score=-2.5),
