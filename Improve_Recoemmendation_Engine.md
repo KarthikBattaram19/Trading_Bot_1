@@ -482,12 +482,18 @@ Profile Target (Table GS-2: vega ≈ 0) say it should not have.
   gamma-scalping via `_append_vega_neutral_far_dated_pair()`, which (1) fetches a
   genuinely longer-dated far expiry via config-driven gap
   (`strategies.gamma_scalping.calendar_construction.long_expiry_min_gap_days`,
-  default 30 days), (2) applies BSM vega-neutrality sizing to near+far leg pairs
+  default 28 days), (2) applies BSM vega-neutrality sizing to near+far leg pairs
   with mirrored put/call quantities, (3) sells the far-dated legs (opposite side
   from the near-dated long entry), and (4) fails closed to a near-dated straddle
   only when far-expiry data is missing or the configured gap cannot be met. Tests
   in `backend/tests/test_structure_builder.py` cover both the vega-neutral calendar
-  construction and the fallback path when far expiry is unavailable.
+  construction and the fallback path when far expiry is unavailable. A
+  `vega_neutral_tolerance` config gate (default 0.5) additionally fails the
+  structure closed — falling back to the near-only straddle — when the achievable
+  integer-lot solve can't clear that residual-vega threshold, which is common at
+  the fixed 1-lot production entry size for less-favorable near/far DTE pairings;
+  this is a deliberate, conservative, not-yet-backtested default (same precedent
+  as this repo's `garch_forecast.enable_mle_fit`).
 
 ### 3.11 Vega scalping's stop-loss and same-session flatten rules exist only as display text — nothing in `paper_sim/automation.py` enforces them
 `stop_z_threshold` / `stop_z_threshold_alt` (`-3.0σ`/`-4.0σ`) and

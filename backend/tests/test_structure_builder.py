@@ -151,6 +151,7 @@ async def test_append_vega_neutral_far_dated_pair_appends_sell_legs():
         qty=5 * record.lotsize,
         paper_sim_config=PaperSimConfig(),
         min_gap_days=28,
+        vega_neutral_tolerance=0.5,
     )
 
     assert len(intended) == 3
@@ -186,6 +187,7 @@ async def test_append_vega_neutral_far_dated_pair_skips_when_no_far_expiry():
         qty=first.quantity,
         paper_sim_config=PaperSimConfig(),
         min_gap_days=28,
+        vega_neutral_tolerance=0.5,
     )
 
     assert intended == [first]
@@ -230,6 +232,7 @@ async def test_append_vega_neutral_far_dated_pair_skips_on_degenerate_vega(monke
         qty=first.quantity,
         paper_sim_config=PaperSimConfig(),
         min_gap_days=28,
+        vega_neutral_tolerance=0.5,
     )
 
     assert intended == [first]
@@ -263,6 +266,7 @@ async def test_append_vega_neutral_far_dated_pair_reduces_net_vega():
         qty=5 * record.lotsize,
         paper_sim_config=cfg,
         min_gap_days=28,
+        vega_neutral_tolerance=0.5,
     )
     assert len(intended) == 3  # entry + 2 far legs
 
@@ -293,8 +297,8 @@ async def test_append_vega_neutral_far_dated_pair_reduces_net_vega():
 
 @pytest.mark.asyncio
 async def test_build_intended_legs_gamma_scalping_produces_four_leg_calendar():
-    near_expiry = _expiry_str(15)
-    far_expiry = _expiry_str(15 + 35)
+    near_expiry = _expiry_str(30)
+    far_expiry = _expiry_str(30 + 30)
     feed = _FullFeed(
         [
             _opt(near_expiry, SPOT, "CE", "N1"),
@@ -349,8 +353,8 @@ async def test_gamma_scalping_never_produces_same_side_second_strike_straddle():
     implementation added a same-side (BUY), same-expiry second straddle at a
     different strike. The correct structure never has a second strike at
     all — only the entry strike, across two expiries."""
-    near_expiry = _expiry_str(15)
-    far_expiry = _expiry_str(15 + 35)
+    near_expiry = _expiry_str(30)
+    far_expiry = _expiry_str(30 + 30)
     feed = _FullFeed(
         [
             _opt(near_expiry, SPOT, "CE", "N1"),
@@ -372,3 +376,159 @@ async def test_gamma_scalping_never_produces_same_side_second_strike_straddle():
     strikes = {lg.strike for lg in intended}
     assert strikes == {SPOT}
     assert not any(lg.side == PaperSide.buy and lg.expiry == far_expiry for lg in intended)
+    # Prove this regression guard is exercising the true 4-leg calendar, not
+    # silently passing on the 2-leg tolerance-gate fallback.
+    far_legs_count = sum(1 for lg in intended if lg.side == PaperSide.sell)
+    assert far_legs_count == 2
+
+
+@pytest.mark.asyncio
+async def test_append_vega_neutral_far_dated_pair_skips_on_degenerate_near_vega(monkeypatch):
+    """Symmetric guard to the existing far-vega check: a degenerate (~0)
+    near-leg vega must also fail closed, not short a far pair against
+    zero long vega to hedge."""
+    near_expiry = _expiry_str(15)
+    far_expiry = _expiry_str(15 + 35)
+    feed = _FullFeed(
+        [
+            _opt(near_expiry, SPOT, "CE", "N1"),
+            _opt(near_expiry, SPOT, "PE", "N2"),
+            _opt(far_expiry, SPOT, "CE", "F1"),
+            _opt(far_expiry, SPOT, "PE", "F2"),
+        ]
+    )
+    first, record = _entry_leg(near_expiry)
+    intended: list[PaperLegRequest] = [first]
+
+    import backend.paper_sim.structure_builder as sb
+
+    real_option_greeks = sb.option_greeks
+
+    def _fake_option_greeks(inputs):
+        result = real_option_greeks(inputs)
+        if inputs.time_years * 365.0 < 20:  # the near leg
+            result = dict(result, vega=0.0)
+        return result
+
+    monkeypatch.setattr(sb, "option_greeks", _fake_option_greeks)
+
+    await _append_vega_neutral_far_dated_pair(
+        intended,
+        feed=feed,
+        first=first,
+        record=record,
+        underlying="SBIN",
+        qty=first.quantity,
+        paper_sim_config=PaperSimConfig(),
+        min_gap_days=28,
+        vega_neutral_tolerance=0.5,
+    )
+
+    assert intended == [first]
+
+
+@pytest.mark.asyncio
+async def test_append_vega_neutral_far_dated_pair_skips_when_far_strike_not_listed():
+    """The far-expiry chain lists a different strike than the entry strike
+    (e.g. a coarser far-month strike ladder). The old nearest-strike
+    fallback would silently build a diagonal; the fix must fail closed
+    instead."""
+    near_expiry = _expiry_str(15)
+    far_expiry = _expiry_str(15 + 35)
+    feed = _FullFeed(
+        [
+            _opt(near_expiry, SPOT, "CE", "N1"),
+            _opt(near_expiry, SPOT, "PE", "N2"),
+            _opt(far_expiry, SPOT + 50.0, "CE", "F1"),  # wrong strike, not SPOT
+            _opt(far_expiry, SPOT + 50.0, "PE", "F2"),
+        ]
+    )
+    first, record = _entry_leg(near_expiry)
+    intended: list[PaperLegRequest] = [first]
+
+    await _append_vega_neutral_far_dated_pair(
+        intended,
+        feed=feed,
+        first=first,
+        record=record,
+        underlying="SBIN",
+        qty=first.quantity,
+        paper_sim_config=PaperSimConfig(),
+        min_gap_days=28,
+        vega_neutral_tolerance=0.5,
+    )
+
+    assert intended == [first]
+
+
+@pytest.mark.asyncio
+async def test_append_vega_neutral_far_dated_pair_honors_lot_size_ratio():
+    """When the far-expiry contract has a different lot size than the near
+    leg, the vega solve must scale by the lot-size ratio, not just the raw
+    per-contract vega ratio — otherwise the appended share quantity
+    silently mis-hedges by the lot-size mismatch factor. Verified
+    numerically against this repo's own bsm.py: near_dte=30/far_dte=60,
+    near_lotsize=25/far_lotsize=50, 3 near contracts (qty=75) — WITHOUT
+    the lot-ratio fix this lands at ~87% residual vega (would fail the
+    tolerance gate); WITH the fix it lands at ~6% residual (comfortably
+    passes), proving the ratio term is load-bearing, not cosmetic.
+    """
+    near_expiry = _expiry_str(30)
+    far_expiry = _expiry_str(30 + 30)
+    near_rec = _opt(near_expiry, SPOT, "CE", "N1")
+    feed = _FullFeed(
+        [
+            near_rec,
+            _opt(near_expiry, SPOT, "PE", "N2"),
+            InstrumentRecord(
+                exchange="NFO",
+                tradingsymbol="SBINF1CE",
+                symboltoken="F1",
+                name="SBIN",
+                expiry=far_expiry,
+                strike=SPOT,
+                lotsize=50,  # different from near leg's lotsize (25)
+                instrumenttype="OPTSTK",
+            ),
+            InstrumentRecord(
+                exchange="NFO",
+                tradingsymbol="SBINF2PE",
+                symboltoken="F2",
+                name="SBIN",
+                expiry=far_expiry,
+                strike=SPOT,
+                lotsize=50,
+                instrumenttype="OPTSTK",
+            ),
+        ]
+    )
+    first = PaperLegRequest(
+        symbol=near_rec.tradingsymbol,
+        side=PaperSide.buy,
+        quantity=3 * near_rec.lotsize,  # 3 near contracts = 75 shares
+        exchange="NFO",
+        symbol_token=near_rec.symboltoken,
+        option_type="CE",
+        strike=SPOT,
+        expiry=near_expiry,
+    )
+    intended: list[PaperLegRequest] = [first]
+
+    await _append_vega_neutral_far_dated_pair(
+        intended,
+        feed=feed,
+        first=first,
+        record=near_rec,
+        underlying="SBIN",
+        qty=first.quantity,
+        paper_sim_config=PaperSimConfig(),
+        min_gap_days=28,
+        vega_neutral_tolerance=0.5,
+    )
+
+    assert len(intended) == 3  # entry + 2 far legs — the tolerance gate must PASS here
+    far_legs = intended[1:]
+    for lg in far_legs:
+        assert lg.side == PaperSide.sell
+        # far_contracts=1 at far_lotsize=50 -> quantity=50 shares
+        assert lg.quantity == 50

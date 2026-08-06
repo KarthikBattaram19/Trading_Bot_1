@@ -152,6 +152,11 @@ async def build_intended_legs_from_entry(
             .get("calendar_construction", {})
             .get("long_expiry_min_gap_days", 28)
         )
+        vega_neutral_tolerance = float(
+            cfg.get("strategies", {})
+            .get("gamma_scalping", {})
+            .get("vega_neutral_tolerance", 0.5)
+        )
         await _append_vega_neutral_far_dated_pair(
             intended,
             feed=feed,
@@ -161,6 +166,7 @@ async def build_intended_legs_from_entry(
             qty=qty,
             paper_sim_config=paper_sim_config or PaperSimConfig(),
             min_gap_days=min_gap_days,
+            vega_neutral_tolerance=vega_neutral_tolerance,
         )
 
     return intended
@@ -287,13 +293,20 @@ async def _append_vega_neutral_far_dated_pair(
     qty: int,
     paper_sim_config: PaperSimConfig,
     min_gap_days: int,
+    vega_neutral_tolerance: float,
 ) -> None:
     """Short a longer-dated CE/PE pair sized to zero portfolio vega.
 
     Table GS-4 steps 3-4: solve the short-dated/long-dated call pair for
     vega neutrality first, then mirror the identical quantity into puts
     (delta identity in step 4's callout) rather than re-solving both sides
-    independently.
+    independently. Both far legs must resolve at the *exact* entry strike
+    (Table GS-4 step 1, and this project's own
+    ``option_selection.same_strike_near_far`` constraint) — a nearest-strike
+    fallback would silently turn the calendar into an unlabeled diagonal.
+    If the achievable integer-lot solve can't clear ``vega_neutral_tolerance``
+    of the unhedged near-leg vega, fail closed to the near-only straddle
+    rather than ship a structure that only looks vega-neutral.
     """
     strike = float(record.strike or 0.0)
     name = (record.name or underlying or "").upper()
@@ -346,6 +359,15 @@ async def _append_vega_neutral_far_dated_pair(
         return option_greeks(inputs)
 
     near_call = _greeks(near_dte, "call")
+    if not isfinite(near_call["vega"]) or abs(near_call["vega"]) < 1e-9:
+        logger.warning(
+            "gamma_scalping calendar skip: degenerate near vega (%s) for %s near_dte=%d",
+            near_call["vega"],
+            name,
+            near_dte,
+        )
+        return
+
     far_call = _greeks(far_dte, "call")
     vega_far = far_call["vega"]
     if not isfinite(vega_far) or abs(vega_far) < 1e-9:
@@ -357,57 +379,88 @@ async def _append_vega_neutral_far_dated_pair(
         )
         return
 
-    near_lotsize = max(int(record.lotsize or 1), 1)
-    near_contracts = max(int(qty // near_lotsize), 1) if qty >= near_lotsize else 1
-    far_contracts = max(round(near_contracts * near_call["vega"] / vega_far), 1)
-
-    appended: list[PaperLegRequest] = []
-    for want in ("CE", "PE"):
-        pair = _find_matching_option(feed, name=name, expiry=far_expiry, strike=strike, option_type=want)
-        if pair is None:
-            logger.warning(
-                "gamma_scalping calendar skip leg: no %s at strike=%.2f expiry=%s for %s",
-                want,
-                strike,
-                far_expiry,
-                name,
-            )
-            continue
-        far_lotsize = max(int(pair.lotsize or near_lotsize), 1)
-        leg = PaperLegRequest(
-            symbol=pair.tradingsymbol,
-            side=PaperSide.sell,
-            quantity=far_contracts * far_lotsize,
-            exchange=pair.exchange,
-            symbol_token=pair.symboltoken,
-            option_type=want,  # type: ignore[arg-type]
-            strike=float(pair.strike) if pair.strike is not None else None,
-            expiry=pair.expiry,
-        )
-        intended.append(leg)
-        appended.append(leg)
-
-    if len(appended) == 2:
-        near_put = _greeks(near_dte, "put")
-        far_put = _greeks(far_dte, "put")
-        residual_delta = near_contracts * (near_call["delta"] + near_put["delta"]) - far_contracts * (
-            far_call["delta"] + far_put["delta"]
-        )
-        residual_vega = near_contracts * (near_call["vega"] + near_put["vega"]) - far_contracts * (
-            far_call["vega"] + far_put["vega"]
-        )
-        logger.info(
-            "gamma_scalping calendar solve symbol=%s strike=%.2f near_dte=%d far_dte=%d "
-            "vega_near_call=%.4f vega_far_call=%.4f near_contracts=%d far_contracts=%d "
-            "residual_delta=%.4f residual_vega=%.4f",
-            name,
+    # Resolve both far legs at the EXACT entry strike before solving quantity —
+    # need far_lotsize for the lot-ratio-aware solve, and a nearest-strike
+    # fallback here would silently turn the calendar into a diagonal.
+    far_ce = _find_matching_option(feed, name=name, expiry=far_expiry, strike=strike, option_type="CE")
+    if far_ce is None or abs(float(far_ce.strike or 0.0) - strike) > 1e-6:
+        logger.warning(
+            "gamma_scalping calendar skip: no exact-strike CE at strike=%.2f expiry=%s for %s",
             strike,
-            near_dte,
-            far_dte,
-            near_call["vega"],
-            vega_far,
+            far_expiry,
+            name,
+        )
+        return
+    far_pe = _find_matching_option(feed, name=name, expiry=far_expiry, strike=strike, option_type="PE")
+    if far_pe is None or abs(float(far_pe.strike or 0.0) - strike) > 1e-6:
+        logger.warning(
+            "gamma_scalping calendar skip: no exact-strike PE at strike=%.2f expiry=%s for %s",
+            strike,
+            far_expiry,
+            name,
+        )
+        return
+
+    near_lotsize = max(int(record.lotsize or 1), 1)
+    far_lotsize = max(int(far_ce.lotsize or near_lotsize), 1)
+    near_contracts = max(int(qty // near_lotsize), 1) if qty >= near_lotsize else 1
+    lot_ratio = near_lotsize / far_lotsize
+    far_contracts = max(round(near_contracts * lot_ratio * near_call["vega"] / vega_far), 1)
+
+    near_put = _greeks(near_dte, "put")
+    far_put = _greeks(far_dte, "put")
+
+    # Compare on a per-share basis (contracts * lotsize) so a near/far
+    # lot-size mismatch is honored, not just the contract count.
+    near_vega_total = near_contracts * near_lotsize * (near_call["vega"] + near_put["vega"])
+    far_vega_total = far_contracts * far_lotsize * (far_call["vega"] + far_put["vega"])
+    residual_vega = near_vega_total - far_vega_total
+    if abs(near_vega_total) > 1e-9 and abs(residual_vega) / abs(near_vega_total) > vega_neutral_tolerance:
+        logger.warning(
+            "gamma_scalping calendar skip: residual vega %.4f exceeds tolerance %.2f of "
+            "unhedged %.4f (near_contracts=%d far_contracts=%d lot_ratio=%.4f) for %s — "
+            "falling back to near-only straddle",
+            residual_vega,
+            vega_neutral_tolerance,
+            near_vega_total,
             near_contracts,
             far_contracts,
-            residual_delta,
-            residual_vega,
+            lot_ratio,
+            name,
         )
+        return
+
+    residual_delta = near_contracts * near_lotsize * (
+        near_call["delta"] + near_put["delta"]
+    ) - far_contracts * far_lotsize * (far_call["delta"] + far_put["delta"])
+
+    for want, pair in (("CE", far_ce), ("PE", far_pe)):
+        intended.append(
+            PaperLegRequest(
+                symbol=pair.tradingsymbol,
+                side=PaperSide.sell,
+                quantity=far_contracts * far_lotsize,
+                exchange=pair.exchange,
+                symbol_token=pair.symboltoken,
+                option_type=want,  # type: ignore[arg-type]
+                strike=float(pair.strike) if pair.strike is not None else None,
+                expiry=pair.expiry,
+            )
+        )
+
+    logger.info(
+        "gamma_scalping calendar solve symbol=%s strike=%.2f near_dte=%d far_dte=%d "
+        "vega_near_call=%.4f vega_far_call=%.4f near_contracts=%d far_contracts=%d "
+        "lot_ratio=%.4f residual_delta=%.4f residual_vega=%.4f",
+        name,
+        strike,
+        near_dte,
+        far_dte,
+        near_call["vega"],
+        vega_far,
+        near_contracts,
+        far_contracts,
+        lot_ratio,
+        residual_delta,
+        residual_vega,
+    )

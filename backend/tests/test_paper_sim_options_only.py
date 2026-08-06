@@ -154,8 +154,14 @@ class _GammaCalendarFeed(FakeFeed):
 
     def __init__(self) -> None:
         super().__init__()
-        near = _relative_expiry(15)
-        far = _relative_expiry(15 + 35)
+        near = _relative_expiry(30)
+        far = _relative_expiry(30 + 30)
+        # gamma_scalping is an ATM strategy (option_selection.moneyness: "atm").
+        # The base FakeFeed's SBIN spot of 750 against these 500-strike legs is
+        # deep ITM, whose near-leg vega rounds to ~0 — which now (correctly)
+        # trips the degenerate-near-vega guard. Put spot at the strike so this
+        # fixture exercises the real vega solve, not a degenerate one.
+        self.ltps["3045"] = 500.0
         # Override the shared near-dated 500-strike CE/PE with a real DTE
         # (the base FakeFeed's literal "28MAR2024" doesn't parse as a real
         # date and is long past regardless).

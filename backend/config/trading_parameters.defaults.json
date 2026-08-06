@@ -170,7 +170,8 @@
       },
       "calendar_construction": {
         "long_expiry_min_gap_days": 28
-      }
+      },
+      "vega_neutral_tolerance": 0.5
     },
     "vega_scalping": {
       "enabled": true,
