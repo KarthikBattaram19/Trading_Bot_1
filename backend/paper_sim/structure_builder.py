@@ -340,9 +340,14 @@ async def _append_vega_neutral_far_dated_pair(
     independently.
     """
     strike = float(record.strike or 0.0)
-    if strike <= 0:
-        return
     name = (record.name or underlying or "").upper()
+    if strike <= 0:
+        logger.warning(
+            "gamma_scalping calendar skip: non-positive strike (%s) for %s",
+            strike,
+            name,
+        )
+        return
 
     near_dte = _dte_from_expiry(record.expiry or "")
     far = _resolve_far_expiry(feed, name=name, near_expiry=record.expiry, min_gap_days=min_gap_days)
@@ -365,6 +370,11 @@ async def _append_vega_neutral_far_dated_pair(
     tick = await feed.get_ltp(und_rec.exchange, und_rec.tradingsymbol, und_rec.symboltoken)
     spot = float(tick.ltp)
     if spot <= 0:
+        logger.warning(
+            "gamma_scalping calendar skip: non-positive spot (%s) for %s",
+            spot,
+            name,
+        )
         return
 
     def _greeks(days: float, option_type: str) -> dict[str, float]:
