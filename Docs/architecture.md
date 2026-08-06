@@ -2409,11 +2409,11 @@ selected_strategy + entry_mode + news_impact + event_risks
 | Earnings / company event imminent (news + calendar) | Gamma scalping; **avoid** plain long-vega through the event | `gamma_scalping` + `earnings_gap_mode`; reject simple vol through event |
 | Intraday IV flush (−2σ) on liquid ATM; news not blocking | Vega scalping | `vega_scalping`; same-day flatten |
 | IV already elevated; large realized swings; news confirms agitation | Gamma scalping | `gamma_scalping` + `high_realized_vol_mode` |
-| Post-shock / crisis tone; models likely distorted | Reduce or **block** all model-driven vol trades until normalization | `blocked`; macro flag → kill / defer (Shared Kill Conditions, H11/K4-class) |
-| Breaking news after a live long-vol entry | Favorable for long vega/gamma (Scenario B in Vega / black-swan in Simple Vol) | Take profit / re-hedge aggressively — do not widen stops |
-| Quiet tape + bearish/drift news after entry | Theta / continued IV fall risk | Prefer early exit / stop per strategy rules |
+| Post-shock / crisis tone; models likely distorted | Reduce or **block** all model-driven vol trades until normalization | `blocked`; macro flag → defer new entries (`block_model_trades`) |
+| Breaking news after a live long-vol entry | Favorable for long vega/gamma (Scenario B in Vega / black-swan in Simple Vol) | Display-only tone (`breaking_bullish`) — no automatic action; position exits only via strategy exit rules, never news |
+| Quiet tape + bearish/drift news after entry | Theta / continued IV fall risk | Display-only tone (`adverse_tone`) — no automatic early exit; exits only via strategy stop/target/time rules |
 
-**Shared kill alignment:** An earnings or news event the setup was not designed to absorb is a shared kill condition (`Trading_Strategies.md` Shared Kill Conditions). Sentiment flags that contradict the chosen scenario must abort or flatten — not “hope through” the event.
+**News is entry-side only:** unplanned earnings or news the setup was not designed to absorb never closes, flattens, or modifies an already-open position — it can only block a *new* entry (SH-4 / `news_blocks_model_trades`). Open positions exit solely via the strategy exit rules in `Trading_Strategies.md` and the mechanical γ–θ re-hedge in `paper_sim/automation.py`. The Shared Kill Conditions list (`Trading_Strategies.md`) is a separate, still-valid strategy-level concept (liquidity collapse, hedge-leg unavailable, stale model input, neutrality unrestorable, greek limits, thesis invalidated) — it no longer includes a news/earnings entry.
 
 **Pre-approval packet:** Operator-facing recommendations must include market-condition summary and known event risks derived from this news layer (playbook Supervised Execution Runbook / Part P1).
 
