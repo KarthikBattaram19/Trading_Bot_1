@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { InstrumentRecommendation } from "@/types/recommendations";
 import type { AutonomousExecutionResult } from "@/types/trades";
 import { rankStatusFromResult } from "@/types/trades";
@@ -8,8 +9,8 @@ import {
   ENTRY_MODE_LABELS,
   STRATEGY_TYPE_LABELS,
 } from "@/types/recommendations";
-import { Button, Icon, StatusPill } from "@/components/ui/primitives";
-import { cn, formatPct } from "@/lib/utils";
+import { Icon, StatusPill } from "@/components/ui/primitives";
+import { cn, formatPct, liveDecisionId } from "@/lib/utils";
 import { StrategyInsightPanel } from "@/components/recommendations/strategy-insight-panel";
 
 const RANK_ACCENT = [
@@ -62,9 +63,15 @@ function formatInr(value: number): string {
 export function RecommendationCard({
   rec,
   executionResult = null,
+  generatedAt,
+  supervisionMode,
 }: {
   rec: InstrumentRecommendation;
   executionResult?: AutonomousExecutionResult | null;
+  /** Response's `generated_at` — needed to build the same `dec_{symbol}_{day}` id the live decision log uses. */
+  generatedAt?: string;
+  /** Current `SUPERVISION_MODE` — determines whether this packet needs manual approval. */
+  supervisionMode?: string;
 }) {
   const [tab, setTab] = useState<InsightTab>("overview");
   const rankAccent = RANK_ACCENT[rec.rank - 1] ?? "border-l-outline";
@@ -479,29 +486,47 @@ export function RecommendationCard({
       </div>
 
       {/* Execution footer */}
-      <div className="flex items-center gap-2 border-t border-outline-variant px-5 py-3 text-data-md text-on-surface-variant">
-        {executionResult ? (
-          <>
-            {execStatus === "succeeded" && attempt?.trade_id && (
-              <span className="flex items-center gap-2 text-secondary">
-                <Icon name="check_circle" className="text-[16px]" filled />
-                Autonomous open: {attempt.trade_id} ({attempt.order_status})
-              </span>
-            )}
-            {execStatus === "failed" && attempt?.error && (
-              <span className="text-error">{attempt.error}</span>
-            )}
-            {execStatus === "skipped" && (
-              <span>Higher-ranked recommendation opened successfully</span>
-            )}
-            {execStatus === "pending" && <span>Not opened in this cycle</span>}
-          </>
-        ) : (
-          <span className="flex items-center gap-2">
-            <Icon name="check_circle" className="text-[16px] text-secondary" filled />
-            Insight packet ready — execution result attaches when{" "}
-            <span className="font-mono">fully_autonomous</span>
-          </span>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-t border-outline-variant px-5 py-3 text-data-md text-on-surface-variant">
+        <div className="flex items-center gap-2">
+          {executionResult ? (
+            <>
+              {execStatus === "succeeded" && attempt?.trade_id && (
+                <span className="flex items-center gap-2 text-secondary">
+                  <Icon name="check_circle" className="text-[16px]" filled />
+                  Autonomous open: {attempt.trade_id} ({attempt.order_status})
+                </span>
+              )}
+              {execStatus === "failed" && attempt?.error && (
+                <span className="text-error">{attempt.error}</span>
+              )}
+              {execStatus === "skipped" && (
+                <span>Higher-ranked recommendation opened successfully</span>
+              )}
+              {execStatus === "pending" && <span>Not opened in this cycle</span>}
+            </>
+          ) : supervisionMode === "fully_autonomous" ? (
+            <span className="flex items-center gap-2">
+              <Icon name="check_circle" className="text-[16px] text-secondary" filled />
+              Insight packet ready — execution result attaches when{" "}
+              <span className="font-mono">fully_autonomous</span>
+            </span>
+          ) : (
+            <span className="flex items-center gap-2">
+              <Icon name="pending_actions" className="text-[16px] text-tertiary" filled />
+              Supervision mode <span className="font-mono">{supervisionMode ?? "supervised"}</span> —
+              this trade needs manual approval to open
+            </span>
+          )}
+        </div>
+
+        {!executionResult && supervisionMode !== "fully_autonomous" && generatedAt && (
+          <Link
+            href={`/decisions/${liveDecisionId(rec.underlying_symbol, generatedAt)}`}
+            className="inline-flex items-center justify-center gap-2 rounded-md bg-primary-container px-4 py-2 text-sm font-medium text-white transition-colors hover:brightness-110"
+          >
+            <Icon name="fact_check" className="text-[16px]" />
+            Review &amp; approve
+          </Link>
         )}
       </div>
     </section>

@@ -8,6 +8,58 @@ deprioritized behind any open P0/P1 item.
 
 ## P0 — integrity of the trading loop
 
+- [x] **Frontend never wires the real approve/reject endpoints, so a
+  human operator has no discoverable way to act on a recommendation in
+  `SUPERVISION_MODE=supervised` (prod default) — the P0-1 loop is closed
+  in the backend but not operable end-to-end.** `frontend/src/app/recommendations/page.tsx`
+  renders `RecommendationsLoader` → `RecommendationCard`
+  (`frontend/src/components/recommendations/recommendation-card.tsx`), which
+  is a pure read-only insight packet with zero approve/reject action — its
+  footer literally reads "execution result attaches when `fully_autonomous`"
+  with no button. `frontend/src/app/decisions/page.tsx` →
+  `DecisionsLoader` (`frontend/src/components/decisions/decisions-loader.tsx:105-106`)
+  still hardcodes the stale copy "read-only audit trail — no approval
+  queue," even though `backend/routers/decisions.py` has shipped real
+  `POST /{id}/approve` / `POST /{id}/reject` since the 2026-08-04 P0 fix,
+  and the decisions table itself renders no action buttons. The only place
+  `ApprovalCard` (`frontend/src/components/dashboard/approval-card.tsx`,
+  which does call `approveDecision`/`rejectDecision`) is mounted is the
+  per-decision detail route `frontend/src/app/decisions/[id]/page.tsx`,
+  reachable only via a "Packet" link in the decisions table — not linked
+  from `/recommendations` at all. Net effect confirmed live against prod
+  2026-08-06 (`https://tradingbot1-production-a574.up.railway.app`,
+  `GET /api/v1/bot/status` → `"supervision_mode":"supervised"`): even on a
+  cycle that clears the confidence bar, there is no button anywhere in the
+  primary `/recommendations` flow for an operator to open the trade, and
+  the one page that has a working Approve button is undiscoverable without
+  already knowing the decision ID / clicking through the audit table.
+  Turning `SUPERVISION_MODE=fully_autonomous` would "fix" this but
+  reintroduces the exact unsupervised-auto-execute risk P0-1 removed — the
+  correct fix is wiring the existing `ApprovalCard` (or an equivalent
+  action) into `/recommendations` and correcting the stale
+  `decisions-loader.tsx` copy. (first seen 2026-08-06, evidence above)
+  - **Resolved 2026-08-06**, evidence: `frontend/src/lib/utils.ts` adds
+    `liveDecisionId()` (UTC-safe, matches
+    `decision_log.py::_live_decisions`'s `dec_{symbol}_{day}` id exactly
+    since both read the same response's `generated_at`).
+    `RecommendationsPage` → `RecommendationsLoader` → `RecommendationsView`
+    now thread `supervision_mode` (from `GET /bot/status`) and
+    `generated_at` down to `RecommendationCard`
+    (`frontend/src/components/recommendations/recommendation-card.tsx`),
+    which now renders a "Review & approve" button linking straight to
+    `/decisions/{id}` (the page hosting the real `ApprovalCard`) for every
+    packet, whenever `supervisionMode !== "fully_autonomous"` and the
+    packet hasn't already executed. `decisions-loader.tsx`'s stale
+    "read-only audit trail — no approval queue" copy is corrected, and its
+    per-row link now reads "Review & approve" for pending decisions
+    (still "Packet" for acted-on ones) instead of a uniform, non-actionable
+    "Packet" label. `npx tsc --noEmit` and `npm run build` both pass clean;
+    no backend contract changed, so no new backend tests were needed for
+    this half — verified the id-construction logic is behaviorally the
+    inverse of `decision_log.py::_to_decision`'s id format by inspection
+    (same `dec_{lower(symbol)}_{YYYYMMDD}` shape, both derived from the
+    same `generated_at` value in the same response).
+
 - [x] Build real `POST /approve` and `POST /reject` endpoints in
   `backend/routers/decisions.py`, make the `paper_sim` ledger the single
   source of truth. (first seen 2026-08-02, evidence: `backend/routers/decisions.py:1`,
@@ -125,6 +177,64 @@ deprioritized behind any open P0/P1 item.
   micro-capital phase. (first seen 2026-08-02, evidence:
   `grep -rli "reconcile\|fill_state\|order_state" backend --include=*.py`
   excluding tests → no matches)
+
+- [ ] **`_spot_ltp` sends the raw display symbol, not the ICICI stock_code, for
+  non-index equities — live spot LTP fails for names whose Breeze short code
+  differs from the NSE tradingsymbol.** `backend/services/universe_enrichment.py`
+  `enrich_one()` (line 591) correctly resolves
+  `stock_code = self._instruments.stock_code_for_underlying(und) or und` and
+  passes it to `_fetch_option_chain_sides(stock_code=stock_code, ...)` (line 613)
+  — but line 609 calls `self._spot_ltp(und, ...)` with the raw `und` (display
+  symbol), not `stock_code`. `_spot_ltp` (line 510-538) only substitutes a
+  mapped code for the 5 index underlyings (`_INDEX_SPOT_STOCK_CODE`); every
+  other symbol's `fallbacks = [und]` — so any equity whose Breeze stock_code
+  differs from its NSE tradingsymbol (option-chain fetch already assumes this
+  is common, hence the `stock_code_for_underlying` lookup existing at all)
+  will always fail spot LTP with a vendor "stock may not be available" error,
+  even though the option chain for the same symbol fetches fine via the
+  correct code. Directly matches the error pattern seen live 2026-08-06 on
+  `https://trading-bot-1-pi.vercel.app/recommendations`: `RELIANCE spot: Check
+  stock code:Stock may not be available...`, `ICICIBANK spot: Check stock
+  code:...`, `HDFCBANK spot: Non-JSON response (503)` alongside a working
+  option-chain fetch pattern (`chain_calls=24` succeeding while `spot_calls=5`
+  and only 12/40 underlyings fully enriched). Because `_live_marks_ok()`
+  (`strategy_coverage.py:53-58`) requires `snap.und_price.usable`, a failed
+  spot fetch alone is enough to make a symbol ineligible for every strategy —
+  this single-line bug is a plausible primary driver of the observed
+  `eligible=0/40` coverage abort across all three strategies that cycle (spot
+  fetch failing before the option chain result even matters for that name).
+  Not yet fixed or test-covered; the BANKNIFTY 503 in the same error sample
+  looks like a separate transient vendor issue (index code already correct),
+  not this bug. **Fix:** pass `stock_code` (already resolved one line above)
+  into `_spot_ltp` instead of `und` for the non-index branch. (first seen
+  2026-08-06, evidence: `backend/services/universe_enrichment.py:591,609`)
+  - Blocks generating real recommendations/trades in prod today, which in
+    turn blocks accumulating the real closed-trade history P1 item 3 (OOS
+    walk-forward) needs — even though P0 itself (approve/reject wiring) is
+    fully Done per the items above.
+  - **Resolved 2026-08-06**, evidence: `_spot_ltp()` now accepts an optional
+    `stock_code` param and uses it (falling back to the raw symbol) as the
+    primary lookup for every non-index underlying, mirroring the existing
+    index-code fallback pattern; `enrich_one()` passes the already-resolved
+    `stock_code` through. New test
+    `test_equity_spot_uses_resolved_stock_code_first`
+    (`backend/tests/test_universe_enrichment.py`) asserts RELIANCE's spot
+    fetch hits `RELIND` (its real mapped code) before ever trying the raw
+    `RELIANCE` string, and fails the test if it doesn't. Full backend suite:
+    320 passed / 0 failed (was 319). Live-verified the mapping itself is
+    correct against the real downloaded FONSEScripMaster:
+    `INFY→INFTEC`, `RELIANCE→RELIND`, `HDFCBANK→HDFBAN`, `ICICIBANK→ICIBAN`
+    all resolve correctly via `stock_code_for_underlying()`. A live
+    `refresh=true` cycle run locally post-fix (2026-08-06, ~16:22 IST, after
+    NSE market close) confirmed the primary spot attempt for INFY now uses
+    the resolved code (no longer a raw-symbol "Check stock code" rejection
+    on the first try) — but still returned only 6-8/40 live marks and the
+    same `STRATEGY_COVERAGE_ABORT` outcome, because outside market hours
+    Breeze's quote endpoint itself returns transient 503s regardless of
+    which code is used. **Not yet confirmed:** whether this fix alone gets
+    coverage over the 80%/`min_eligible_symbols=20` floor during live NSE
+    market hours (09:15-15:30 IST) — needs a same-day intraday re-check,
+    which this session couldn't run since market was already closed.
 
 ## Other — deferred behind open P0/P1
 

@@ -210,7 +210,7 @@ flowchart LR
         F31["§3.1 SH-4 thresholds<br/>hardcoded, not config"]
         F38["§3.8 min_eligible_symbols<br/>50 vs 20 mismatch, masked by tests"]
         F44["§4.4 Shadow broker call:<br/>silent except: pass"]
-        F310["§3.10 gamma_scalping structure is<br/>a double long-straddle, not vega-neutral"]
+        F310["§3.10 gamma_scalping structure is<br/>a double long-straddle, not vega-neutral — ✅ FIXED 2026-08-06"]
         F311["§3.11 Vega stop/flatten rules<br/>are display text only, unenforced"]
     end
     subgraph MED["🟡 Medium — P2"]
@@ -438,7 +438,7 @@ real default at all. Only `test_fno_universe.py:136` and one case in
   `trading_parameters.defaults.json` unmodified and asserts coverage behavior
   against the actual shipped default.
 
-### 3.9 `max_symbols=40` truncation has no visible liquidity/importance ranking beyond a short manual priority list
+### 3.9 `max_symbols=40` truncation has no visible liquidity/importance ranking beyond a short manual priority list — ✅ PARTIALLY FIXED 2026-08-06
 `recommendation_engine.py:301-319` — only 12 symbols (indices + a handful of large
 caps) get explicit priority; the remaining ~28 of the 40-symbol budget are filled
 alphabetically from whatever's left in the FNO master. With NSE F&O covering
@@ -451,8 +451,26 @@ gate.
   session's OI/volume from `AtmLiquidityHistoryStore`) instead of a short hardcoded
   allowlist + alphabetical order, or raise `max_symbols` if the 20s budget has
   headroom (would need to be checked against Breeze's ~100/min, ~5000/day caps).
+- **Resolution:** `AtmLiquidityHistoryStore.latest_liquidity_by_underlying()`
+  (`backend/services/atm_liquidity_history.py`) returns each underlying's most
+  recent ATM volume+OI across any expiry_key, as a liquidity proxy. A new pure
+  `_rank_symbols_for_enrichment()` (`backend/services/recommendation_engine.py`)
+  replaces the old `sorted(symbols, key=lambda s: (priority, alphabetical))`:
+  the explicit priority names (indices/large caps) still sort first unchanged,
+  but everything else now sorts by this liquidity proxy descending, falling
+  back to alphabetical only when a symbol has no history yet (a cold store, or
+  a name genuinely never enriched before, defaults to `0.0` for all — so
+  ordering is provably unchanged from today until real sessions accumulate;
+  covered by `test_rank_symbols_for_enrichment_falls_back_to_alphabetical_with_no_history`).
+  Tests: `backend/tests/test_atm_liquidity_history.py` (aggregation across
+  expiry keys, most-recent-session tiebreak, underlying filter) and
+  `backend/tests/test_recommendation_engine.py` (priority-first, liquidity-desc
+  ordering, cold-store fallback, mixed known/unknown symbols). Full backend
+  suite (319 tests, was 301) passes. **Not addressed by this fix:** `max_symbols`
+  itself is still 40 — this only improves which 40 get picked, it doesn't raise
+  the cap (that's a separate, still-open call against Breeze's rate envelope).
 
-### 3.10 The "gamma_scalping" four-leg structure is a double long-straddle, not the vega-neutral calendar spread `Trading_Strategies.md` Table GS-4 requires
+### 3.10 The "gamma_scalping" four-leg structure is a double long-straddle, not the vega-neutral calendar spread `Trading_Strategies.md` Table GS-4 requires — ✅ FIXED 2026-08-06
 `backend/paper_sim/structure_builder.py:128-256` (`_append_opposite_option_at_strike` +
 `_append_second_strike_option_pair`) builds the gamma-scalping opening basket as:
 CE + PE at the entry strike, **plus** CE + PE at a second nearby strike — all four
@@ -478,6 +496,22 @@ Profile Target (Table GS-2: vega ≈ 0) say it should not have.
   GS-4 mirror rule, rather than adding a same-side second strike. This is a
   correctness bug, not a documentation gap — the current code cannot produce the
   Greek profile the strategy is named for.
+- **Resolution:** `backend/paper_sim/structure_builder.py` now builds vega-neutral
+  gamma-scalping via `_append_vega_neutral_far_dated_pair()`, which (1) fetches a
+  genuinely longer-dated far expiry via config-driven gap
+  (`strategies.gamma_scalping.calendar_construction.long_expiry_min_gap_days`,
+  default 28 days), (2) applies BSM vega-neutrality sizing to near+far leg pairs
+  with mirrored put/call quantities, (3) sells the far-dated legs (opposite side
+  from the near-dated long entry), and (4) fails closed to a near-dated straddle
+  only when far-expiry data is missing or the configured gap cannot be met. Tests
+  in `backend/tests/test_structure_builder.py` cover both the vega-neutral calendar
+  construction and the fallback path when far expiry is unavailable. A
+  `vega_neutral_tolerance` config gate (default 0.5) additionally fails the
+  structure closed — falling back to the near-only straddle — when the achievable
+  integer-lot solve can't clear that residual-vega threshold, which is common at
+  the fixed 1-lot production entry size for less-favorable near/far DTE pairings;
+  this is a deliberate, conservative, not-yet-backtested default (same precedent
+  as this repo's `garch_forecast.enable_mle_fit`).
 
 ### 3.11 Vega scalping's stop-loss and same-session flatten rules exist only as display text — nothing in `paper_sim/automation.py` enforces them
 `stop_z_threshold` / `stop_z_threshold_alt` (`-3.0σ`/`-4.0σ`) and
@@ -789,7 +823,8 @@ flowchart TD
     actual vega-neutral calendar spread (offsetting legs on a genuinely longer
     expiry, sized and signed per Table GS-4) instead of a same-side, same-expiry
     second straddle — as shipped, every "gamma_scalping" trade carries full
-    unhedged vega, contradicting the strategy's own Greek profile target (§3.10).
+    unhedged vega, contradicting the strategy's own Greek profile target (§3.10) —
+    ✅ COMPLETED 2026-08-06.
 12. Make vega scalping's stop-loss (config `stop_z_threshold`/`_alt`) and
     same-session flatten (`flatten_at_session_close`) real checks inside
     `paper_sim/automation.py`'s position loop — today they only render as
@@ -801,7 +836,7 @@ flowchart TD
    `trade_executor.py` (§6) — currently the three modules with the most
    consequential undocumented behavior have zero regression protection.
 8. Rank the 40-symbol enrichment budget by real liquidity instead of a short
-   hardcoded allowlist (§3.9).
+   hardcoded allowlist (§3.9) — ✅ COMPLETED 2026-08-06.
 9. Clean up or document the dead cash-underlying code path (§3.7).
 10. Add a `logger.warning` to the two silently-swallowed exception paths (§3.6, §4.4).
 13. Extend `QuantSnapshot` with a second (longer) expiry's IV and add the Table GS-8

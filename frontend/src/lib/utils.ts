@@ -61,6 +61,19 @@ export function formatTime(value: string | number | Date): string {
   return `${p.hour}:${p.minute}:${p.second} IST`;
 }
 
+/**
+ * Matches `backend/services/decision_log.py::_live_decisions`'s
+ * `dec_{symbol.lower()}_{generated_at.strftime('%Y%m%d')}` id — generated_at
+ * is UTC-aware, so this must read UTC date parts, not local browser time.
+ */
+export function liveDecisionId(underlyingSymbol: string, generatedAt: string): string {
+  const d = new Date(generatedAt);
+  const day = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(
+    d.getUTCDate(),
+  ).padStart(2, "0")}`;
+  return `dec_${underlyingSymbol.toLowerCase()}_${day}`;
+}
+
 export function formatGreek(value: number, decimals = 2): string {
   if (Math.abs(value) >= 100) return value.toFixed(0);
   return value.toFixed(decimals);

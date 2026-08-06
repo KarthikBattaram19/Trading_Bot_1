@@ -275,6 +275,32 @@ async def _ensure_fno_underlyings() -> tuple[list[str], str]:
     return [], "empty_fno_master"
 
 
+def _rank_symbols_for_enrichment(
+    symbols: list[str],
+    *,
+    priority: dict[str, int],
+    liquidity: dict[str, float],
+) -> list[str]:
+    """Order symbols for the capped enrichment budget.
+
+    Explicit `priority` names (indices/large caps) always sort first. Beyond
+    that, rank by `liquidity` (a prior-session ATM volume+OI proxy from
+    `AtmLiquidityHistoryStore`) descending, so the enrichment budget spends
+    itself on symbols known to be liquid rather than whatever sorts first
+    alphabetically. A symbol with no liquidity history yet (liquidity 0.0,
+    the default for a cold store or a name never enriched before) falls back
+    to alphabetical order among its peers.
+    """
+    return sorted(
+        symbols,
+        key=lambda s: (
+            priority.get(s.upper(), 1000),
+            -liquidity.get(s.upper(), 0.0),
+            s.upper(),
+        ),
+    )
+
+
 async def _build_universe() -> tuple[
     list[InstrumentCandidate],
     dict[str, dict[str, str]],
@@ -315,10 +341,10 @@ async def _build_universe() -> tuple[
         "TATASTEEL": 16,
         "ITC": 17,
     }
-    symbols = sorted(
-        symbols,
-        key=lambda s: (priority.get(s.upper(), 1000), s.upper()),
+    liquidity = AtmLiquidityHistoryStore().latest_liquidity_by_underlying(
+        {s for s in symbols if s.upper() not in priority}
     )
+    symbols = _rank_symbols_for_enrichment(symbols, priority=priority, liquidity=liquidity)
 
     if enrich_enabled and symbols and source.startswith("icici_direct"):
         try:

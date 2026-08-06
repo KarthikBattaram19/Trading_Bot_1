@@ -15,8 +15,10 @@ import { formatTime } from "@/lib/utils";
 
 export function RecommendationsView({
   initial,
+  supervisionMode,
 }: {
   initial: RecommendationResponse;
+  supervisionMode: string;
 }) {
   const [data, setData] = useState(initial);
   const [loading, setLoading] = useState(false);
@@ -162,6 +164,8 @@ export function RecommendationsView({
                     key={rec.underlying_symbol}
                     rec={rec}
                     executionResult={executionResult}
+                    generatedAt={data.generated_at}
+                    supervisionMode={supervisionMode}
                   />
                 ))}
               </div>
