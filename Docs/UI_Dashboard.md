@@ -33,7 +33,7 @@ flowchart TB
     subgraph Top["Zone A — Situational bar (always visible)"]
         MODE[EXECUTION_MODE + SUPERVISION_MODE]
         REGIME[Regime label]
-        CB[Circuit breakers / kill-switch]
+        CB[Circuit breakers]
         EXP[Portfolio Greeks + P&L]
     end
 
@@ -173,8 +173,6 @@ Surface **Shared Kill Conditions** from `Trading_Strategies.md` as collapsible �
 | **`supervised`** (Phase 3) | Approval queue is primary; alert on `decisions.pending` |
 | **`semi_autonomous`** | High-confidence auto-submit; async review + override |
 | **`fully_autonomous`** | Monitor-only; queue becomes audit history |
-
-Kill-switch and Pause always in Zone A — one click.
 
 ---
 

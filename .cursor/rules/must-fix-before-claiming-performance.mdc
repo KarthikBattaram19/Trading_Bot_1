@@ -15,9 +15,9 @@ This backlog is the single source of priority truth. It is read fresh (not cache
    One ledger must be the source of truth. Recommendations must not “fill” outside `paper_sim`; approve/reject must be real backend APIs when `SUPERVISION_MODE=supervised`.
    - **Definition of done:** `decisions` router exposes real `POST /approve` and `POST /reject` transitions (not read-only list/get endpoints); every accepted decision writes through to the `paper_sim` ledger and no other path can create a "filled" position; `/learning` outcomes are derived only from real ledger closes, with zero `"seed": true` / demo records mixed into the metrics used for reporting.
 
-2. **Enforce breakers + market hours + durable kill/positions**
-   Daily-loss / circuit-breaker / session-window checks must reject or pause submit paths (not dashboard-only). Kill-switch and open book must survive process restart.
-   - **Definition of done:** kill-switch armed state and the open-position book are persisted (file/DB), not in-memory process globals; a killed/restarted process resumes in the same armed/paused state it was in before the restart; daily-loss, circuit-breaker, and market-hours/session-window checks run inside the actual submit path (paper_sim engine and any live broker path), verified by grep/trace, not only surfaced as dashboard metrics.
+2. **Enforce breakers + market hours + durable positions**
+   Daily-loss / circuit-breaker / session-window checks must reject or pause submit paths (not dashboard-only). Open book must survive process restart.
+   - **Definition of done:** the open-position book is persisted (file/DB), not in-memory process globals; a killed/restarted process resumes with the same open positions it had before the restart; daily-loss, circuit-breaker, and market-hours/session-window checks run inside the actual submit path (paper_sim engine and any live broker path), verified by grep/trace, not only surfaced as dashboard metrics.
 
 ## P1 — proof of edge
 

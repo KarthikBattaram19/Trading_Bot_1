@@ -59,6 +59,7 @@ Not weighted into this report — `learning_store.json` contains 0 real closed t
 **P0 — open**
 - [ ] Build real `POST /approve` and `POST /reject` endpoints in `decisions.py`, make `paper_sim` ledger the single source of truth, and exclude seed/demo records from `/learning` metrics (first seen 2026-08-02)
 - [ ] Persist kill-switch armed state and the open-position book so they survive a process restart — currently in-memory globals only in `bot.py` (first seen 2026-08-02)
+  **Superseded 2026-08-05:** the kill-switch mechanism was removed entirely per operator decision; only the open-position-book persistence half of this item remains open. See `Docs/superpowers/specs/2026-08-05-market-news-quality-killswitch-removal-design.md`.
 
 **P1 — open**
 - [ ] No walk-forward/OOS replay evidence exists yet for SH-4 expectancy claims — blocked on P0-1 producing real closed trades to replay against (first seen 2026-08-02)

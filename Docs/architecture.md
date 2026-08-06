@@ -100,7 +100,7 @@ Observe → Analyze → Decide → (Approve if supervised) → Execute → Measu
 | ------------------------------------ | -------------------------------------------------------------------- |
 | Architecture & context docs          | Complete (`architecture.md` v1.25 — includes ICICI Direct Breeze API; `context.md`, `Docs/`) |
 | Cloud infrastructure spec            | Complete (paper: §17.0 Railway/Vercel; live: `infra/cloud-inventory.yaml`, §17.8) |
-| `frontend/` scaffold                 | In progress — supervised cockpit, recommendations, kill-switch; chat UI planned (`Docs/UI_Dashboard.md`) |
+| `frontend/` scaffold                 | In progress — supervised cockpit, recommendations; chat UI planned (`Docs/UI_Dashboard.md`) |
 | `backend/` scaffold                  | In progress — decisions API, recommendations API, bot status, supervision mode config           |
 | `paper_sim` + ICICI Direct data-only        | **Not started** — Phase 0–1 critical path (§21)                      |
 | RAG ingestion pipeline (4 PDFs)      | Not started — parallel Track B (§21.2); not a paper-trading blocker  |
@@ -123,7 +123,7 @@ Observe → Analyze → Decide → (Approve if supervised) → Execute → Measu
 1. Sustain a **high success ratio** measured holistically: win rate, profit factor, Sharpe ratio, and drawdown control
 2. Retrieve and apply domain knowledge from the **four RAG PDFs** during autonomous decision-making and the **user chatbot**
 3. Ship a **RAG-powered user chatbot** as part of the final frontend UI (education, strategy Q&A, decision explanations)
-4. Operate during market hours with **graduated discretionary execution** (`supervised` → `semi_autonomous` → `fully_autonomous`); kill-switch, monitoring, and circuit breakers always apply (§6.2.2, §20.4)
+4. Operate during market hours with **graduated discretionary execution** (`supervised` → `semi_autonomous` → `fully_autonomous`); monitoring and circuit breakers always apply (§6.2.2, §20.4)
 5. Adapt strategy parameters automatically when performance degrades
 6. Deliver explainable decision logs for every autonomous trade
 
@@ -177,7 +177,7 @@ All modules must explicitly account for:
 C4Context
     title System Context Diagram
 
-    Person(trader, "Retail Trader / Operator", "Monitors bot, configures feeds & broker, kill-switch")
+    Person(trader, "Retail Trader / Operator", "Monitors bot, configures feeds & broker")
     
     System(bot, "Volatility Trading Bot", "Autonomous trading, RAG, quant analysis, learning")
     
@@ -188,7 +188,7 @@ C4Context
     System_Ext(llm_api, "Groq API", "LLM reasoning via Groq (e.g. Llama 3.3 70B)")
     System_Ext(embed_api, "Embedding / Reranker", "Vertex AI — gemini-embedding-001 + Ranking API")
 
-    Rel(trader, bot, "Monitors, configures, kill-switch", "HTTPS / WSS")
+    Rel(trader, bot, "Monitors, configures", "HTTPS / WSS")
     Rel(bot, kb_docs, "Ingests at build/refresh time")
     Rel(bot, market_urls, "Poll/stream live feeds", "HTTPS / WSS")
     Rel(bot, news_sources, "Ingest headlines & filings for sentiment", "HTTPS / file")
@@ -240,7 +240,7 @@ Each RAG PDF receives a **unique identifier and version** at ingestion time for 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │                         PRESENTATION TIER (Frontend)                         │
-│   Dashboards · Bot Monitor · Kill Switch · Config · AI Chat · Risk Views    │
+│   Dashboards · Bot Monitor · Config · AI Chat · Risk Views    │
 └──────────────────────────────────┬───────────────────────────────────────────┘
                                    │ REST + WebSocket
 ┌──────────────────────────────────▼───────────────────────────────────────────┐
@@ -369,7 +369,6 @@ flowchart LR
     subgraph Frontend["Frontend (Thin Client)"]
         D[Dashboards]
         M[Bot Monitor]
-        K[Kill Switch]
         C[Config UI]
         A[AI Chat]
     end
@@ -405,7 +404,6 @@ flowchart LR
 | **Strategy views**     | Active signals, module weights, Greeks exposure                                                                                     | REST strategy state      |
 | **Trade monitor**      | Trade log, fills, open positions, mechanical hedge activity                                                                         | WebSocket trade events   |
 | **Recommendations**    | Top-3 ranked instruments with **complete insight packets** (P1 fields + score breakdown + strategy panels); only candidates with post-learning confidence ≥ **80%** (`min_recommendation_confidence`); same-cycle ranked fallback auto-execute only when `SUPERVISION_MODE=fully_autonomous` (§6.4, §13.2.1) | REST `GET /recommendations` |
-| **Kill switch**        | Pause bot; prevent new orders                                                                                                       | REST command endpoint    |
 | **Configuration**      | Live data feed URLs, **strategy ↔ feed bindings**, **option strategy trade inputs**, **third-party broker connections**, thresholds, **supervision promotion** | REST CRUD                |
 | **AI assistant (user chatbot)** | RAG-powered Q&A over the four domain PDFs; on-demand trade/decision explanations; permanent final-UI surface at `/chat` | REST `POST /api/v1/chat` (§7.7) |
 | **Adaptation history** | Parameter changes, backtest results                                                                                                 | REST learning logs       |
@@ -645,7 +643,7 @@ frontend/
 │   ├── app/                    # App Router: dashboards, config, chat pages
 │   ├── components/
 │   │   ├── dashboard/          # P&L, win rate, Sharpe, drawdown widgets
-│   │   ├── bot/                # Trade log, positions, kill-switch
+│   │   ├── bot/                # Trade log, positions
 │   │   ├── strategy/           # Option strategy simulator, legs, Greeks views
 │   │   ├── chat/               # RAG-powered AI assistant
 │   │   └── ui/                 # shadcn/ui primitives
@@ -796,7 +794,7 @@ External uptime monitors (§17.7) should probe `/health/bot` on the worker servi
 | **Active**           | Default during market hours    | Full trading loop; discretionary path follows `SUPERVISION_MODE` (§6.2.2); one trade at a time (§20.4.11) |
 | **Learning**         | Adaptation cycle initiated     | Pause new trades; run optimization + backtest                                                 |
 | **Reduced exposure** | Drawdown / metric breach       | Trade at lower size; recovering                                                               |
-| **Paused**           | Kill-switch or critical breach | No new orders; manage existing positions                                                      |
+| **Paused**           | Critical breach                | No new orders; manage existing positions                                                      |
 
 
 
@@ -836,14 +834,14 @@ Discretionary entries follow a **second graduated axis** independent of `EXECUTI
 | `SUPERVISION_MODE` | Discretionary entries | Operator role | UI primary surface |
 | ------------------ | --------------------- | ------------- | ------------------ |
 | **`supervised`** | Queue for operator Approve / Reject; expired decisions do **not** auto-submit (`approval_timeout_min`, default 15) | Per-trade approval | Decision queue (`/decisions`) |
-| **`semi_autonomous`** | Auto-submit when confidence ≥ `semi_auto_confidence_min` (default **0.85**) and all gates pass; otherwise queue | Async review + override / kill-switch | Mixed: auto-submit stream + residual queue |
-| **`fully_autonomous`** | Auto-submit when all gates pass; recommendations screen uses ranked fallback #1 → #2 → #3 (§6.4) | Monitor-only (dashboards, alerts, kill-switch) | Recommendations + audit history |
+| **`semi_autonomous`** | Auto-submit when confidence ≥ `semi_auto_confidence_min` (default **0.85**) and all gates pass; otherwise queue | Async review + override | Mixed: auto-submit stream + residual queue |
+| **`fully_autonomous`** | Auto-submit when all gates pass; recommendations screen uses ranked fallback #1 → #2 → #3 (§6.4) | Monitor-only (dashboards, alerts) | Recommendations + audit history |
 
 
 | Aspect | Behavior |
 | ------ | -------- |
 | **Mechanical hedges** | Delta drift, stop-loss, and circuit-breaker closes **always** bypass the discretionary path — automated in every supervision mode (§10.6) |
-| **Fail-safe on anomaly** | Auto-pause, drawdown breach, or kill-switch **pauses** new discretionary entries until operator resume (§20.4.4) |
+| **Fail-safe on anomaly** | Auto-pause or drawdown breach **pauses** new discretionary entries until operator review (§20.4.4) |
 | **Demotion** | Operator (or auto-pause policy) may demote `fully_autonomous` → `semi_autonomous` → `supervised` at any time; audit-logged |
 
 **Promotion path (required sequence — after `EXECUTION_MODE=paper` / paper-sim is already enabled):**
@@ -1773,7 +1771,7 @@ Re-ingest must never run inline in an HTTP request, and the ingest endpoint must
 - Four states must be distinguishable: normal answer, **refusal** (nothing relevant in the corpus, naming what was searched), **degraded** (re-ranker or generator unavailable), and error
 - Multi-turn conversation with follow-up questions
 - Retrieval-debug drawer behind a feature flag for operator diagnosis
-- Do **not** expose broker credentials, order submission, or kill-switch controls through chat
+- Do **not** expose broker credentials or order submission through chat
 - Chat never executes trades; it explains and educates only
 
 #### Relationship to bot autonomy
@@ -3100,7 +3098,6 @@ Orders are built from strategy legs. Single-leg orders use one entry; multi-leg 
 | `total_theta`                        | ≥ `min_theta` (max daily decay)                                  | Reject                                                |
 | Drawdown below circuit breaker       | ≤ 10% equity                                                     | Reject; reduced-exposure mode                         |
 | Bot health metrics within bounds     | Error rate < 5% / 1h                                             | Reject                                                |
-| Kill-switch inactive                 | —                                                                | Reject all new orders                                 |
 | Sufficient buying power              | —                                                                | Reject                                                |
 | Confidence >= threshold (risk gate)  | ≥ 0.70 (configurable)                                            | Reject                                                |
 | Recommendation surface floor (§6.4)  | Confidence ≥ `min_recommendation_confidence` (**0.80** default) after learning penalties | Exclude from top-3 recommendations                    |
@@ -3467,7 +3464,7 @@ Aligned with parent §21 (paper-first). ICICI Direct phases **A0–A2** ship ear
 | **A5** | Phase 5 | Static IP Cloud NAT + live micro-size; order-status WS; production rate limiter | Yes |
 | **A6** | Phase 5 | Drop simulated / stub NSE quote paths; ICICI Direct is the only live marks + order path; news remains §8.8 | Yes |
 
-**Autonomy on paper (Phases 2–4) does not require A4–A6.** Dependencies: risk gates, supervision queue, and kill-switch must exist before **A4** live submit. Prefer re-starting `supervised` when first enabling live, then re-promote.
+**Autonomy on paper (Phases 2–4) does not require A4–A6.** Dependencies: risk gates and supervision queue must exist before **A4** live submit. Prefer re-starting `supervised` when first enabling live, then re-promote.
 
 ```
 A0 → A1 → A2 ──► paper_sim playbook (Phase 1)
@@ -3697,7 +3694,6 @@ Decision logs are **append-only** for forensics (§20.4.9).
 | Broker disconnect      | 3 consecutive auth/connection failures                | Slack + pause bot                                               |
 | Groq degraded          | Fallback mode active > 5 min                          | Slack                                                           |
 | Adaptation deployed    | Config change after validation                        | Audit log + dashboard                                           |
-| Kill-switch activated  | Operator or auto-trigger                              | Immediate Slack + email                                         |
 | Scheduler missed ticks | `missed_ticks >= 2` on `/health/bot`                  | Slack + auto-pause bot (§6.1.4)                                 |
 | Daily loss breaker     | Daily loss > 2% equity                                | Slack + auto-pause (§11.4.1)                                    |
 | Consecutive losses     | ≥ 5 consecutive losing trades                         | Slack + discretionary pause (§11.4.1)                           |
@@ -3918,7 +3914,6 @@ Parquet files are written by the replay recorder (§8.7); metadata index in Post
 | Broker API keys  | Exposure via frontend         | Server-side only; never sent to browser               |
 | ICICI Direct secrets | Leak of API secret / session token | `ICICI_DIRECT_*` in Secret Manager only (§11.12); never log tokens; chatbot must not expose (§7.7) |
 | Groq API key     | Leakage                       | `GROQ_API_KEY` in Secret Manager only; mounted to Cloud Run; never in frontend |
-| Kill-switch      | Unauthorized bot pause/resume | Authenticated API; audit log                          |
 | Market data URLs | SSRF via malicious URLs       | URL allowlist; sandboxed fetch; timeout limits        |
 | User sessions    | Session hijacking             | HTTPS; secure cookies; token expiry                   |
 
@@ -3942,11 +3937,11 @@ Backend → Market Data URLs (configured auth per endpoint; ICICI Direct marks v
 | Role         | Permissions                                               |
 | ------------ | --------------------------------------------------------- |
 | **viewer**   | Read dashboards, trade log, metrics                       |
-| **operator** | Configure feeds, strategies, kill-switch, resume bot      |
+| **operator** | Configure feeds, strategies                               |
 | **admin**    | Broker credentials, adaptation overrides, user management |
 
 
-Kill-switch and broker credential changes require **operator** or **admin** role. All privileged actions append to immutable audit log (`audit_log` table, append-only).
+Broker credential changes require **operator** or **admin** role. All privileged actions append to immutable audit log (`audit_log` table, append-only).
 
 ### 16.4 Operational Security
 
@@ -3995,7 +3990,7 @@ Hosted paper rehearsal uses the same `frontend/` + `backend/` folders with a lig
 ```mermaid
 flowchart TB
     subgraph Vercel_FE["Vercel — frontend/"]
-        FE[Next.js App\nDashboard · Monitor · Chat · Kill Switch]
+        FE[Next.js App\nDashboard · Monitor · Chat]
     end
 
     subgraph Railway_BE["Railway — backend/"]
@@ -4052,7 +4047,7 @@ For **ICICI Direct live** and production uptime, use **Google Cloud Platform**. 
 ```mermaid
 flowchart TB
     subgraph GCP_Frontend["Cloud Run — frontend/ (VC-FE-01)"]
-        FE[Next.js App\nDashboard · Monitor · Chat · Kill Switch]
+        FE[Next.js App\nDashboard · Monitor · Chat]
     end
 
     subgraph GCP_Backend["Cloud Run — backend/ (VC-BE-*)"]
@@ -4354,7 +4349,7 @@ MVP uses Cloud Run for all application tiers — no self-managed GCE VMs require
 
 | ID            | Name                        | GCP product    | Type                    | vCPU | RAM           | Storage           | Phase    | Role                         |
 | ------------- | --------------------------- | -------------- | ----------------------- | ---- | ------------- | ----------------- | -------- | ---------------------------- |
-| **VC-FE-01**  | `volatality-frontend`       | Cloud Run      | Next.js (Buildpacks)    | 1    | 512 MB–1 GB   | —                 | MVP      | Dashboard, chat, kill-switch |
+| **VC-FE-01**  | `volatality-frontend`       | Cloud Run      | Next.js (Buildpacks)    | 1    | 512 MB–1 GB   | —                 | MVP      | Dashboard, chat |
 | **VC-BE-01**  | `volatality-trading`        | Cloud Run      | Buildpacks (`backend/`) | 2    | 4 GB          | ephemeral         | MVP      | `PROCESS_ROLE=all`           |
 | **VC-BE-02**  | `volatality-trading-api`    | Cloud Run      | Buildpacks (`backend/`) | 1    | 2 GB          | —                 | Prod     | REST + WebSocket API         |
 | **VC-BE-03**  | `volatality-trading-worker` | Cloud Run      | Buildpacks (`backend/`) | 2    | 4 GB          | —                 | Prod     | Bot scheduler (`max-instances=1`) |
@@ -4639,7 +4634,7 @@ Project root/
 | Monolith vs. microservices   | Modular monolith in `backend/`; split into API + worker **processes** at Phase 1  | Faster MVP; clear module boundaries; 99% uptime without microservice sprawl (§17.7)                |
 | ChromaDB vs. Pinecone/Qdrant | **ChromaDB**                                                                      | Native Python integration, metadata filtering, embedded or server mode, no external vendor lock-in |
 | Embedding / re-ranker stack  | **Vertex AI** `gemini-embedding-001` + Ranking API                                | Managed; no multi-GB model files, cold starts, or memory tier bump. Reached by **API only** until Phase 5 — no GCP infrastructure. Supersedes the earlier self-hosted `bge-m3` + `bge-reranker-large` pin. |
-| Autonomous vs. manual      | **Graduated supervision** (`supervised` → `semi_autonomous` → `fully_autonomous`) + kill-switch | Phase 2 default on paper is supervised; autonomy earned via promotion checklist (§6.2.2, §21) |
+| Autonomous vs. manual      | **Graduated supervision** (`supervised` → `semi_autonomous` → `fully_autonomous`) | Phase 2 default on paper is supervised; autonomy earned via promotion checklist (§6.2.2, §21) |
 | Quant vs. LLM authority      | **Quant leads**                                                                   | Rules for mechanical hedges; LLM gates discretionary entries                                       |
 | Embedded vs. HTTP Chroma     | Embedded local / HTTP prod                                                        | Same `chromadb` API; GCE persistent disk or Chroma Cloud for MVP; Filestore for production (§17.8) |
 | Cloud platform               | **Paper: Railway + Vercel** · **Live: GCP** (`asia-south1`)               | Cheap paper hosting; GCP for live inventory, VPC, Cloud NAT static IP      |
@@ -4781,8 +4776,8 @@ Operator involvement scales with `SUPERVISION_MODE` (§6.2.2):
 | Mode | Operator role |
 | ---- | ------------- |
 | `supervised` | Per-trade Approve / Reject on pre-approval packets (`Docs/UI_Dashboard.md`, `Trading_Strategies.md` Supervised Execution Runbook) |
-| `semi_autonomous` | Async review of auto-submitted high-confidence trades; override / kill-switch; residual queue for low confidence |
-| `fully_autonomous` | Monitor-only: dashboards, alerts, kill-switch, post-session review |
+| `semi_autonomous` | Async review of auto-submitted high-confidence trades; override; residual queue for low confidence |
+| `fully_autonomous` | Monitor-only: dashboards, alerts, post-session review |
 
 
 | Control            | Mechanism                                                                                                      |
@@ -4947,7 +4942,7 @@ flowchart LR
 | ----- | ----------- | --------- |
 | **0** | FastAPI scaffold, Postgres/Redis, ICICI Direct session + LTP, Railway/Vercel wire-up | Deploy + marks without orders |
 | **1** | `paper_sim` ledger, SH-4 + news + GARCH/IV z + γ–θ, OSS/BSM minimal | Paper P&L path end-to-end |
-| **2** | Decision queue, risk gates, one-trade, kill-switch, `SUPERVISION_MODE=supervised` | Operator-in-the-loop paper bot |
+| **2** | Decision queue, risk gates, one-trade, `SUPERVISION_MODE=supervised` | Operator-in-the-loop paper bot |
 | **3** | High-confidence auto-submit + learning/hardening on paper | Semi-autonomy earned |
 | **4** | Ranked fallback + 2–4 week soak vs §2.2 | Full autonomy on paper only |
 | **5** | GCP inventory + static egress + micro-size `place_order` | Live after paper evidence |
@@ -4981,7 +4976,7 @@ The original B1/B2/B3 steps are **retired**. The first implementation was un-imp
 - [ ] Instrument master cache + LTP REST → normalized ticks (**A1** — §11.15)
 - [ ] `GET /api/v1/paper-sim/health` stub; `EXECUTION_MODE=shadow` default
 - [ ] **Paper host:** Railway Nixpacks (`backend/`) + Vercel (`frontend/`) linked (§17.0); `CORS_ORIGINS` + `NEXT_PUBLIC_*`
-- [ ] Frontend shell: bot status, health, kill-switch placeholder (`Docs/UI_Dashboard.md`)
+- [ ] Frontend shell: bot status, health placeholder (`Docs/UI_Dashboard.md`)
 - [ ] GCP live inventory **deferred** until Phase 5 (`infra/cloud-inventory.yaml`, §17.8)
 
 **Exit:** ICICI Direct marks refresh on Railway; no Breeze API `place_order`; frontend talks to Railway API.
@@ -5019,7 +5014,7 @@ Authoritative API/behavior: `Docs/Paper_Simulator.md`. ICICI Direct phases **A0�
 - [ ] Stat arb module (optional second module after ≥ 30 closed trades on first)
 - [ ] Live-path multi-leg order builder polish; ICICI Direct sequential multi-leg (**A4**) only as dry-run until Phase 5 (paper multi-leg auto-complete already in Phase 1)
 - [ ] WebSocket events (`decisions.pending`, trades, alerts); config audit trail
-- [ ] Frontend bot monitor + kill-switch + role-based auth (§16.3)
+- [ ] Frontend bot monitor + role-based auth (§16.3)
 
 **Exit:** Operator approves paper **entries**; mechanical hedges **and** Phase 1 multi-leg opening completion auto; promotion checklist for semi-auto ready.
 
@@ -5133,7 +5128,7 @@ The RAG eval is a **separate job from the unit-test step**, so a green `pytest` 
 | **1a** | Chat returns cited answers whose `[Sn]` markers resolve to retrieved `chunk_id`s; RAG faithfulness ≥ 0.85 on the golden set, measured by an independent judge, with anti-circularity tests passing |
 | **1b** | OSS parity tests pass; **all four** knowledge docs ingested at 100% page coverage      |
 | **2**  | Replay E2E produces decision log; ICICI Direct shadow order mapping + paper-sim round-trip |
-| **3**  | Bot runs one full market day in `supervised` with Approve/Reject; kill-switch works |
+| **3**  | Bot runs one full market day in `supervised` with Approve/Reject |
 | **4**  | 2–4 week soak meets ≥ 1 of 4 success metrics (§2.2); `semi_autonomous` checklist passable |
 | **5**  | Optional: `fully_autonomous` ranked fallback (§6.4) after promotion checklist |
 
@@ -5154,7 +5149,6 @@ The RAG eval is a **separate job from the unit-test step**, so a green `pytest` 
 | **Cointegration**           | Linear combination of non-stationary series that is stationary                                |
 | **Z-score**                 | Standardized spread deviation for entry/exit signals                                          |
 | **Broker Adapter**          | Translates internal orders to broker API calls                                                |
-| **Kill Switch**             | Frontend control that immediately pauses trading                                          |
 | **Adaptation Cycle**        | Metric breach → optimization → backtest → config deploy                                       |
 | **Failure Memory**          | ChromaDB `failure_memory` collection of losing trade contexts for avoidance                   |
 | **ChromaDB**                | Embedded or HTTP-server vector database for RAG knowledge, failure memory, and trade insights |
@@ -5390,7 +5384,7 @@ Performance analytics                        Analytics → Learn → Adapt → d
 | Trade-off                                         | Rationale                                                                                         |
 | ------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | **Higher build scope** (~16 weeks estimated, §21) | Required to deliver a real trading bot, not only a copilot                                        |
-| **More integration failure modes**                | Feeds, broker, Groq, Chroma, Redis, Postgres — mitigated by health checks (§13.4) and kill-switch |
+| **More integration failure modes**                | Feeds, broker, Groq, Chroma, Redis, Postgres — mitigated by health checks (§13.4) |
 | **Autonomy risk**                                 | Wrong guardrails → bad trades at scale — mitigated by supervised-first promotion path             |
 | **Longer path to first demo**                     | Vertical slice (Phase 1a) restores fast feedback without abandoning full vision                   |
 
