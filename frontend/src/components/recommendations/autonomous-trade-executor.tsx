@@ -17,6 +17,11 @@ export function AutonomousTradeExecutor({
     executionResult.attempts.length === 0 &&
     executionResult.message.includes("One-trade scope locked");
 
+  const isSupervised =
+    !executionResult.executed &&
+    executionResult.attempts.length === 0 &&
+    executionResult.message.includes("Supervision mode requires explicit approval");
+
   return (
     <div className="rounded-md border border-primary-container bg-primary-container/20 p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
@@ -27,11 +32,16 @@ export function AutonomousTradeExecutor({
               <span className="text-label-caps uppercase text-primary">
                 Autonomous Trade Execution
               </span>
-              <StatusPill tone="success">full autonomy</StatusPill>
+              {isSupervised ? (
+                <StatusPill tone="info">supervised</StatusPill>
+              ) : (
+                <StatusPill tone="success">full autonomy</StatusPill>
+              )}
             </div>
             <p className="mt-1 text-data-sm text-on-surface-variant">
-              Trade opened in the same cycle as recommendations — rank #1,
-              fallback #2 → #3
+              {isSupervised
+                ? "Auto-execution off — trades open only after explicit approval"
+                : "Trade opened in the same cycle as recommendations — rank #1, fallback #2 → #3"}
             </p>
           </div>
         </div>
@@ -47,7 +57,9 @@ export function AutonomousTradeExecutor({
             className={
               executionResult.executed
                 ? "text-data-md text-secondary"
-                : "text-data-md text-error"
+                : isSupervised
+                  ? "text-data-md text-on-surface-variant"
+                  : "text-data-md text-error"
             }
           >
             {executionResult.message}
