@@ -147,6 +147,50 @@ deprioritized behind any open P0/P1 item.
   `test_seeded_demo_open_trade_does_not_lock`,
   `test_second_entry_blocked_while_one_trade_locked`)
 
+- [ ] **P0-2 (a): `evaluate_risk_gate()` has zero callers — the market-hours,
+  one-trade-scope and daily-loss checks it implements never execute on any
+  submit path.** `grep -rn "evaluate_risk_gate\|RiskGateContext" backend/
+  --include=*.py` excluding `risk_gate.py` itself returns **no matches** at
+  all. The rule's Definition of Done requires these checks to "run inside the
+  actual submit path ... verified by grep/trace, not only surfaced as
+  dashboard metrics" — today they are not surfaced anywhere, they simply never
+  run. Note this is distinct from `evaluate_pre_trade_gate()`, which *is*
+  genuinely wired into the submit path (`backend/paper_sim/engine.py:223`,
+  raising at `:235`) but only covers spread/liquidity/lotsize thresholds — not
+  market hours, not daily loss. Compounding it, `RiskGateContext.one_trade_scope_clear`
+  (`risk_gate.py:103`) is populated by **nobody** (grep, repo-wide), so even if
+  `evaluate_risk_gate` were called, `risk_gate.py:402` would fall through to
+  `status="skip"` rather than evaluate the one-trade rule. (The *effective*
+  one-trade enforcement lives elsewhere and does work — `trade_executor.is_one_trade_locked()`
+  at `trade_executor.py:38`, enforced at `:93`, ledger-derived and
+  restart-safe — so this is a dead duplicate gate, not an open trading risk on
+  its own.) (first seen 2026-08-07, evidence: `backend/execution/risk_gate.py:101-103,378-411`;
+  zero-caller greps above)
+
+- [ ] **P0-2 (b): circuit breakers / daily-loss are dashboard-only — exactly
+  the failure mode the rule names.** `evaluate_circuit_breakers()` has one
+  non-test caller, `backend/services/risk_snapshot.py:191`, which feeds
+  `build_risk_snapshot()` → `GET /api/v1/risk/snapshot`
+  (`backend/routers/risk.py:14-16`) and `bot_metrics_from_risk` →
+  `GET /bot/status` (`backend/routers/bot.py:42`). Both are read-only display
+  endpoints. No submit path consults them, so a breached daily-loss breaker
+  renders red on the dashboard while `PaperEngine.submit_order` continues to
+  accept entries. (first seen 2026-08-07, evidence: greps above)
+
+- [ ] **P0-2 (c): the paper_sim open-position book is in-memory only and does
+  not survive a restart.** `PaperLedger.positions` is a plain dict
+  (`backend/paper_sim/ledger.py:30`), and
+  `grep -rln "json.dump\|\.write_text\|open(" backend/paper_sim/*.py` returns
+  **no files** — there is no disk persistence anywhere in the package. The
+  rule requires "a killed/restarted process resumes with the same open
+  positions it had before the restart"; today it resumes with an empty ledger.
+  Worse, this desyncs from `learning_store.json`, which *is* persisted and
+  *does* still list the trade as open — so after a restart
+  `trade_executor.is_one_trade_locked()` correctly reports a position open
+  while `PaperLedger` has no record of it, leaving an orphaned lock with no
+  closeable position behind it. (first seen 2026-08-07, evidence:
+  `backend/paper_sim/ledger.py:30`; no-persistence grep above)
+
 ## P1 — proof of edge
 
 - [ ] No walk-forward/OOS replay evidence exists yet for SH-4 expectancy
@@ -177,6 +221,25 @@ deprioritized behind any open P0/P1 item.
   micro-capital phase. (first seen 2026-08-02, evidence:
   `grep -rli "reconcile\|fill_state\|order_state" backend --include=*.py`
   excluding tests → no matches)
+
+- [x] **The 40-symbol enrichment budget was filled by a 12-name hardcoded
+  allowlist + alphabetical order, with no liquidity ranking** — the majority
+  of the ~180-name NSE F&O universe was never enriched, every cycle, and a
+  handful of enrichment failures among the 40 attempted could tip strategy
+  coverage below the 80%/20 floor. (first seen 2026-08-03 as §3.9 of
+  `Docs/Improve_Recoemmendation_Engine.md`; **resolved 2026-08-06**, evidence:
+  `AtmLiquidityHistoryStore.latest_liquidity_by_underlying()`
+  (`backend/services/atm_liquidity_history.py`) returns each underlying's most
+  recent ATM volume+OI across any expiry_key as an ADV proxy; new pure
+  `_rank_symbols_for_enrichment()` (`backend/services/recommendation_engine.py`)
+  keeps the explicit priority names first but orders the rest by that proxy
+  descending. A cold store yields `0.0` for every symbol, so ordering is
+  provably identical to the old alphabetical behavior until real sessions
+  accumulate — asserted by
+  `test_rank_symbols_for_enrichment_falls_back_to_alphabetical_with_no_history`.
+  Tests in `backend/tests/test_atm_liquidity_history.py` and
+  `backend/tests/test_recommendation_engine.py`. **Not addressed:** `max_symbols`
+  is still 40 — this improves *which* 40 are chosen, it does not raise the cap.)
 
 - [ ] **`_spot_ltp` sends the raw display symbol, not the ICICI stock_code, for
   non-index equities — live spot LTP fails for names whose Breeze short code
@@ -240,6 +303,34 @@ deprioritized behind any open P0/P1 item.
 
 - [ ] RAG chat was shipped then un-shipped pending a Track B rebuild plan —
   not blocking, tracked for awareness only. (first seen 2026-08-02)
+
+- [x] **Frontend had no CI coverage at all** — `.github/workflows/backend-ci.yml`
+  is path-filtered to `backend/**`, so every `frontend/` change (including the
+  P0 approve/reject wiring) merged with no automated typecheck or build.
+  (first seen 2026-08-06; **resolved 2026-08-06**, evidence:
+  `.github/workflows/frontend-ci.yml` runs `npm ci` → `npx tsc --noEmit` →
+  `npm run build`, path-filtered to `frontend/**`; first green run
+  `31119791215`. Deliberately no lint step — the repo has no ESLint config, so
+  `next lint` drops into an interactive prompt and would hang the job rather
+  than fail it; a comment in the workflow marks where to add it once a config
+  lands. `NEXT_PUBLIC_API_URL` is pinned to a placeholder because
+  `frontend/.env.local` is gitignored — without it `useMockData()` flips true
+  and CI would compile the mock path instead of the live one prod uses.)
+
+- [x] **CI actions emitted a Node-20 deprecation warning on every run.**
+  (first seen 2026-08-06; **resolved 2026-08-07**, evidence: bumped
+  `actions/checkout@v4→v5`, `actions/setup-node@v4→v5`,
+  `actions/setup-python@v5→v6` — note setup-python@v5 was itself the flagged
+  action, so v6 is the minimum fix there, not v5. Confirmed each target major
+  declares `using: node24` and still accepts every input the workflows pass.
+  First clean runs: Backend CI `31143370053`, Frontend CI `31143370059` —
+  neither carries the deprecation annotation.)
+  - Also added `workflow_dispatch:` to both workflows after a GitHub Actions
+    incident (2026-08-06/07) left runs wedged: queued 8h, with the API
+    reporting them "queued" on status but "completed" on cancel, so they could
+    neither finish nor be re-run — and because both workflows are
+    path-filtered, an empty commit could not retrigger them either. CI is now
+    manually runnable: `gh workflow run backend-ci.yml`.
 
 - [x] **Live recommendations empty on prod (marks=0):** Breeze optionchain
   calls send empty `right` and `strike_price`
