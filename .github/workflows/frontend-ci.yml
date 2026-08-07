@@ -1,6 +1,9 @@
 name: Frontend CI
 
 on:
+  # Manual trigger — lets CI be re-run without an empty commit (e.g. after a
+  # GitHub Actions incident abandons a queued run): gh workflow run frontend-ci.yml
+  workflow_dispatch:
   push:
     paths:
       - "frontend/**"
