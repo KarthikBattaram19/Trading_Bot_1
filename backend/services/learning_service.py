@@ -458,6 +458,10 @@ class LearningService:
             OpenTradeRecord.model_validate(t) for t in _real_open_trades(store)
         ]
 
+    def real_closed_trade_count(self) -> int:
+        """Real (non-seed) closed outcomes — drives the bootstrap confidence floor."""
+        return len(_real_outcomes(self._read()))
+
     def record_ledger_close(
         self,
         trade_id: str,

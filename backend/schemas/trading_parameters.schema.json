@@ -49,13 +49,68 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "min_coverage_ratio": { "type": "number", "minimum": 0, "maximum": 1 },
+        "min_coverage_ratio": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
         "min_eligible_symbols": {
           "type": "integer",
           "minimum": 0,
           "description": "Absolute eligible floor; keep ≤ recommendation_universe_enrichment.max_symbols so capped cycles can publish."
         },
-        "abort_unavailable_strategies": { "type": "boolean" }
+        "abort_unavailable_strategies": {
+          "type": "boolean"
+        }
+      }
+    },
+    "session_schedule": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "NSE session phases (IST) driving the trading scheduler: pre_open, entry, no_entry, flatten.",
+      "properties": {
+        "market_open": {
+          "type": "string",
+          "pattern": "^\\d{2}:\\d{2}$"
+        },
+        "entry_start": {
+          "type": "string",
+          "pattern": "^\\d{2}:\\d{2}$"
+        },
+        "entry_cutoff": {
+          "type": "string",
+          "pattern": "^\\d{2}:\\d{2}$"
+        },
+        "flatten_start": {
+          "type": "string",
+          "pattern": "^\\d{2}:\\d{2}$"
+        },
+        "market_close": {
+          "type": "string",
+          "pattern": "^\\d{2}:\\d{2}$"
+        }
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Background trading scheduler: cadenced recommendation cycles + EOD flatten.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "tick_sec": {
+          "type": "number",
+          "minimum": 1
+        },
+        "recommendation_cadence_sec": {
+          "type": "number",
+          "minimum": 30
+        },
+        "flatten_retry_max": {
+          "type": "integer",
+          "minimum": 1
+        }
       }
     },
     "garch_forecast": {
@@ -99,19 +154,34 @@
   "$defs": {
     "CurrencyCode": {
       "type": "string",
-      "enum": ["INR", "USD"]
+      "enum": [
+        "INR",
+        "USD"
+      ]
     },
     "Moneyness": {
       "type": "string",
-      "enum": ["atm", "near_atm", "itm", "otm"]
+      "enum": [
+        "atm",
+        "near_atm",
+        "itm",
+        "otm"
+      ]
     },
     "PremiumField": {
       "type": "string",
-      "enum": ["mid", "ask", "bid"]
+      "enum": [
+        "mid",
+        "ask",
+        "bid"
+      ]
     },
     "AtmSelectionRule": {
       "type": "string",
-      "enum": ["closest_strike_to_spot", "delta_closest_to_half"]
+      "enum": [
+        "closest_strike_to_spot",
+        "delta_closest_to_half"
+      ]
     },
     "OptionUniverseFilters": {
       "type": "object",
@@ -175,7 +245,10 @@
         },
         "equidistant_strike_preference": {
           "type": "string",
-          "enum": ["lower", "higher"],
+          "enum": [
+            "lower",
+            "higher"
+          ],
           "description": "T8 — when two strikes are equidistant from spot."
         },
         "underlying_price_currency": {
@@ -241,7 +314,11 @@
           "type": "array",
           "items": {
             "type": "string",
-            "enum": ["simple_volatility", "gamma_scalping", "vega_scalping"]
+            "enum": [
+              "simple_volatility",
+              "gamma_scalping",
+              "vega_scalping"
+            ]
           },
           "minItems": 1,
           "uniqueItems": true
@@ -253,25 +330,66 @@
       "description": "Part A — OSS global parameters (Area 1). India production must not copy the OSS US Y8 default of 100.",
       "additionalProperties": false,
       "properties": {
-        "eval_date": { "type": "string", "format": "date" },
-        "eval_time": { "type": "string", "pattern": "^\\d{2}:\\d{2}:\\d{2}$" },
-        "eval_datetime": { "type": "string", "format": "date-time" },
-        "und_price": { "type": "number", "exclusiveMinimum": 0 },
-        "underlying_symbol": { "type": "string", "minLength": 1 },
-        "div_yield": { "type": "number", "minimum": 0 },
-        "int_rate": { "type": "number", "minimum": 0 },
-        "flat_volatility": { "type": "boolean" },
-        "volatility": { "type": "number", "exclusiveMinimum": 0 },
-        "display_mode": { "type": "string", "enum": ["per_share", "total"] },
+        "eval_date": {
+          "type": "string",
+          "format": "date"
+        },
+        "eval_time": {
+          "type": "string",
+          "pattern": "^\\d{2}:\\d{2}:\\d{2}$"
+        },
+        "eval_datetime": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "und_price": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "underlying_symbol": {
+          "type": "string",
+          "minLength": 1
+        },
+        "div_yield": {
+          "type": "number",
+          "minimum": 0
+        },
+        "int_rate": {
+          "type": "number",
+          "minimum": 0
+        },
+        "flat_volatility": {
+          "type": "boolean"
+        },
+        "volatility": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "display_mode": {
+          "type": "string",
+          "enum": [
+            "per_share",
+            "total"
+          ]
+        },
         "default_contract_multiplier": {
-          "type": ["integer", "null"],
+          "type": [
+            "integer",
+            "null"
+          ],
           "minimum": 1,
           "description": "OSS Y8 workbook / what-if only. India paper+live sizing sets null and uses nfo_lot_sizing."
         },
-        "default_stock_multiplier": { "type": "integer", "minimum": 1 },
+        "default_stock_multiplier": {
+          "type": "integer",
+          "minimum": 1
+        },
         "contract_multiplier_source": {
           "type": "string",
-          "enum": ["nfo_instrument_lotsize", "oss_workbook_default"],
+          "enum": [
+            "nfo_instrument_lotsize",
+            "oss_workbook_default"
+          ],
           "description": "A11 India rule: use ICICI Direct NFO lotsize per contract; never blindly apply OSS US 100."
         }
       }
@@ -293,7 +411,9 @@
         },
         "resolve_from": {
           "type": "string",
-          "enum": ["icici_direct_instrument_master"],
+          "enum": [
+            "icici_direct_instrument_master"
+          ],
           "description": "Authoritative lotsize source for paper and live."
         },
         "per_contract": {
@@ -347,16 +467,52 @@
       "description": "Part B — OSS leg parameters.",
       "additionalProperties": false,
       "properties": {
-        "leg_id": { "type": "integer", "minimum": 1 },
-        "position": { "type": "integer" },
-        "expiration_id": { "type": ["string", "integer"] },
-        "days_to_expiry": { "type": "number", "minimum": 0 },
-        "strike": { "type": "number", "exclusiveMinimum": 0 },
-        "type": { "type": "string", "enum": ["none", "stock", "call", "put"] },
-        "initial_price": { "type": "number", "minimum": 0 },
-        "leg_volatility": { "type": "number", "exclusiveMinimum": 0 },
-        "contract_multiplier": { "type": "integer", "minimum": 1 },
-        "expiration_datetime": { "type": "string", "format": "date-time" }
+        "leg_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "position": {
+          "type": "integer"
+        },
+        "expiration_id": {
+          "type": [
+            "string",
+            "integer"
+          ]
+        },
+        "days_to_expiry": {
+          "type": "number",
+          "minimum": 0
+        },
+        "strike": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "type": {
+          "type": "string",
+          "enum": [
+            "none",
+            "stock",
+            "call",
+            "put"
+          ]
+        },
+        "initial_price": {
+          "type": "number",
+          "minimum": 0
+        },
+        "leg_volatility": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "contract_multiplier": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "expiration_datetime": {
+          "type": "string",
+          "format": "date-time"
+        }
       }
     },
     "MarketDataParams": {
@@ -364,10 +520,19 @@
       "description": "Part G — shared market data requirements.",
       "additionalProperties": false,
       "properties": {
-        "price_history_required": { "type": "boolean" },
-        "option_chain_required": { "type": "boolean" },
-        "iv_required": { "type": "boolean" },
-        "feed_stale_kill_seconds": { "type": "integer", "minimum": 1 },
+        "price_history_required": {
+          "type": "boolean"
+        },
+        "option_chain_required": {
+          "type": "boolean"
+        },
+        "iv_required": {
+          "type": "boolean"
+        },
+        "feed_stale_kill_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
         "option_chain_fields": {
           "type": "array",
           "items": {
@@ -395,8 +560,13 @@
       "description": "Live NSE LTP + NFO GetOptionChain enrichment for every G11 underlying.",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "cache_ttl_sec": { "type": "number", "minimum": 0 },
+        "enabled": {
+          "type": "boolean"
+        },
+        "cache_ttl_sec": {
+          "type": "number",
+          "minimum": 0
+        },
         "response_cache_ttl_sec": {
           "type": "number",
           "minimum": 0,
@@ -412,11 +582,25 @@
           "minimum": 1,
           "description": "Cap how many FNO underlyings are live-enriched per cycle (priority names first)."
         },
-        "max_concurrency": { "type": "integer", "minimum": 1 },
-        "min_interval_ms": { "type": "number", "minimum": 0 },
-        "fetch_spot_ltp": { "type": "boolean" },
-        "prefer_dte_min": { "type": "integer", "minimum": 0 },
-        "prefer_dte_max": { "type": "integer", "minimum": 0 }
+        "max_concurrency": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "min_interval_ms": {
+          "type": "number",
+          "minimum": 0
+        },
+        "fetch_spot_ltp": {
+          "type": "boolean"
+        },
+        "prefer_dte_min": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "prefer_dte_max": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "GarchForecastParams": {
@@ -424,15 +608,43 @@
       "description": "Part H — GARCH(1,1) forecast weights.",
       "additionalProperties": false,
       "properties": {
-        "gamma_weight": { "type": "number", "minimum": 0, "maximum": 1 },
-        "alpha_weight": { "type": "number", "minimum": 0, "maximum": 1 },
-        "beta_weight": { "type": "number", "minimum": 0, "maximum": 1 },
-        "annualization_factor": { "type": "integer", "const": 252 },
-        "block_when_distorted": { "type": "boolean" },
-        "min_observations": { "type": "integer", "minimum": 1 },
-        "max_log_return_gap": { "type": "number", "minimum": 0 },
-        "enable_mle_fit": { "type": "boolean" },
-        "fit_min_observations": { "type": "integer", "minimum": 20 }
+        "gamma_weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "alpha_weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "beta_weight": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "annualization_factor": {
+          "type": "integer",
+          "const": 252
+        },
+        "block_when_distorted": {
+          "type": "boolean"
+        },
+        "min_observations": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "max_log_return_gap": {
+          "type": "number",
+          "minimum": 0
+        },
+        "enable_mle_fit": {
+          "type": "boolean"
+        },
+        "fit_min_observations": {
+          "type": "integer",
+          "minimum": 20
+        }
       }
     },
     "ExecutionConstraints": {
@@ -440,24 +652,49 @@
       "description": "Part I — execution and retail constraints.",
       "additionalProperties": false,
       "properties": {
-        "spread_cap_pct": { "type": "number", "minimum": 0 },
-        "slippage_cap_pct": { "type": "number", "minimum": 0 },
-        "commission_per_leg": { "type": "number", "minimum": 0 },
+        "spread_cap_pct": {
+          "type": "number",
+          "minimum": 0
+        },
+        "slippage_cap_pct": {
+          "type": "number",
+          "minimum": 0
+        },
+        "commission_per_leg": {
+          "type": "number",
+          "minimum": 0
+        },
         "min_contract_size": {
           "type": "integer",
           "minimum": 1,
           "description": "I10 — minimum number of NFO lots (share qty = lots × instrument lotsize)."
         },
-        "max_residual_delta": { "type": "number" },
-        "max_residual_vega": { "type": "number" },
-        "supervised_approval_required": { "type": "boolean" },
-        "automation_allowed_post_fill": { "type": "boolean" },
-        "multi_leg_sync_submit": { "type": "boolean" },
+        "max_residual_delta": {
+          "type": "number"
+        },
+        "max_residual_vega": {
+          "type": "number"
+        },
+        "supervised_approval_required": {
+          "type": "boolean"
+        },
+        "automation_allowed_post_fill": {
+          "type": "boolean"
+        },
+        "multi_leg_sync_submit": {
+          "type": "boolean"
+        },
         "min_recommendation_confidence": {
           "type": "number",
           "minimum": 0,
           "maximum": 1,
           "description": "Minimum post-learning confidence required to surface a recommendation (default 0.80)."
+        },
+        "bootstrap_min_confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Confidence floor used instead of min_recommendation_confidence while the learning store has zero real (non-seed) closed trades — reverts automatically after the first real close."
         }
       }
     },
@@ -466,14 +703,52 @@
       "description": "Part J — re-hedge parameters.",
       "additionalProperties": false,
       "properties": {
-        "hedge_point_price": { "type": "number", "exclusiveMinimum": 0 },
-        "gamma_theta_breakeven_pct": { "type": "number", "exclusiveMinimum": 0 },
-        "use_half_breakeven": { "type": "boolean" },
+        "hedge_point_price": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "gamma_theta_breakeven_pct": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "use_half_breakeven": {
+          "type": "boolean"
+        },
         "rehedge_method": {
           "type": "string",
-          "enum": ["increase_hedge", "reduce_options", "adjust_call_put_mix"]
+          "enum": [
+            "increase_hedge",
+            "reduce_options",
+            "adjust_call_put_mix"
+          ]
         },
-        "breakeven_paid_count": { "type": "integer", "minimum": 0 }
+        "breakeven_paid_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "delta_threshold": {
+          "type": "number",
+          "minimum": 0
+        },
+        "min_edge_threshold": {
+          "type": "number"
+        },
+        "rehedge_cooldown_sec": {
+          "type": "number",
+          "minimum": 0
+        },
+        "max_breakeven_paid_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "automation_tick_sec": {
+          "type": "number",
+          "minimum": 1,
+          "description": "paper_sim gamma-theta automation loop tick interval (seconds)."
+        },
+        "llm_in_path": {
+          "type": "boolean"
+        }
       }
     },
     "SimpleVolatilityStrategy": {
@@ -481,34 +756,77 @@
       "description": "Part L — Simple Volatility Trading.",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "greek_targets": {
           "type": "object",
           "properties": {
-            "delta": { "const": 0 },
-            "gamma": { "type": "string", "const": "positive" },
-            "vega": { "type": "string", "const": "positive" },
-            "theta": { "type": "string", "const": "negative" }
+            "delta": {
+              "const": 0
+            },
+            "gamma": {
+              "type": "string",
+              "const": "positive"
+            },
+            "vega": {
+              "type": "string",
+              "const": "positive"
+            },
+            "theta": {
+              "type": "string",
+              "const": "negative"
+            }
           }
         },
         "option_selection": {
           "type": "object",
-          "required": ["moneyness", "max_option_premium", "min_dte", "max_dte"],
+          "required": [
+            "moneyness",
+            "max_option_premium",
+            "min_dte",
+            "max_dte"
+          ],
           "properties": {
-            "moneyness": { "const": "atm" },
-            "max_option_premium": { "type": "number", "maximum": 300 },
-            "premium_currency": { "$ref": "#/$defs/CurrencyCode" },
-            "min_dte": { "type": "integer", "minimum": 0 },
-            "max_dte": { "type": "integer", "minimum": 1 },
-            "min_volume": { "type": "integer", "minimum": 0 },
-            "min_open_interest": { "type": "integer", "minimum": 0 },
-            "max_spread_pct": { "type": "number", "minimum": 0 }
+            "moneyness": {
+              "const": "atm"
+            },
+            "max_option_premium": {
+              "type": "number",
+              "maximum": 300
+            },
+            "premium_currency": {
+              "$ref": "#/$defs/CurrencyCode"
+            },
+            "min_dte": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_dte": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "min_volume": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "min_open_interest": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "max_spread_pct": {
+              "type": "number",
+              "minimum": 0
+            }
           }
         },
         "entry_signal": {
           "type": "object",
           "properties": {
-            "iv_below_garch_forecast": { "type": "boolean", "const": true }
+            "iv_below_garch_forecast": {
+              "type": "boolean",
+              "const": true
+            }
           }
         },
         "hedge_method": {
@@ -516,9 +834,15 @@
         },
         "hold_horizon": {
           "type": "string",
-          "enum": ["D+0", "D+1"]
+          "enum": [
+            "D+0",
+            "D+1"
+          ]
         },
-        "max_hold_days": { "type": "integer", "minimum": 0 }
+        "max_hold_days": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "GammaScalpingStrategy": {
@@ -526,33 +850,84 @@
       "description": "Part M — Gamma Scalping.",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
+        "enabled": {
+          "type": "boolean"
+        },
         "gamma_entry_mode": {
           "type": "string",
-          "enum": ["cheap_vol_mode", "earnings_gap_mode", "high_realized_vol_mode"]
+          "enum": [
+            "cheap_vol_mode",
+            "earnings_gap_mode",
+            "high_realized_vol_mode"
+          ]
         },
         "construction": {
           "const": "four_leg_options"
         },
         "option_selection": {
           "type": "object",
-          "required": ["moneyness", "max_option_premium"],
+          "required": [
+            "moneyness",
+            "max_option_premium"
+          ],
           "properties": {
-            "moneyness": { "const": "atm" },
-            "max_option_premium": { "type": "number", "maximum": 300 },
-            "premium_currency": { "$ref": "#/$defs/CurrencyCode" },
-            "same_strike_near_far": { "type": "boolean", "const": true },
-            "min_volume": { "type": "integer", "minimum": 1 },
-            "min_open_interest": { "type": "integer", "minimum": 1 },
-            "max_spread_pct": { "type": "number", "minimum": 0 }
+            "moneyness": {
+              "const": "atm"
+            },
+            "max_option_premium": {
+              "type": "number",
+              "maximum": 300
+            },
+            "premium_currency": {
+              "$ref": "#/$defs/CurrencyCode"
+            },
+            "same_strike_near_far": {
+              "type": "boolean",
+              "const": true
+            },
+            "min_volume": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "min_open_interest": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_spread_pct": {
+              "type": "number",
+              "minimum": 0
+            }
           }
         },
-        "vega_neutral_tolerance": { "type": "number", "minimum": 0 },
-        "min_net_gamma": { "type": "number" },
+        "vega_neutral_tolerance": {
+          "type": "number",
+          "minimum": 0
+        },
+        "min_net_gamma": {
+          "type": "number"
+        },
         "calendar_construction": {
           "type": "object",
           "properties": {
-            "long_expiry_min_gap_days": { "type": "integer", "minimum": 1 }
+            "long_expiry_min_gap_days": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "entry_signal": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "SH-4 gamma-scalping entry thresholds (config-owned since 2026-08-03).",
+          "properties": {
+            "high_realized_vol_intraday_threshold": {
+              "type": "number",
+              "minimum": 0
+            },
+            "iv_elevated_vs_garch_multiplier": {
+              "type": "number",
+              "minimum": 0
+            }
           }
         }
       }
@@ -562,34 +937,79 @@
       "description": "Part N — Vega Scalping.",
       "additionalProperties": false,
       "properties": {
-        "enabled": { "type": "boolean" },
-        "hold_horizon": { "const": "intraday" },
-        "vol_direction": { "const": "long" },
+        "enabled": {
+          "type": "boolean"
+        },
+        "hold_horizon": {
+          "const": "intraday"
+        },
+        "vol_direction": {
+          "const": "long"
+        },
         "option_selection": {
           "type": "object",
-          "required": ["moneyness", "max_option_premium"],
+          "required": [
+            "moneyness",
+            "max_option_premium"
+          ],
           "properties": {
-            "moneyness": { "const": "atm" },
-            "max_option_premium": { "type": "number", "maximum": 300 },
-            "premium_currency": { "$ref": "#/$defs/CurrencyCode" },
-            "min_dte": { "type": "integer", "minimum": 0 },
-            "block_ultra_near_expiry": { "type": "boolean" },
-            "min_volume": { "type": "integer", "minimum": 1 },
-            "min_open_interest": { "type": "integer", "minimum": 1 },
-            "max_spread_pct": { "type": "number", "minimum": 0 }
+            "moneyness": {
+              "const": "atm"
+            },
+            "max_option_premium": {
+              "type": "number",
+              "maximum": 300
+            },
+            "premium_currency": {
+              "$ref": "#/$defs/CurrencyCode"
+            },
+            "min_dte": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "block_ultra_near_expiry": {
+              "type": "boolean"
+            },
+            "min_volume": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "min_open_interest": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "max_spread_pct": {
+              "type": "number",
+              "minimum": 0
+            }
           }
         },
         "iv_signal": {
           "type": "object",
           "properties": {
-            "entry_z_threshold": { "type": "number", "maximum": -2 },
-            "short_vol_z_threshold": { "type": "number", "minimum": 2 },
-            "stop_z_threshold": { "type": "number" },
-            "stop_z_threshold_alt": { "type": "number" }
+            "entry_z_threshold": {
+              "type": "number",
+              "maximum": -2
+            },
+            "short_vol_z_threshold": {
+              "type": "number",
+              "minimum": 2
+            },
+            "stop_z_threshold": {
+              "type": "number"
+            },
+            "stop_z_threshold_alt": {
+              "type": "number"
+            }
           }
         },
-        "flatten_at_session_close": { "type": "boolean", "const": true },
-        "hedge_method": { "const": "options_only" }
+        "flatten_at_session_close": {
+          "type": "boolean",
+          "const": true
+        },
+        "hedge_method": {
+          "const": "options_only"
+        }
       }
     },
     "PortfolioParams": {
@@ -597,9 +1017,19 @@
       "description": "Part O — portfolio-level limits.",
       "additionalProperties": false,
       "properties": {
-        "hedge_reserve_pct": { "type": "number", "minimum": 0, "maximum": 1 },
-        "max_structure_pct": { "type": "number", "minimum": 0, "maximum": 1 },
-        "post_shock_reduce": { "type": "boolean" }
+        "hedge_reserve_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "max_structure_pct": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "post_shock_reduce": {
+          "type": "boolean"
+        }
       }
     },
     "PreTradeGates": {
@@ -607,16 +1037,36 @@
       "description": "Part I21 — all must pass before submission.",
       "additionalProperties": false,
       "properties": {
-        "signal_reproducible": { "type": "boolean" },
-        "liquidity_ok": { "type": "boolean" },
-        "size_rebalance_ok": { "type": "boolean" },
-        "event_risk_reviewed": { "type": "boolean" },
-        "regime_match": { "type": "boolean" },
-        "cost_assumptions_valid": { "type": "boolean" },
-        "exit_plan_defined": { "type": "boolean" },
-        "option_premium_within_cap": { "type": "boolean" },
-        "option_moneyness_atm": { "type": "boolean" },
-        "underlying_price_within_cap": { "type": "boolean" }
+        "signal_reproducible": {
+          "type": "boolean"
+        },
+        "liquidity_ok": {
+          "type": "boolean"
+        },
+        "size_rebalance_ok": {
+          "type": "boolean"
+        },
+        "event_risk_reviewed": {
+          "type": "boolean"
+        },
+        "regime_match": {
+          "type": "boolean"
+        },
+        "cost_assumptions_valid": {
+          "type": "boolean"
+        },
+        "exit_plan_defined": {
+          "type": "boolean"
+        },
+        "option_premium_within_cap": {
+          "type": "boolean"
+        },
+        "option_moneyness_atm": {
+          "type": "boolean"
+        },
+        "underlying_price_within_cap": {
+          "type": "boolean"
+        }
       }
     },
     "KillConditions": {
@@ -624,12 +1074,24 @@
       "description": "Part I22 — abort or flatten triggers.",
       "additionalProperties": false,
       "properties": {
-        "kill_liquidity": { "type": "boolean" },
-        "kill_hedge_unavailable": { "type": "boolean" },
-        "kill_stale_data": { "type": "boolean" },
-        "kill_neutrality": { "type": "boolean" },
-        "kill_greek_limit": { "type": "boolean" },
-        "kill_thesis": { "type": "boolean" }
+        "kill_liquidity": {
+          "type": "boolean"
+        },
+        "kill_hedge_unavailable": {
+          "type": "boolean"
+        },
+        "kill_stale_data": {
+          "type": "boolean"
+        },
+        "kill_neutrality": {
+          "type": "boolean"
+        },
+        "kill_greek_limit": {
+          "type": "boolean"
+        },
+        "kill_thesis": {
+          "type": "boolean"
+        }
       }
     }
   }

@@ -33,9 +33,9 @@
   "recommendation_universe_enrichment": {
     "enabled": true,
     "cache_ttl_sec": 90,
-    "response_cache_ttl_sec": 90,
-    "generation_budget_sec": 20,
-    "max_symbols": 40,
+    "response_cache_ttl_sec": 900,
+    "generation_budget_sec": 90,
+    "max_symbols": 15,
     "max_concurrency": 4,
     "min_interval_ms": 700,
     "fetch_spot_ltp": true,
@@ -48,9 +48,22 @@
     "fetch_intraday_rv": true
   },
   "strategy_coverage": {
-    "min_coverage_ratio": 0.80,
-    "min_eligible_symbols": 20,
+    "min_coverage_ratio": 0.60,
+    "min_eligible_symbols": 6,
     "abort_unavailable_strategies": true
+  },
+  "session_schedule": {
+    "market_open": "09:15",
+    "entry_start": "09:20",
+    "entry_cutoff": "14:30",
+    "flatten_start": "15:15",
+    "market_close": "15:30"
+  },
+  "scheduler": {
+    "enabled": true,
+    "tick_sec": 30,
+    "recommendation_cadence_sec": 600,
+    "flatten_retry_max": 30
   },
   "oss_global_params": {
     "display_mode": "total",
@@ -112,7 +125,8 @@
     "supervised_approval_required": true,
     "automation_allowed_post_fill": true,
     "multi_leg_sync_submit": true,
-    "min_recommendation_confidence": 0.80
+    "min_recommendation_confidence": 0.80,
+    "bootstrap_min_confidence": 0.70
   },
   "gamma_theta_breakeven": {
     "use_half_breakeven": false,
@@ -122,7 +136,7 @@
     "min_edge_threshold": 0.0,
     "rehedge_cooldown_sec": 60,
     "max_breakeven_paid_count": 20,
-    "automation_tick_sec": 30,
+    "automation_tick_sec": 60,
     "llm_in_path": false
   },
   "strategies": {

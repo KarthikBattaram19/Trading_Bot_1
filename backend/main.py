@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -13,6 +15,7 @@ from backend.integrations.registry import (
     paper_stack_guard_status,
     place_order_enabled,
 )
+from backend.paper_sim.service import get_paper_engine
 from backend.routers import (
     bot,
     decisions,
@@ -21,9 +24,30 @@ from backend.routers import (
     paper_sim,
     recommendations,
     risk,
+    scheduler,
 )
+from backend.services.ledger_reconciliation import reconcile_open_trades
+from backend.services.trading_scheduler import get_trading_scheduler
 
 load_project_env()
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Release any one-trade lock orphaned by a restart (ledger is in-memory).
+    try:
+        reconcile_open_trades()
+    except Exception:  # noqa: BLE001 — a corrupt store must not block boot
+        logger.exception("boot reconciliation failed")
+    trading_scheduler = get_trading_scheduler()
+    if os.getenv("SCHEDULER_AUTOSTART", "1").strip() != "0":
+        await trading_scheduler.start()
+    yield
+    await trading_scheduler.stop()
+    await get_paper_engine().automation.stop()
+
 
 app = FastAPI(
     title="Bhale Bullodu 1.0 - Volatility Trading Bot",
@@ -33,6 +57,7 @@ app = FastAPI(
         "dry-run + Market_News + SH-4 + GARCH/IV z + γ–θ re-hedge + BSM/OSS "
         "parity + cost/risk gates; EXECUTION_MODE=paper on Railway — never live"
     ),
+    lifespan=lifespan,
 )
 
 
@@ -57,6 +82,7 @@ app.include_router(learning.router)
 app.include_router(integrations.router)
 app.include_router(paper_sim.router)
 app.include_router(risk.router)
+app.include_router(scheduler.router)
 
 
 @app.get("/health")

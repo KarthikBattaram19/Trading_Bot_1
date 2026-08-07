@@ -47,6 +47,7 @@ from backend.services.earnings_calendar import EarningsCalendarStore, session_da
 from backend.services.feed_health import get_feed_sources
 from backend.services.iv_history_store import IvHistoryStore
 from backend.services.confidence_calibrator import ConfidenceCalibrator
+from backend.services.confidence_floor import effective_min_confidence
 from backend.services.learning_service import get_learning_service
 from backend.services.market_news import get_market_news
 from backend.services.quant_snapshot import (
@@ -1050,9 +1051,7 @@ async def _generate_recommendations_uncached(
         draft.score_breakdown = score_bd
         ranked.append(draft)
 
-    min_confidence = float(
-        cfg.get("execution_constraints", {}).get("min_recommendation_confidence", 0.80)
-    )
+    min_confidence, min_confidence_source = effective_min_confidence(cfg)
     below_confidence = [r for r in ranked if r.confidence < min_confidence]
     ranked = [r for r in ranked if r.confidence >= min_confidence]
 
@@ -1084,7 +1083,16 @@ async def _generate_recommendations_uncached(
         ),
         f"Live-ranked candidates: {len(universe)}.",
         f"{passing} passed all options-only retail gates (I21).",
-        f"Confidence floor: only candidates with confidence ≥ {min_confidence:.0%} are recommended.",
+        (
+            f"Confidence floor: only candidates with confidence ≥ {min_confidence:.0%} "
+            f"are recommended (source: {min_confidence_source}"
+            + (
+                " — bootstrap floor active until the first real closed trade"
+                if min_confidence_source == "bootstrap"
+                else ""
+            )
+            + ")."
+        ),
         (
             f"Confidence calibration: {calibrated_n}/{len(top3)} top recommendations use "
             "outcome-calibrated P(win); others use uncalibrated heuristic."

@@ -3,68 +3,11 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from backend.models.recommendations import InstrumentRecommendation, RecommendationResponse
-from backend.models.trades import AutonomousExecutionResult
+from backend.services.recommendation_cycle import run_recommendation_cycle
 from backend.services.recommendation_engine import generate_recommendations
-from backend.services.supervision_mode import get_supervision_mode
-from backend.services.trade_executor import (
-    execute_autonomous_from_recommendations,
-    is_one_trade_locked,
-)
+from backend.services.trade_executor import execute_autonomous_from_recommendations
 
 router = APIRouter(prefix="/api/v1/recommendations", tags=["recommendations"])
-
-
-async def _autonomous_execution_for(
-    recommendations: list[InstrumentRecommendation],
-) -> AutonomousExecutionResult:
-    """Run ranked fallback immediately after recommendations are generated —
-    only when SUPERVISION_MODE=fully_autonomous. Under "supervised" or
-    "semi_autonomous" (and any blank/unset/typo value), a fresh GET never
-    opens a trade; POST /decisions/{id}/approve does."""
-    supervision = get_supervision_mode()
-    if supervision != "fully_autonomous":
-        return AutonomousExecutionResult(
-            executed=False,
-            attempts=[],
-            message=(
-                "Supervision mode requires explicit approval — "
-                "see POST /api/v1/decisions/{id}/approve"
-            ),
-        )
-
-    if is_one_trade_locked():
-        return AutonomousExecutionResult(
-            executed=False,
-            attempts=[],
-            message="One-trade scope locked — close the active trade before opening another.",
-        )
-
-    if not recommendations:
-        return AutonomousExecutionResult(
-            executed=False,
-            attempts=[],
-            message="No recommendations available to execute",
-        )
-
-    return await execute_autonomous_from_recommendations(recommendations)
-
-
-async def _recommendations_with_autonomous_execution(
-    *,
-    force_refresh: bool = False,
-) -> RecommendationResponse:
-    """Generate (or reuse cached) recommendations; execute only on a fresh cycle."""
-    from backend.services.recommendation_engine import peek_cached_recommendations
-
-    if not force_refresh:
-        cached = peek_cached_recommendations()
-        if cached is not None:
-            return cached
-
-    result = await generate_recommendations(force_refresh=force_refresh)
-    autonomous_execution = await _autonomous_execution_for(result.recommendations)
-    return result.model_copy(update={"autonomous_execution": autonomous_execution})
 
 
 @router.get("")
@@ -74,9 +17,11 @@ async def get_top_recommendations(refresh: bool = False):
     return top 3 instruments with complete decision logic.
 
     Opens a trade on the ranked list only when computing a fresh cycle
-    (`refresh=true` or cold cache) — not on every page load.
+    (`refresh=true` or cold cache) — not on every page load. The cycle logic
+    lives in backend/services/recommendation_cycle.py (shared with the
+    trading scheduler).
     """
-    result = await _recommendations_with_autonomous_execution(force_refresh=refresh)
+    result = await run_recommendation_cycle(force_refresh=refresh)
     return JSONResponse(content=result.model_dump(mode="json", exclude_none=True))
 
 

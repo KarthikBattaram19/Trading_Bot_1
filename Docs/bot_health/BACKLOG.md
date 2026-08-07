@@ -299,6 +299,62 @@ deprioritized behind any open P0/P1 item.
     market hours (09:15-15:30 IST) — needs a same-day intraday re-check,
     which this session couldn't run since market was already closed.
 
+- [x] **No trades can occur unattended: recommendation cycles are purely
+  request-driven, so on a day nobody opens the dashboard during NSE hours the
+  bot generates zero recommendations, zero decisions, and zero trades.**
+  Verified 2026-08-07 (21:45 IST) against prod after a full market day:
+  `GET /decisions` → `[]`, `GET /learning/dashboard` → 0 real closed/open,
+  `GET /paper-sim/positions` → `[]`, account untouched at ₹10,00,000. Grep
+  confirms no scheduler exists (`scheduler|repeat_every|create_task` across
+  `backend/` finds only the WS reconnect loop and `paper_sim/automation.py`'s
+  γ–θ re-hedge for already-open positions) — generation runs only inside
+  `GET /recommendations` on a cold 90s cache or `refresh=true`. Combined with
+  `SUPERVISION_MODE=supervised` (human must click Approve) this means the
+  post-P0 pipeline has never been exercised end-to-end in live market hours;
+  the pending intraday coverage re-check (see `_spot_ltp` item above) has the
+  same root cause: someone/something must trigger a cycle between 09:15–15:30
+  IST. **Fix options:** a lightweight in-process scheduler (market-hours-gated)
+  that refreshes recommendations every few minutes, or an external cron hitting
+  `GET /recommendations?refresh=true` during NSE hours. Also worth noting:
+  `/decisions` is derived from the in-process recommendation cache
+  (`decision_log.py::_live_decisions` → `peek_cached_recommendations`) plus
+  acted-on trades — un-acted-on packets vanish from the log 90s after the
+  cycle, so there is no durable record of whether any packet was ever
+  published intraday. (first seen 2026-08-07, evidence: prod probes above;
+  `backend/services/decision_log.py:238-274`)
+  - **Resolved 2026-08-07** (Monday-trade branch), evidence: new
+    `backend/services/trading_scheduler.py` (`TradingScheduler`) auto-started
+    from a new FastAPI lifespan in `backend/main.py` (`SCHEDULER_AUTOSTART`
+    env, default on). During `entry` phase (09:20–14:30 IST per new
+    `session_schedule` config + `backend/services/market_session.py`) it runs
+    `run_recommendation_cycle(force_refresh=True)` every
+    `scheduler.recommendation_cadence_sec` (600s) unless one-trade-locked,
+    ensures the paper_sim γ–θ automation loop is running, blocks new entries
+    14:30–15:15, and during `flatten` (15:15–15:30) closes every open
+    position via `PaperEngine.close_position` (the learning-fed path) with
+    per-tick retries — closing the "no exit rule in code" gap (§3.11's
+    session-close half) as well. Ops surface: `GET/POST /api/v1/scheduler/
+    status|start|stop|tick`. Companion fixes shipped together: coverage-gate
+    arithmetic made satisfiable (max_symbols 40→15, generation_budget_sec
+    20→90, response_cache_ttl_sec 90→900 so approve/auto-exec never sees a
+    cold cache, min_coverage_ratio 0.80→0.60, min_eligible_symbols 20→6 —
+    owner-approved 2026-08-07); bootstrap confidence floor 0.70-until-first-
+    real-close (`backend/services/confidence_floor.py`, auto-reverts to 0.80);
+    boot reconciliation for the restart lock-deadlock
+    (`backend/services/ledger_reconciliation.py`). Tests:
+    `test_market_session.py`, `test_trading_scheduler.py`,
+    `test_scheduler_full_day.py` (full fake-clock Monday: open 09:25 →
+    locked → flatten retry on StaleMarksError → closed 15:17 → 1 real
+    learning outcome, lock released, floor reverts), `test_main_lifespan.py`,
+    `test_ledger_reconciliation.py`, `test_confidence_floor.py`,
+    `test_trading_parameters_config.py` (new schema↔defaults validation —
+    also fixed pre-existing schema drift for `gamma_theta_breakeven` and
+    `strategies.gamma_scalping.entry_signal`). Full suite 355 passed.
+    **Still open:** durable decision/packet log (un-acted packets still
+    expire with the response cache — TTL now 900s, not 90s), NSE holiday
+    calendar (weekday-only check), paper_sim ledger persistence (P0-2c),
+    vega IV z-score stop (§3.11's other half). See `Docs/MONDAY_RUNBOOK.md`.
+
 ## Other — deferred behind open P0/P1
 
 - [ ] RAG chat was shipped then un-shipped pending a Track B rebuild plan —
