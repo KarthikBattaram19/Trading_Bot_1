@@ -64,6 +64,7 @@ def scheduler(monkeypatch):
     monkeypatch.setattr(ts, "get_paper_engine", lambda: engine)
     monkeypatch.setattr(ts, "run_recommendation_cycle", _fake_cycle)
     monkeypatch.setattr(ts, "is_one_trade_locked", lambda: False)
+    monkeypatch.setattr(ts, "has_open_paper_position", lambda: False)
     sched = ts.TradingScheduler()
     sched._test_engine = engine  # convenience handle for assertions
     sched._test_generations = generations
@@ -106,6 +107,42 @@ async def test_generation_skipped_when_one_trade_locked(scheduler, monkeypatch) 
     assert scheduler._test_generations == []
     # automation still ensured — an open position needs marks/re-hedge
     assert scheduler._test_engine.automation.state == "running"
+
+
+async def test_entry_tick_skips_generation_when_paper_position_open(
+    scheduler, monkeypatch
+) -> None:
+    """`is_one_trade_locked()` alone misses a position opened directly via
+    POST /api/v1/paper-sim/orders (never registered with
+    `LearningService.register_open_trade`) or a leaked partial open from a
+    prior autonomous attempt — see `has_open_paper_position()` docstring in
+    backend/services/trade_executor.py. `_entry_tick` must check both BEFORE
+    calling `run_recommendation_cycle`, so this is where the Breeze
+    rate-budget saving actually lives (unlike the mirrored check in
+    `recommendation_cycle.autonomous_execution_for`, which runs after
+    generation has already happened)."""
+    monkeypatch.setattr(ts, "has_open_paper_position", lambda: True)
+    result = await scheduler.tick(now=_at(9, 25))
+    assert result["phase"] == "entry"
+    assert result["action"] == "skip"
+    assert scheduler._test_generations == []
+    # automation still ensured — an open position needs marks/re-hedge
+    assert scheduler._test_engine.automation.state == "running"
+
+
+async def test_flatten_ignores_lock_state(scheduler, monkeypatch) -> None:
+    """Flatten (15:15-15:30 IST) must never be gated by is_one_trade_locked
+    or has_open_paper_position — those checks live only in _entry_tick, and
+    _flatten_tick closes every open position regardless of lock state."""
+    monkeypatch.setattr(ts, "is_one_trade_locked", lambda: True)
+    monkeypatch.setattr(ts, "has_open_paper_position", lambda: True)
+    engine = _FakeEngine(open_positions=[_FakePosition(position_id="pos_x", status="open")])
+    monkeypatch.setattr(ts, "get_paper_engine", lambda: engine)
+
+    result = await scheduler.tick(now=_at(15, 16))
+
+    assert result["phase"] == "flatten"
+    assert engine.close_calls == ["pos_x"]
 
 
 async def test_no_entry_phase_keeps_automation_but_stops_generation(scheduler) -> None:

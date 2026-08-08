@@ -18,6 +18,7 @@ from backend.services.recommendation_engine import (
 from backend.services.supervision_mode import get_supervision_mode
 from backend.services.trade_executor import (
     execute_autonomous_from_recommendations,
+    has_open_paper_position,
     is_one_trade_locked,
 )
 
@@ -45,6 +46,35 @@ async def autonomous_execution_for(
             executed=False,
             attempts=[],
             message="One-trade scope locked — close the active trade before opening another.",
+        )
+
+    # `is_one_trade_locked()` only sees positions registered via
+    # `LearningService.register_open_trade` — it misses a position opened
+    # directly via POST /api/v1/paper-sim/orders, or a leaked partial open
+    # from the executor's own rank-1 attempt (see `has_open_paper_position()`
+    # docstring in trade_executor.py). This check does NOT save Breeze rate
+    # budget at this call site: `run_recommendation_cycle` already calls
+    # `generate_recommendations` before reaching here, so generation has
+    # already happened by the time this runs. Its value is (a) preventing a
+    # doomed call into `execute_autonomous_from_recommendations`
+    # (`_pre_submit_checks` would reject every candidate anyway) and (b)
+    # giving the operator an accurate lock message instead of "All ranked
+    # recommendations failed to open". The actual rate-budget saving lives in
+    # `trading_scheduler._entry_tick`, which checks this *before* calling
+    # `run_recommendation_cycle`. The message deliberately keeps the
+    # "One-trade scope locked" prefix:
+    # frontend/src/components/recommendations/autonomous-trade-executor.tsx
+    # (lines 15-18) renders its lock banner only when
+    # `message.includes("One-trade scope locked")`.
+    if has_open_paper_position():
+        return AutonomousExecutionResult(
+            executed=False,
+            attempts=[],
+            message=(
+                "One-trade scope locked — an open paper_sim position exists; "
+                "close it (or let an earlier attempt's partial open resolve) "
+                "before opening another."
+            ),
         )
 
     if not recommendations:
