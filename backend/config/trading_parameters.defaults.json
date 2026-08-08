@@ -33,9 +33,12 @@
   "recommendation_universe_enrichment": {
     "enabled": true,
     "cache_ttl_sec": 90,
-    "response_cache_ttl_sec": 900,
-    "generation_budget_sec": 90,
-    "max_symbols": 15,
+    "response_cache_ttl_sec": 1200,
+    "generation_budget_sec": 120,
+    "enrichment_budget_frac": 0.70,
+    "breeze_calls_per_symbol": 5,
+    "breeze_history_calls_per_symbol": 2,
+    "breeze_daily_call_budget": 3500,
     "max_concurrency": 4,
     "min_interval_ms": 700,
     "fetch_spot_ltp": true,
@@ -48,8 +51,8 @@
     "fetch_intraday_rv": true
   },
   "strategy_coverage": {
-    "min_coverage_ratio": 0.60,
-    "min_eligible_symbols": 6,
+    "min_coverage_ratio": 0.80,
+    "min_scan_symbols": 10,
     "abort_unavailable_strategies": true
   },
   "session_schedule": {
@@ -62,7 +65,7 @@
   "scheduler": {
     "enabled": true,
     "tick_sec": 30,
-    "recommendation_cadence_sec": 600,
+    "recommendation_cadence_sec": 900,
     "flatten_retry_max": 30
   },
   "oss_global_params": {
@@ -125,8 +128,7 @@
     "supervised_approval_required": true,
     "automation_allowed_post_fill": true,
     "multi_leg_sync_submit": true,
-    "min_recommendation_confidence": 0.80,
-    "bootstrap_min_confidence": 0.70
+    "min_recommendation_confidence": 0.80
   },
   "gamma_theta_breakeven": {
     "use_half_breakeven": false,

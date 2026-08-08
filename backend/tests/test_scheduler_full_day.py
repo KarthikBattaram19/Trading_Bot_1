@@ -127,17 +127,10 @@ async def test_full_day_opens_and_flattens_one_trade(tmp_path, monkeypatch) -> N
     assert svc.dashboard().closed_trade_count == 1
     assert trade_executor.is_one_trade_locked() is False
 
-    # From now on the bootstrap confidence floor reverts to the strict one.
-    from backend.services import confidence_floor
+    # The confidence floor is the same 0.80 all day — there is no bootstrap
+    # phase that a first close could unwind.
+    from backend.services.strategy_selection import load_trading_config
 
-    monkeypatch.setattr(confidence_floor, "get_learning_service", lambda: svc)
-    monkeypatch.delenv("MIN_RECOMMENDATION_CONFIDENCE", raising=False)
-    floor, source = confidence_floor.effective_min_confidence(
-        {
-            "execution_constraints": {
-                "min_recommendation_confidence": 0.80,
-                "bootstrap_min_confidence": 0.70,
-            }
-        }
-    )
-    assert (floor, source) == (0.80, "config")
+    ec = load_trading_config()["execution_constraints"]
+    assert ec["min_recommendation_confidence"] == 0.80
+    assert "bootstrap_min_confidence" not in ec

@@ -94,9 +94,9 @@ async def test_entry_phase_starts_automation_and_generates(scheduler) -> None:
 
 async def test_generation_respects_cadence(scheduler) -> None:
     await scheduler.tick(now=_at(9, 25))
-    await scheduler.tick(now=_at(9, 26))  # within 600s cadence
+    await scheduler.tick(now=_at(9, 26))  # within the 900s cadence
     assert len(scheduler._test_generations) == 1
-    await scheduler.tick(now=_at(9, 36))  # past cadence
+    await scheduler.tick(now=_at(9, 41))  # past cadence
     assert len(scheduler._test_generations) == 2
 
 

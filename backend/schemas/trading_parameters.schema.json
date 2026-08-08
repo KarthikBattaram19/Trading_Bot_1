@@ -57,7 +57,12 @@
         "min_eligible_symbols": {
           "type": "integer",
           "minimum": 0,
-          "description": "Absolute eligible floor; keep ≤ recommendation_universe_enrichment.max_symbols so capped cycles can publish."
+          "description": "OPTIONAL explicit override of the absolute eligible floor. Omit it: the shipped default is derived as ceil(min_coverage_ratio × derived scan cap) by backend/services/scan_capacity.py, so it can never contradict the call budget. An override above the derived cap is a boot-time error."
+        },
+        "min_scan_symbols": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Fewest underlyings a cycle must be able to scan for a coverage claim to mean anything; a derived cap below this fails boot rather than silently publishing nothing."
         },
         "abort_unavailable_strategies": {
           "type": "boolean"
@@ -577,10 +582,26 @@
           "minimum": 1,
           "description": "Wall-clock budget for live enrich + candle history so page APIs stay responsive."
         },
-        "max_symbols": {
+        "enrichment_budget_frac": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "description": "Share of generation_budget_sec reserved for live enrichment; the rest funds candle history."
+        },
+        "breeze_calls_per_symbol": {
           "type": "integer",
           "minimum": 1,
-          "description": "Cap how many FNO underlyings are live-enriched per cycle (priority names first)."
+          "description": "Worst-case paced Breeze calls to enrich one underlying (1 spot LTP + 2 chain sides, ×2 product_type retries)."
+        },
+        "breeze_history_calls_per_symbol": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Paced Breeze calls per enriched underlying for daily closes + intraday RV."
+        },
+        "breeze_daily_call_budget": {
+          "type": "number",
+          "minimum": 1,
+          "description": "Slice of the ~5000/day Breeze envelope allotted to recommendation cycles; the remainder funds marks, automation and health."
         },
         "max_concurrency": {
           "type": "integer",
@@ -688,13 +709,7 @@
           "type": "number",
           "minimum": 0,
           "maximum": 1,
-          "description": "Minimum post-learning confidence required to surface a recommendation (default 0.80)."
-        },
-        "bootstrap_min_confidence": {
-          "type": "number",
-          "minimum": 0,
-          "maximum": 1,
-          "description": "Confidence floor used instead of min_recommendation_confidence while the learning store has zero real (non-seed) closed trades — reverts automatically after the first real close."
+          "description": "Minimum post-learning confidence required to surface a recommendation (default 0.80). This is the only confidence floor — there is no bootstrap phase and no env override."
         }
       }
     },

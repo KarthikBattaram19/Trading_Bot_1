@@ -1,9 +1,10 @@
 """Config/schema lockstep for trading_parameters.defaults.json.
 
-The Monday-readiness numbers here are load-bearing: the scheduler cadence,
-enrichment budget, and coverage floors were sized together against Breeze's
-rate envelope (~100 calls/min, 5000/day). If you change one, re-check the
-arithmetic in Docs/MONDAY_RUNBOOK.md before shipping.
+The scheduler cadence, enrichment budget, and coverage floors are sized
+together against Breeze's rate envelope (~100 calls/min, ~5000/day). They are
+no longer independently tunable numbers: the scan cap and eligible floor are
+*derived* (backend/services/scan_capacity.py) and validated at boot, so this
+file asserts the inputs, and test_scan_capacity.py asserts the arithmetic.
 """
 
 from __future__ import annotations
@@ -27,32 +28,31 @@ def test_defaults_validate_against_schema() -> None:
     jsonschema.validate(instance=_load(CONFIG_PATH), schema=_load(SCHEMA_PATH))
 
 
-def test_enrichment_budget_fits_symbol_count() -> None:
+def test_enrichment_budget_inputs() -> None:
     cfg = _load(CONFIG_PATH)["recommendation_universe_enrichment"]
-    assert cfg["max_symbols"] == 15
-    assert cfg["generation_budget_sec"] == 90
-    # ~5 Breeze calls per symbol at min_interval_ms spacing must fit the budget.
-    per_symbol_calls = 5
-    spacing_sec = cfg["min_interval_ms"] / 1000.0
-    assert cfg["max_symbols"] * per_symbol_calls * spacing_sec <= cfg["generation_budget_sec"]
+    assert cfg["generation_budget_sec"] == 120
+    assert cfg["enrichment_budget_frac"] == 0.70
+    assert cfg["breeze_calls_per_symbol"] == 5
+    assert cfg["breeze_history_calls_per_symbol"] == 2
+    assert cfg["breeze_daily_call_budget"] == 3500
+    # No hand-tuned symbol cap: it is derived from these inputs.
+    assert "max_symbols" not in cfg
 
 
 def test_response_cache_outlives_scheduler_cadence() -> None:
     cfg = _load(CONFIG_PATH)
     ttl = cfg["recommendation_universe_enrichment"]["response_cache_ttl_sec"]
     cadence = cfg["scheduler"]["recommendation_cadence_sec"]
-    assert ttl == 900
+    assert ttl == 1200
     assert ttl > cadence + cfg["recommendation_universe_enrichment"]["generation_budget_sec"]
 
 
-def test_coverage_floors_are_satisfiable_within_scan_cap() -> None:
-    cfg = _load(CONFIG_PATH)
-    coverage = cfg["strategy_coverage"]
-    max_symbols = cfg["recommendation_universe_enrichment"]["max_symbols"]
-    assert coverage["min_coverage_ratio"] == 0.60
-    assert coverage["min_eligible_symbols"] == 6
-    assert coverage["min_eligible_symbols"] <= max_symbols
-    assert coverage["min_coverage_ratio"] * max_symbols <= max_symbols
+def test_coverage_ratio_is_the_strict_one() -> None:
+    coverage = _load(CONFIG_PATH)["strategy_coverage"]
+    assert coverage["min_coverage_ratio"] == 0.80
+    assert coverage["min_scan_symbols"] == 10
+    # The eligible floor is derived from the scan cap, never hardcoded here.
+    assert "min_eligible_symbols" not in coverage
 
 
 def test_session_schedule_section() -> None:
@@ -70,14 +70,16 @@ def test_scheduler_section() -> None:
     sched = _load(CONFIG_PATH)["scheduler"]
     assert sched["enabled"] is True
     assert sched["tick_sec"] == 30
-    assert sched["recommendation_cadence_sec"] == 600
+    # 900s, not 600s: 21 cycles/day keeps the derived scan inside the ~5000
+    # calls/day Breeze envelope (see test_scan_capacity.py).
+    assert sched["recommendation_cadence_sec"] == 900
     assert sched["flatten_retry_max"] == 30
 
 
-def test_bootstrap_confidence_floor_keys() -> None:
+def test_confidence_floor_has_no_bootstrap_phase() -> None:
     ec = _load(CONFIG_PATH)["execution_constraints"]
     assert ec["min_recommendation_confidence"] == 0.80
-    assert ec["bootstrap_min_confidence"] == 0.70
+    assert "bootstrap_min_confidence" not in ec
 
 
 def test_automation_tick_is_sixty_seconds() -> None:

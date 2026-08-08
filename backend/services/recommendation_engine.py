@@ -47,7 +47,7 @@ from backend.services.earnings_calendar import EarningsCalendarStore, session_da
 from backend.services.feed_health import get_feed_sources
 from backend.services.iv_history_store import IvHistoryStore
 from backend.services.confidence_calibrator import ConfidenceCalibrator
-from backend.services.confidence_floor import effective_min_confidence
+from backend.services.scan_capacity import scan_capacity
 from backend.services.learning_service import get_learning_service
 from backend.services.market_news import get_market_news
 from backend.services.quant_snapshot import (
@@ -323,8 +323,9 @@ async def _build_universe() -> tuple[
     fetch_rv = bool(snap_cfg.get("fetch_intraday_rv", True))
     enrich_stats: EnrichmentStats | None = None
     live_by_symbol: dict[str, LiveMarks] = {}
-    budget_sec = float(enrich_cfg.get("generation_budget_sec", 20.0))
-    max_symbols = max(1, int(enrich_cfg.get("max_symbols", 40)))
+    budget_sec = float(enrich_cfg.get("generation_budget_sec", 120.0))
+    # Derived, never hardcoded: a cap the paced call budget can actually finish.
+    max_symbols = max(1, scan_capacity(cfg).max_symbols)
     deadline = time.monotonic() + max(5.0, budget_sec)
 
     # Prefer liquid index / bank names first so a budget cut still covers core names.
@@ -1051,7 +1052,9 @@ async def _generate_recommendations_uncached(
         draft.score_breakdown = score_bd
         ranked.append(draft)
 
-    min_confidence, min_confidence_source = effective_min_confidence(cfg)
+    min_confidence = float(
+        (cfg.get("execution_constraints") or {}).get("min_recommendation_confidence", 0.80)
+    )
     below_confidence = [r for r in ranked if r.confidence < min_confidence]
     ranked = [r for r in ranked if r.confidence >= min_confidence]
 
@@ -1067,7 +1070,7 @@ async def _generate_recommendations_uncached(
         f"Scanned {universe_size} instruments from feed-bound universe (G11–G12).",
         (
             f"Coverage denominator: {scanned} enrichment-attempted underlyings "
-            f"(max_symbols/budget cap; not full universe)."
+            f"(derived scan cap; not full universe)."
             if attempted > 0 and attempted != universe_size
             else f"Coverage denominator: {scanned} underlyings."
         ),
@@ -1085,13 +1088,7 @@ async def _generate_recommendations_uncached(
         f"{passing} passed all options-only retail gates (I21).",
         (
             f"Confidence floor: only candidates with confidence ≥ {min_confidence:.0%} "
-            f"are recommended (source: {min_confidence_source}"
-            + (
-                " — bootstrap floor active until the first real closed trade"
-                if min_confidence_source == "bootstrap"
-                else ""
-            )
-            + ")."
+            "are recommended (execution_constraints.min_recommendation_confidence)."
         ),
         (
             f"Confidence calibration: {calibrated_n}/{len(top3)} top recommendations use "
@@ -1105,6 +1102,7 @@ async def _generate_recommendations_uncached(
         "Continual learning: failure memory + module weights applied (§12).",
         "Live-clean quant: no synthetic GARCH / flat-history fills in ranking.",
     ]
+    notes.append(scan_capacity(cfg).note())
     notes.extend(coverage_report.note_lines())
     if not available:
         top3 = []

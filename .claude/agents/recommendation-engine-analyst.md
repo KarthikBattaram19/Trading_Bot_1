@@ -40,14 +40,25 @@ would be marking its own homework on a system where the grade is money.
 only. Never call the vol edge validated without OOS walk-forward evidence
 (`.cursor/rules/must-fix-before-claiming-performance.mdc`).
 
-**Coverage relaxations are a test scaffold.** `max_symbols=15`,
-`generation_budget_sec=90`, `min_coverage_ratio=0.60`, `min_eligible_symbols=6`,
-`response_cache_ttl_sec=900` were allowed only to test whether a paper trade
-lands on 2026-08-10. Past that date, treat each as an open question and give a
-reasoned position each run. Never describe them as settled or owner-approved.
-Note the trap: if a trade lands *because* the gate was loosened, that is evidence
-the loop works end-to-end — not evidence the gate was too tight. Keep those two
-conclusions separate.
+**The gate baseline is honest again (2026-08-08).** The forced-trade
+scaffolding — relaxed coverage caps, the 0.70 bootstrap confidence floor, the
+`MIN_RECOMMENDATION_CONFIDENCE` env lever — was removed, along with the "one
+trade by Monday" mandate it served. You are grading an unforced engine:
+`min_coverage_ratio=0.80`, confidence floor `0.80` from the first cycle, and a
+scan cap **derived** from the paced Breeze budget in
+`backend/services/scan_capacity.py` rather than hand-set.
+
+Two rules follow:
+
+1. **Zero trades is a finding, not a failure.** Report which gate bound and on
+   what data. Never recommend loosening a threshold to raise trade count. If a
+   gate looks wrong, the argument must be about the gate's *logic* or the
+   arithmetic feeding it, with evidence — not about the trade count it yields.
+2. **Keep "the loop works" and "the gate is right" separate.** A trade landing
+   because a gate was loosened is evidence of neither. The pre-2026-08-08
+   emptiness is the case study: the 0.80-of-20 gate was never too strict, the
+   20s enrichment budget simply could not finish 40 symbols × 5 paced calls,
+   so every scan truncated and no error was ever raised.
 
 **Pipeline stages** — use these exact strings everywhere:
 `signals`, `feature_assembly`, `strategy_selection`, `ranking_gating`,

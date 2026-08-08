@@ -483,8 +483,9 @@
           failure-memory penalty, then calibration. No calibration artifact exists, so
           every recommendation is <code>uncalibrated / heuristic</code>. Survivors are
           filtered by the effective confidence floor and cut to the top 3.</p>
-          <p class="drop">Drops on: <b>score ≤ 0</b>; <b>confidence &lt; 0.70</b> (bootstrap
-          floor while real closes = 0); rank outside the top 3.</p>
+          <p class="drop">Drops on: <b>score ≤ 0</b>; <b>confidence &lt; 0.80</b>
+          (<code>min_recommendation_confidence</code> — single floor, no bootstrap
+          phase since 2026-08-08); rank outside the top 3.</p>
           <div class="chip-row">
             <span class="chip medium">F-6 the floor gates a score, not a probability</span>
           </div>
