@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+from contextlib import asynccontextmanager
 
 from backend.analytics.confidence_calibration import is_seed_outcome
 from backend.models.recommendations import InstrumentRecommendation, StrategyType
@@ -40,6 +41,18 @@ def is_one_trade_locked() -> bool:
     return get_active_trade_id() is not None
 
 
+def has_open_paper_position() -> bool:
+    """
+    A position opened directly via `POST /api/v1/paper-sim/orders` (bypassing
+    the autonomous executor) is never registered with
+    `LearningService.register_open_trade` — so `is_one_trade_locked()` alone
+    can't see it. Callers that need the *complete* one-trade-scope picture
+    (e.g. the direct paper_sim order endpoint guarding against a second
+    direct open) should check this too, not just `is_one_trade_locked()`.
+    """
+    return bool(get_paper_engine().positions(status="open"))
+
+
 # Serializes the check (`is_one_trade_locked`) -> submit (`_submit_via_paper_sim`,
 # which awaits) -> register (`register_open_trade`) critical section below.
 # Without this, two concurrent callers (a scheduler tick and a request-triggered
@@ -51,7 +64,63 @@ def is_one_trade_locked() -> bool:
 # just per-candidate) so a second caller waits for this caller's entire
 # execution attempt — success or exhaustion — rather than racing in between
 # individual candidate attempts.
+#
+# There are exactly two acquirers: `execute_autonomous_from_recommendations`
+# below (reached from the scheduler's `_loop` tick and from
+# `recommendation_cycle.autonomous_execution_for`) and the direct
+# `POST /api/v1/paper-sim/orders` router (`backend/routers/paper_sim.py`),
+# which takes this same lock via `acquire_execution_lock` so a direct open
+# can't race either an autonomous open or a second direct open. Neither
+# acquirer is reachable from inside the other's held section, so there is no
+# deadlock path between them.
+#
+# Acquisition is timeout-bounded (`acquire_execution_lock`, `EXECUTION_LOCK_TIMEOUT_SEC`
+# below) rather than relying on every await inside the held section being
+# individually bounded — `_submit_via_paper_sim` calls `ensure_instruments` /
+# `get_ltp`, network calls with no caller-side timeout of their own. A waiter
+# that can't acquire within the timeout gives up and returns a normal
+# not-executed result instead of blocking forever, so a stalled feed can no
+# longer strand the scheduler's `_loop` behind `_execution_lock` and skip the
+# 15:15–15:30 IST flatten window — the loop degrades to "this cycle didn't
+# open a trade" and keeps advancing toward flatten, rather than hanging.
 _execution_lock = asyncio.Lock()
+
+# Generous relative to the measured worst case for the awaits inside the held
+# section (~4-5 minutes: `ensure_instruments` refreshing the scrip master
+# plus per-leg `get_ltp` calls, each with its own ~120s feed-side timeout),
+# while staying well inside the 15-minute (15:15-15:30 IST) flatten window —
+# leaving comfortable margin for the scheduler's `_loop` to reach
+# `_flatten_tick` even if a waiter has to time out first.
+EXECUTION_LOCK_TIMEOUT_SEC = 360.0
+
+
+@asynccontextmanager
+async def acquire_execution_lock(timeout: float | None = None):
+    """
+    Acquire `_execution_lock` bounded by `timeout` (default
+    `EXECUTION_LOCK_TIMEOUT_SEC`, read at call time so tests can monkeypatch
+    it). Yields `True` if the lock was acquired — the caller holds it for the
+    duration of the `async with` block and it is released on exit — or
+    `False` if the wait timed out, in which case the caller holds nothing and
+    must not touch the section the lock protects.
+
+    `timeout` defaults via `None` rather than a bound default argument so
+    monkeypatching `EXECUTION_LOCK_TIMEOUT_SEC` after import (as tests do)
+    takes effect — a literal default would have captured the value at
+    function-definition time instead.
+    """
+    if timeout is None:
+        timeout = EXECUTION_LOCK_TIMEOUT_SEC
+    lock = _execution_lock
+    try:
+        await asyncio.wait_for(lock.acquire(), timeout=timeout)
+    except TimeoutError:
+        yield False
+        return
+    try:
+        yield True
+    finally:
+        lock.release()
 
 
 def reset_execution_lock_for_tests() -> None:
@@ -220,14 +289,24 @@ async def execute_autonomous_from_recommendations(
     sorted_recs = sorted(recommendations, key=lambda r: r.rank)
     attempts: list[TradeAttemptResult] = []
 
-    # INVARIANT for anyone adding an await inside this block: it must be
-    # bounded by a timeout. The scheduler's single `_loop` task
-    # (backend/services/trading_scheduler.py) blocks on `_execution_lock`
-    # like any other caller, so a stall anywhere in here delays every
-    # scheduler tick behind it — including the 15:15–15:30 IST flatten
-    # window that closes every open position. An unbounded await here is a
-    # flatten hazard, not just a slow request.
-    async with _execution_lock:
+    # Lock acquisition itself is timeout-bounded (see `acquire_execution_lock`
+    # / `EXECUTION_LOCK_TIMEOUT_SEC` above), so a stall inside the awaits
+    # below (`_submit_via_paper_sim` -> `ensure_instruments` / `get_ltp`)
+    # degrades to this cycle returning a not-executed result rather than
+    # blocking the scheduler's `_loop` past the 15:15–15:30 IST flatten
+    # window.
+    async with acquire_execution_lock() as acquired:
+        if not acquired:
+            return AutonomousExecutionResult(
+                executed=False,
+                attempts=[],
+                message=(
+                    f"Execution lock busy for over {EXECUTION_LOCK_TIMEOUT_SEC:.0f}s "
+                    "— skipping this cycle so the scheduler can keep advancing "
+                    "(e.g. toward flatten); no trade opened."
+                ),
+            )
+
         for rec in sorted_recs:
             pre_error = _pre_submit_checks(rec)
             if pre_error:
@@ -286,8 +365,8 @@ async def execute_autonomous_from_recommendations(
                 )
             )
 
-    return AutonomousExecutionResult(
-        executed=False,
-        attempts=attempts,
-        message="All ranked recommendations failed to open — no trade opened",
-    )
+        return AutonomousExecutionResult(
+            executed=False,
+            attempts=attempts,
+            message="All ranked recommendations failed to open — no trade opened",
+        )

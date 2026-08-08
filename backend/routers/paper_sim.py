@@ -60,19 +60,51 @@ async def paper_submit_order(request: PaperOrderRequest):
 
     After entry, remaining intended multi-leg opening legs may auto-complete
     without operator consent (same open-trade gates).
+
+    Always opens a brand-new position (never adds legs to one already open —
+    that's `POST /positions/{id}/complete-multi-leg`), so it is gated by the
+    same one-trade-at-a-time scope as the autonomous executor
+    (Docs/architecture.md §20.4.11): it takes the shared, timeout-bounded
+    execution lock (`trade_executor.acquire_execution_lock`) and rejects with
+    409 if a trade is already open, whether that trade was opened
+    autonomously (registered in the learning store) or directly via this
+    same endpoint (which never registers there, so the paper_sim
+    open-position count is checked too). A 503 means the lock itself could
+    not be acquired within the timeout (see `EXECUTION_LOCK_TIMEOUT_SEC`) —
+    distinct from the 409 "a trade is genuinely open" case.
     """
     from backend.paper_sim.freshness import StaleMarksError
+    from backend.services import trade_executor
 
-    try:
-        return await get_paper_engine().submit_order(request)
-    except StaleMarksError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except PaperLedgerError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 — surface feed/auth failures clearly
-        raise HTTPException(status_code=502, detail=f"paper mark feed error: {exc}") from exc
+    async with trade_executor.acquire_execution_lock() as acquired:
+        if not acquired:
+            # 503, not 409: this isn't "a trade is open" (a real business-rule
+            # conflict, the other 409s in this handler) — it's "we couldn't
+            # even find out because the lock was held past the timeout".
+            # Distinct status lets a caller tell "retry later" apart from
+            # "the one-trade scope is genuinely occupied".
+            raise HTTPException(
+                status_code=503,
+                detail=(
+                    f"Execution lock busy for over {trade_executor.EXECUTION_LOCK_TIMEOUT_SEC:.0f}s "
+                    "— try again shortly."
+                ),
+            )
+        if trade_executor.is_one_trade_locked() or trade_executor.has_open_paper_position():
+            raise HTTPException(
+                status_code=409,
+                detail="One-trade scope locked — close the active trade before opening another.",
+            )
+        try:
+            return await get_paper_engine().submit_order(request)
+        except StaleMarksError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except PaperLedgerError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:  # noqa: BLE001 — surface feed/auth failures clearly
+            raise HTTPException(status_code=502, detail=f"paper mark feed error: {exc}") from exc
 
 
 @router.post("/positions/{position_id}/complete-multi-leg")
