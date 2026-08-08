@@ -20,6 +20,18 @@ from backend.services import trade_executor
 from backend.services.learning_service import LearningService
 
 
+@pytest.fixture(autouse=True)
+def _reset_execution_lock():
+    """
+    `_execution_lock` binds to whatever event loop first contends on it; reset
+    it per test so one test's loop doesn't leak into the next and raise
+    "bound to a different event loop" (see
+    trade_executor.reset_execution_lock_for_tests docstring).
+    """
+    trade_executor.reset_execution_lock_for_tests()
+    yield
+
+
 def _make_recommendation(rank: int, symbol: str = "NIFTY") -> InstrumentRecommendation:
     return InstrumentRecommendation(
         rank=rank,
@@ -242,6 +254,55 @@ async def test_lock_survives_simulated_process_restart(tmp_path, monkeypatch):
 
     assert trade_executor.is_one_trade_locked() is True
     assert trade_executor.get_active_trade_id() == trade_id
+
+
+async def test_concurrent_executions_do_not_both_open_a_trade(monkeypatch):
+    """
+    Two overlapping callers (e.g. a scheduler tick and a concurrent HTTP
+    request) must not both pass the one-trade lock check. Forces the
+    interleave by making `_submit_via_paper_sim` await an event before
+    returning, so both coroutines are guaranteed to be mid-submit at the
+    same time — reproducing the read (`is_one_trade_locked`) ...
+    yield (`await _submit_via_paper_sim`) ... write
+    (`register_open_trade`) race described in
+    Docs/architecture.md §20.4.11.
+    """
+    import asyncio
+
+    release = asyncio.Event()
+    entered = asyncio.Event()
+    call_count = 0
+
+    async def _slow_submit(rec, *, simulate_first_rank_failure=False):
+        nonlocal call_count
+        call_count += 1
+        entered.set()
+        await release.wait()
+        return True, f"pos_concurrent_{call_count}", None
+
+    monkeypatch.setattr(trade_executor, "_submit_via_paper_sim", _slow_submit)
+
+    recs = [_make_recommendation(1)]
+
+    async def _runner():
+        return await trade_executor.execute_autonomous_from_recommendations(recs)
+
+    task_a = asyncio.create_task(_runner())
+    await entered.wait()  # task_a is now inside the submit, lock not yet taken
+    task_b = asyncio.create_task(_runner())
+    await asyncio.sleep(0)  # let task_b run up to its own submit/lock-check
+
+    release.set()  # allow both submits to complete
+    result_a, result_b = await asyncio.gather(task_a, task_b)
+
+    results = [result_a, result_b]
+    executed = [r for r in results if r.executed]
+    rejected = [r for r in results if not r.executed]
+    assert len(executed) == 1, (
+        f"expected exactly one execution to succeed, got {len(executed)}: {results}"
+    )
+    assert len(rejected) == 1
+    assert "One-trade scope locked" in (rejected[0].attempts[0].error or "")
 
 
 async def test_seeded_demo_open_trade_does_not_lock(tmp_path, monkeypatch):
