@@ -129,8 +129,51 @@ mechanism by which it degrades reliability/stability/performance, the proposed
 change, and an impact/effort read. Ordered by expected impact. Recommendations
 that would close an open P0 item outrank net-new features.
 
-**7. Append the day's journal entry.**
+**7. Reconcile the recommendation ledger.**
+See "Recommendation lifecycle" below — detect which prior recommendations have
+since been implemented, and measure what they did.
+
+**8. Append the day's journal entry.**
 See "Daily journal" below.
+
+## Recommendation lifecycle
+
+Every recommendation the agent makes gets a stable ID and is tracked from
+proposal through to measured outcome. This is the agent's memory: without it,
+each run would re-propose the same fixes and never learn whether any of them
+worked.
+
+Stored in `Docs/bot_health/recommendation_ledger.jsonl`, one record per
+recommendation:
+
+| Field | Meaning |
+|---|---|
+| `id` | Stable slug, e.g. `rec-2026-08-08-spot-code-fallback` |
+| `proposed_date` | When first raised |
+| `stage` | Which pipeline stage it targets (signals, strategy selection, gating, fill, feedback…) |
+| `problem` / `proposed_change` | With `file:line` evidence |
+| `expected_impact` | What metric it should move, and in which direction |
+| `status` | `proposed` → `implemented` → `measured` → `validated` \| `regressed` \| `inconclusive`; or `rejected` / `superseded` |
+| `implemented_date`, `implemented_sha` | Detected from git, see below |
+| `baseline_metrics` | Metric snapshot immediately before implementation |
+| `observed_effect` | Metric deltas after, with sample size |
+| `verdict` | The agent's read: did it do what it was supposed to? |
+
+**Detecting implementation.** Each run the agent diffs `git log` since the last
+review against open `proposed` recommendations, matching on the files and
+symbols the recommendation named. A match promotes the record to `implemented`,
+stamps the SHA and date, and freezes the pre-change metrics as `baseline_metrics`.
+Detection is a heuristic, so the agent states its confidence and the owner can
+correct a mis-linked record; a wrong link is visible rather than silent.
+
+**Measuring effect.** Once implemented, the agent tracks the recommendation's
+target metric across subsequent sessions and moves it to `measured`, then to a
+final verdict once the sample supports one. A recommendation whose metric moved
+the wrong way is marked `regressed` and raised prominently — this is the most
+valuable output the ledger produces, and the agent must never quietly drop it.
+
+Implemented recommendations appear in every surface: the chat summary, the
+review doc, the day's journal entry, and their own dashboard section.
 
 ## Metrics and change attribution
 
@@ -192,20 +235,52 @@ separate from the prose is what makes trends and change attribution computable
 across runs instead of re-parsed from narrative.
 
 **3. Visual dashboard:** a self-contained HTML page published as a private
-Artifact, regenerated each run from the JSONL history. Charts:
+Artifact, regenerated each run from the JSONL history.
 
-- Equity curve and cumulative P&L over time, with commit markers on the dates
-  in-scope changes landed — the visual form of the change ledger.
-- Daily P&L bars, colored win/loss.
-- Gate-rejection funnel for the latest session (candidates → each gate → submitted).
-- Reliability trend lines: coverage ratio, enrichment success, cycle completion.
-- Confidence calibration plot: predicted confidence bucket vs realized win rate,
-  against the diagonal.
-- Strategy mix over time and P&L attribution by strategy.
+Its organizing principle is the **pipeline itself**. Events and changes are laid
+out in the sequential order a candidate flows through the recommendation engine,
+so the owner reads the dashboard the same way the bot reads the market:
+
+```
+Signals → Feature assembly → Strategy selection → Ranking & gating
+        → Execution gates → Fill (paper_sim) → Outcome & learning feedback
+```
+
+Every change, event and recommendation is tagged to the stage it belongs to and
+rendered under that stage's section, in that order. A stage's section shows what
+happened there this session, what changed there recently, how many candidates it
+dropped, and which open recommendations target it. This makes the failure
+location obvious at a glance — a funnel that collapses at "Feature assembly"
+points somewhere entirely different than one that collapses at "Execution gates."
+
+**Sections, in order:**
+
+1. **Headline strip** — session P&L, cumulative P&L, real closed trades, win
+   rate, cycles completed. Each with its delta vs the previous session.
+2. **Pipeline walkthrough** — the seven stages above, in sequence. Per stage:
+   candidates in/out (the funnel), this session's events, changes that landed
+   here recently, and open recommendations targeting it.
+3. **Impact** — what the changes actually did. The recommendation ledger
+   rendered as a timeline: proposed → implemented (with SHA) → measured, each
+   with its target metric plotted before/after the implementation date and its
+   verdict badge (`validated` / `regressed` / `inconclusive`). Regressions
+   surface at the top of this section, not buried.
+4. **Optimization** — where the headroom is. Ranked open recommendations with
+   expected metric movement; the largest drop-offs in the pipeline funnel;
+   parameters currently pinned to test-scaffold values (the 2026-08-07
+   relaxations) with the case for revisiting each.
+5. **Progress** — is this converging? Equity curve with commit markers; win rate
+   and profit factor trends; reliability trends (coverage ratio, enrichment
+   success, cycle completion); confidence calibration plot against the diagonal;
+   stability trend (rolling P&L variance); and a cumulative count of
+   recommendations validated vs regressed vs still open.
+6. **Journal excerpt** — the latest daily entry, with a link to the full file.
 
 Charts must degrade honestly at low sample size — an equity curve with two
 points is drawn as two points, not smoothed into a trend line, and panels
-without enough data say so rather than rendering an empty axis.
+without enough data say so rather than rendering an empty axis. A "progress"
+section that implies a trend from three data points would actively mislead the
+decision it exists to inform.
 
 **4. Daily journal:** `Docs/bot_health/DAILY_JOURNAL.md` — append-only, newest
 entry at the top, one dated section per run recording what the bot did and what
@@ -214,14 +289,22 @@ was changed, so the owner can verify later. Each entry:
 - Session summary: cycles run, recommendations published, trades opened/closed,
   session P&L.
 - Every decision the bot made and why (strategy chosen, confidence, gates passed).
-- Every code/config change that landed that day in scope, with commit SHA.
-- What the agent recommended, and — carried forward from the previous entry —
-  whether the prior recommendation was acted on and what happened.
+- Every code/config change that landed that day in scope, with commit SHA and
+  the pipeline stage it touched.
+- **Recommendations implemented since the last entry** — pulled from the ledger:
+  which ones went in, their SHA, and their current measurement status.
+- What the agent recommended today, and the running status of every open prior
+  recommendation.
 
-That last item matters most: it closes the loop, so a recommendation the owner
-ignored or that failed to help is visible rather than quietly forgotten.
+Those last two matter most: they close the loop, so a recommendation the owner
+ignored, or one that was implemented and failed to help, is visible rather than
+quietly forgotten.
 
-**5. Chat summary:** what changed since last review, headline metrics, top
+**5. Recommendation ledger:** `Docs/bot_health/recommendation_ledger.jsonl` —
+the lifecycle store described above. The agent's memory across runs.
+
+**6. Chat summary:** what changed since last review, headline metrics,
+recommendations implemented since last run and their measured effect, top open
 findings, the dashboard URL, and one "next best action."
 
 ## Scheduling
@@ -253,10 +336,11 @@ Read-only with respect to all trading code. Granted tools: `Read`, `Grep`,
 `Glob`, `Bash` (for `git log`/`git diff`, `pytest`, and reading JSON ledgers),
 `Write`, and `Artifact` (to publish the dashboard).
 
-`Write` and `Edit` are scoped by its system prompt to exactly four paths:
+`Write` and `Edit` are scoped by its system prompt to exactly five paths:
 
 - `Docs/bot_health/RECOMMENDATION_ENGINE_REVIEW.md`
 - `Docs/bot_health/recommendation_metrics.jsonl`
+- `Docs/bot_health/recommendation_ledger.jsonl`
 - `Docs/bot_health/DAILY_JOURNAL.md`
 - the dashboard HTML source file it publishes
 
@@ -286,8 +370,9 @@ where the grade is money.
    questions to `Guruji_for_Bhale_Bullodu`.
 2. A scheduled routine firing 16:00 IST on weekdays that invokes it.
 3. Seeded output files: `RECOMMENDATION_ENGINE_REVIEW.md`,
-   `recommendation_metrics.jsonl`, `DAILY_JOURNAL.md` — created empty-but-valid
-   so the first scheduled run appends rather than bootstraps.
+   `recommendation_metrics.jsonl`, `recommendation_ledger.jsonl`,
+   `DAILY_JOURNAL.md` — created empty-but-valid so the first scheduled run
+   appends rather than bootstraps.
 
 ## Risks
 
@@ -299,6 +384,16 @@ where the grade is money.
   help?" field is the countermeasure — it makes inaction visible.
 - **Schedule drift.** If the routine fails silently the trend series develops
   gaps. Each run checks for missing dates since the last entry and notes them.
+- **Mis-attributed implementation.** Linking a commit to a recommendation is a
+  heuristic match on files and symbols; a coincidental commit could be credited
+  with a fix. Mitigated by stating match confidence on every link, so a wrong
+  one is correctable rather than silently poisoning the impact measurement.
+- **Self-serving grading.** The agent both proposes recommendations and grades
+  them, which creates pressure toward `validated` verdicts. Countered by
+  requiring the same sample-size discipline for positive verdicts as negative
+  ones, and by surfacing `regressed` and `inconclusive` counts as headline
+  numbers on the dashboard's Progress section — an agent whose recommendations
+  are all quietly "validated" should look suspicious at a glance.
 
 ## Non-goals
 
