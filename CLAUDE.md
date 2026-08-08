@@ -19,12 +19,36 @@ cd frontend && npm ci && cd ..
 - API: http://127.0.0.1:8000/health
 - Docs: `Docs/implementation_plan.md`, `Docs/LOCAL_DEV.md`, `Docs/architecture.md`
 
-## Tests
+## Commit & Push Policy
+
+- Always commit AND push after a task is verified green; never leave work only staged.
+- Before committing, run `git status` and report any pre-existing unrelated working-tree changes. Never sweep unrelated files into a commit.
+- When the user asks for N separate commits, stage explicitly per commit with `git add <paths>` and verify with `git diff --cached --name-only` before each commit.
+- Include doc changes (`*.md`) in the same commit as the code they describe unless told otherwise.
+
+## Subagent & Worktree Rules
+
+- Before dispatching a subagent to a worktree, `git fetch origin && git rebase origin/main` so the branch is not behind main.
+- Ensure any uncommitted approved artifacts from the current session are committed before creating the worktree from origin.
+- Subagents must commit only inside their assigned worktree, never directly onto main.
+- Never nest worktrees inside another worktree.
+
+## Testing
 
 ```powershell
-pytest                       # backend/ tests; asyncio_mode=auto
-pytest -m "not integration"  # default CI selection — skips live/broker checks
+python -m pytest                       # backend/ tests; asyncio_mode=auto
+python -m pytest -m "not integration"  # default CI selection — skips live/broker checks
 ```
+
+- Run the full suite with `python -m pytest` (NOT bare `pytest` — it is not on the Git Bash PATH on this machine).
+- Report the exact passing test count from real terminal output. Never restate a count reported by a subagent without re-running the suite yourself.
+- All tests must pass before any commit, merge, or push.
+
+## Shell Environment
+
+- Both PowerShell and Git Bash are available on this machine. `pytest` is not on the Git Bash PATH — always use `python -m pytest`.
+- Do NOT use PowerShell here-strings (`@"..."@`) for commit messages — they leak stray `@` characters into the message.
+- Write multi-line commit messages with `git commit -F -` and a heredoc, or repeated `-m` flags.
 
 ## Architecture
 
@@ -75,3 +99,9 @@ Do not treat P&L targets, Sharpe goals, or "edge proven" language as met until P
 - **P2**: delta/vega-based position sizing with real costs; fill/reconcile FSM before live micro-capital (Phase 5).
 
 When asked to improve this project or "make it better," prefer closing P0 over net-new strategy/UI features, and never imply the vol edge is validated without OOS evidence.
+
+## Scope Discipline
+
+- When asked to remove a feature, first enumerate EVERY touchpoint (backend, frontend UI, API routes, config, tests, docs) and confirm the list with the user before editing anything.
+- When the user asks for a written artifact (audit/report markdown file), produce the file first with your best analysis, then ask follow-up questions — do not stop and ask instead of writing.
+- Never record temporary test scaffolding or relaxed thresholds as settled decisions in state/backlog docs; label them TEMPORARY with a removal owner.
