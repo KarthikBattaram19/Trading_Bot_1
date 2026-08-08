@@ -305,6 +305,47 @@ async def test_concurrent_executions_do_not_both_open_a_trade(monkeypatch):
     assert "One-trade scope locked" in (rejected[0].attempts[0].error or "")
 
 
+async def test_execution_lock_acquire_times_out_instead_of_hanging(monkeypatch):
+    """
+    A waiter that can't get `_execution_lock` within the timeout must give up
+    and return a normal not-executed result rather than block forever — this
+    is what lets the scheduler's `_loop` keep advancing toward flatten even
+    if the section under the lock (feed calls in `_submit_via_paper_sim`)
+    stalls. Force the lock held by a task that never releases within the
+    (monkeypatched-tiny) timeout, then assert the second caller returns its
+    rejection instead of hanging.
+    """
+    import asyncio
+
+    monkeypatch.setattr(trade_executor, "EXECUTION_LOCK_TIMEOUT_SEC", 0.05)
+
+    holder_ready = asyncio.Event()
+
+    async def _hold_lock_forever():
+        async with trade_executor.acquire_execution_lock() as acquired:
+            assert acquired is True
+            holder_ready.set()
+            # Never releases within the waiter's timeout — sleeps far longer
+            # than the 0.05s timeout above, simulating a stalled feed call.
+            await asyncio.sleep(10)
+
+    holder_task = asyncio.create_task(_hold_lock_forever())
+    await holder_ready.wait()
+
+    recs = [_make_recommendation(1)]
+    result = await asyncio.wait_for(
+        trade_executor.execute_autonomous_from_recommendations(recs), timeout=5.0
+    )
+
+    assert result.executed is False
+    assert "lock busy" in result.message.lower()
+    assert result.attempts == []
+
+    holder_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await holder_task
+
+
 async def test_seeded_demo_open_trade_does_not_lock(tmp_path, monkeypatch):
     """The bundled demo fixture trade (trade_id 'trd_seed_...') must never
     block real autonomous entries — only genuine open trades count."""

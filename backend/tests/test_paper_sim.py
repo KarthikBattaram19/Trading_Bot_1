@@ -551,6 +551,70 @@ async def test_refresh_marks_blocked_when_stale():
         await engine.refresh_marks()
 
 
+def test_direct_order_rejected_while_one_trade_open(tmp_path, monkeypatch):
+    """Bypass close: POST /paper-sim/orders must not open a second position
+    while one is already open — whether that first position was opened via
+    this same endpoint (unregistered in the learning store) or via the
+    autonomous executor (registered). Covers the paper_sim-only case here.
+
+    Points `trade_executor.get_learning_service` at a throwaway tmp_path
+    store (same convention as backend/tests/test_trade_executor.py's
+    `_isolated_learning_service` fixture) rather than the ambient
+    backend/data/learning_store.json — that file can legitimately hold a
+    real non-seed open trade (e.g. on a live trading day), which would make
+    the first POST here 409 for the wrong reason and fail this test."""
+    from backend.services import trade_executor
+    from backend.services.learning_service import LearningService
+
+    trade_executor.reset_execution_lock_for_tests()
+    isolated_learning_service = LearningService(store_path=tmp_path / "learning_store.json")
+    monkeypatch.setattr(
+        trade_executor, "get_learning_service", lambda: isolated_learning_service
+    )
+    feed = FakeFeed()
+    get_paper_engine(feed=feed, config=PaperSimConfig(slippage_bps=0), reset=True)
+    from backend.main import app
+
+    client = TestClient(app)
+
+    order_body = {
+        "strategy_tag": "simple_vol",
+        "underlying": "SBIN",
+        "legs": [
+            {
+                "symbol": "SBIN28MAR24500CE",
+                "side": "buy",
+                "quantity": 25,
+                "exchange": "NFO",
+                "symbol_token": "40123",
+            },
+            {
+                "symbol": "SBIN28MAR24500PE",
+                "side": "buy",
+                "quantity": 25,
+                "exchange": "NFO",
+                "symbol_token": "40124",
+            },
+        ],
+    }
+
+    first = client.post("/api/v1/paper-sim/orders", json=order_body)
+    assert first.status_code == 200, first.text
+    position_id = first.json()["position"]["position_id"]
+
+    second = client.post("/api/v1/paper-sim/orders", json=order_body)
+    assert second.status_code == 409, second.text
+    assert "one-trade" in second.json()["detail"].lower()
+
+    # Guard against over-blocking: closing the already-open position must
+    # still work while the one-trade guard is in effect.
+    close = client.post(f"/api/v1/paper-sim/positions/{position_id}/close")
+    assert close.status_code == 200, close.text
+
+    # Keep process singleton clean for other tests
+    get_paper_engine(feed=FakeFeed(), config=PaperSimConfig(slippage_bps=0), reset=True)
+
+
 def test_http_ledger_pnl_lifecycle(monkeypatch):
     """Phase 1.1 evidence: account / positions / fills / multi-leg / close update local P&L."""
     monkeypatch.setenv("EXECUTION_MODE", "paper")
