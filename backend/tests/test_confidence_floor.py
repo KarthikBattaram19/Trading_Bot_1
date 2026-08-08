@@ -103,3 +103,27 @@ def test_learning_service_unavailable_falls_back_to_config_floor(monkeypatch) ->
 
     assert value == 0.80  # fail closed to the stricter floor
     assert source == "config"
+
+
+def test_learning_service_unavailable_logs_the_failure(monkeypatch, caplog) -> None:
+    """
+    An unreadable learning store silently moving the floor 0.70 -> 0.80 is a
+    trading-threshold change with no operator signal — it must be logged.
+    """
+    import logging
+
+    def _boom():
+        raise RuntimeError("store unreadable")
+
+    monkeypatch.setattr(confidence_floor, "get_learning_service", _boom)
+    monkeypatch.delenv("MIN_RECOMMENDATION_CONFIDENCE", raising=False)
+
+    with caplog.at_level(logging.ERROR, logger="backend.services.confidence_floor"):
+        value, source = confidence_floor.effective_min_confidence(_CFG)
+
+    assert value == 0.80
+    assert source == "config"
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert "unreadable" in record.message.lower() or "failing closed" in record.message.lower()
+    assert "store unreadable" in caplog.text
