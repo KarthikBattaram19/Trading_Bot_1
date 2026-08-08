@@ -59,7 +59,7 @@ def test_coverage_fails_when_ratio_below_80():
     snaps = [_snap(f"S{i}", iv_z_ok=True, rv_ok=True) for i in range(79)]
     snaps += [_snap(f"B{i}", live=False, garch_ok=False, iv_ok=False) for i in range(21)]
     report = evaluate_strategy_coverage(snaps, scanned=100, cfg={
-        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+        "strategy_coverage": {"min_coverage_ratio": 0.80},
     })
     simple = report.by_strategy[StrategyType.simple_volatility]
     assert simple.eligible == 79
@@ -67,29 +67,35 @@ def test_coverage_fails_when_ratio_below_80():
     assert StrategyType.simple_volatility not in report.available_strategies
 
 
-def test_coverage_passes_at_80_percent_and_50_eligible():
+def test_coverage_passes_at_80_percent_above_derived_floor():
     snaps = [_snap(f"S{i}", iv_z_ok=True, rv_ok=True) for i in range(80)]
     snaps += [_snap(f"B{i}", live=False, garch_ok=False, iv_ok=False) for i in range(20)]
     report = evaluate_strategy_coverage(snaps, scanned=100, cfg={
-        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+        "strategy_coverage": {"min_coverage_ratio": 0.80},
     })
     assert report.by_strategy[StrategyType.simple_volatility].published is True
     assert StrategyType.simple_volatility in report.available_strategies
 
 
-def test_coverage_fails_when_eligible_under_50():
-    snaps = [_snap(f"S{i}") for i in range(49)]
-    report = evaluate_strategy_coverage(snaps, scanned=49, cfg={
-        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+def test_truncated_scan_cannot_publish_on_a_perfect_ratio():
+    """The absolute floor is derived from the FULL scan cap (default-derived
+    cap 20 → floor 16), so a budget-truncated cycle that only scanned 12
+    symbols cannot publish on 12/12 = 100% — the exact hole a config-tunable
+    floor used to open."""
+    snaps = [_snap(f"S{i}", iv_z_ok=True, rv_ok=True) for i in range(12)]
+    report = evaluate_strategy_coverage(snaps, scanned=12, cfg={
+        "strategy_coverage": {"min_coverage_ratio": 0.80},
     })
-    assert report.by_strategy[StrategyType.simple_volatility].eligible == 49
-    assert report.by_strategy[StrategyType.simple_volatility].published is False
+    simple = report.by_strategy[StrategyType.simple_volatility]
+    assert simple.eligible == 12
+    assert simple.coverage == pytest.approx(1.0)
+    assert simple.published is False
 
 
 def test_vega_requires_iv_z():
     snaps = [_snap(f"S{i}", iv_z_ok=False) for i in range(80)]
     report = evaluate_strategy_coverage(snaps, scanned=80, cfg={
-        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+        "strategy_coverage": {"min_coverage_ratio": 0.80},
     })
     assert report.by_strategy[StrategyType.simple_volatility].published is True
     assert report.by_strategy[StrategyType.vega_scalping].published is False
@@ -106,7 +112,7 @@ def test_gamma_earnings_gap_without_garch_when_dte_leq_1():
         for i in range(80)
     ]
     report = evaluate_strategy_coverage(snaps, scanned=80, cfg={
-        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+        "strategy_coverage": {"min_coverage_ratio": 0.80},
     })
     assert report.by_strategy[StrategyType.gamma_scalping].published is True
 
@@ -114,24 +120,21 @@ def test_gamma_earnings_gap_without_garch_when_dte_leq_1():
 def test_warning_lines_on_abort():
     snaps = [_snap("ONLY")]
     report = evaluate_strategy_coverage(snaps, scanned=1, cfg={
-        "strategy_coverage": {"min_coverage_ratio": 0.80, "min_eligible_symbols": 50},
+        "strategy_coverage": {"min_coverage_ratio": 0.80},
     })
     assert any("STRATEGY_COVERAGE_ABORT" in w for w in report.warnings)
 
 
 def test_coverage_uses_attempted_denominator_under_enrichment_cap():
     """Bounded enrich (e.g. 40 of 213) must score coverage against attempted, not full universe."""
-    # 32 eligible of 40 attempted → 80%; min_eligible (20) fits under max_symbols.
+    # 32 eligible of 40 attempted → 80%, above the derived floor (16 at default inputs).
     snaps = [_snap(f"S{i}", iv_z_ok=True, rv_ok=True) for i in range(32)]
     snaps += [_snap(f"B{i}", live=False, garch_ok=False, iv_ok=False) for i in range(181)]
     report = evaluate_strategy_coverage(
         snaps,
         scanned=40,  # enrichment max_symbols / attempted
         cfg={
-            "strategy_coverage": {
-                "min_coverage_ratio": 0.80,
-                "min_eligible_symbols": 20,
-            },
+            "strategy_coverage": {"min_coverage_ratio": 0.80},
         },
     )
     simple = report.by_strategy[StrategyType.simple_volatility]
@@ -142,17 +145,14 @@ def test_coverage_uses_attempted_denominator_under_enrichment_cap():
 
 
 def test_coverage_still_aborts_when_denominator_is_full_universe():
-    """If scanned stays at full G11 size, 32/213 cannot publish even with a low absolute floor."""
+    """If scanned stays at full G11 size, 32/213 cannot publish on ratio even though 32 > the floor."""
     snaps = [_snap(f"S{i}", iv_z_ok=True, rv_ok=True) for i in range(32)]
     snaps += [_snap(f"B{i}", live=False, garch_ok=False, iv_ok=False) for i in range(181)]
     report = evaluate_strategy_coverage(
         snaps,
         scanned=213,
         cfg={
-            "strategy_coverage": {
-                "min_coverage_ratio": 0.80,
-                "min_eligible_symbols": 20,
-            },
+            "strategy_coverage": {"min_coverage_ratio": 0.80},
         },
     )
     assert report.by_strategy[StrategyType.simple_volatility].published is False

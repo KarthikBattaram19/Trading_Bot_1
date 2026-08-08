@@ -141,6 +141,10 @@ grade. The relaxations above are therefore not open questions any more; they
 are gone. `min_coverage_ratio` is back to 0.80, the 0.70 bootstrap floor and
 the `MIN_RECOMMENDATION_CONFIDENCE` env lever are deleted, and the scan cap and
 eligible floor are now derived from the paced Breeze call budget
-(`backend/services/scan_capacity.py`, 23 underlyings / 19 eligible), validated
-at boot. From the next run onward the baseline being graded is an unforced one,
-and zero trades is a finding to explain, not a target to tune toward.
+(`backend/services/scan_capacity.py`, 20 underlyings / 16 eligible), validated
+at boot and per cycle. An adversarial code review the same evening hardened the
+first cut (runtime now enforces the enrichment/history budget split, history
+calls are paced, the scheduler cadence fallback matches the model, and the
+eligible floor is not overridable in config at all). From the next run onward
+the baseline being graded is an unforced one, and zero trades is a finding to
+explain, not a target to tune toward.

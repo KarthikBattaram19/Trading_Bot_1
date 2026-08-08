@@ -57,7 +57,7 @@
         "min_eligible_symbols": {
           "type": "integer",
           "minimum": 0,
-          "description": "OPTIONAL explicit override of the absolute eligible floor. Omit it: the shipped default is derived as ceil(min_coverage_ratio × derived scan cap) by backend/services/scan_capacity.py, so it can never contradict the call budget. An override above the derived cap is a boot-time error."
+          "description": "REMOVED 2026-08-08 — no longer read anywhere. The absolute eligible floor is always derived as ceil(min_coverage_ratio × derived scan cap) by backend/services/scan_capacity.py; validate_scan_capacity rejects this key's presence at boot and per cycle so it cannot become a silent loosening (or tightening) lever again."
         },
         "min_scan_symbols": {
           "type": "integer",
@@ -591,7 +591,7 @@
         "breeze_calls_per_symbol": {
           "type": "integer",
           "minimum": 1,
-          "description": "Worst-case paced Breeze calls to enrich one underlying (1 spot LTP + 2 chain sides, ×2 product_type retries)."
+          "description": "Worst-case paced Breeze calls to enrich one underlying: up to 2 spot-LTP fallbacks (universe_enrichment._spot_ltp) + 2 chain rights × 2 product_type retries (_fetch_option_chain_sides) = 6. Mirror of the code — update when enrich_one gains a fetch."
         },
         "breeze_history_calls_per_symbol": {
           "type": "integer",

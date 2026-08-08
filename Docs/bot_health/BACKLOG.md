@@ -221,6 +221,14 @@ deprioritized behind any open P0/P1 item.
   micro-capital phase. (first seen 2026-08-02, evidence:
   `grep -rli "reconcile\|fill_state\|order_state" backend --include=*.py`
   excluding tests → no matches)
+- [ ] Runtime Breeze call accounting: `scan_capacity.py` budgets *scheduled*
+  cycles only. On-demand generations (`GET /recommendations?refresh=true`,
+  approvals forcing a fresh cycle, post-restart cadence resets) each spend
+  ~160 uncounted paced calls, and paper_sim automation/health calls are
+  budgeted by assumption (envelope remainder), not measurement. Wanted: a
+  per-day call counter at the adapter layer with a scheduler-status surface,
+  so envelope pressure is observed rather than modeled. (first seen
+  2026-08-08, evidence: adversarial review of `a363c67`, finding 6)
 
 - [x] **The 40-symbol enrichment budget was filled by a 12-name hardcoded
   allowlist + alphabetical order, with no liquidity ranking** — the majority
@@ -365,12 +373,20 @@ deprioritized behind any open P0/P1 item.
     first cycle), the `MIN_RECOMMENDATION_CONFIDENCE` env lever, and the
     hand-set `max_symbols` / `min_eligible_symbols`. Replaced by
     `backend/services/scan_capacity.py`: the scan cap is **derived** from the
-    paced call budget (`min(wall-clock, daily-envelope)` = 23 underlyings) and
-    `min_eligible_symbols = ceil(0.80 × cap)` = 19, with
-    `validate_scan_capacity()` in the FastAPI lifespan refusing to boot on an
-    unsatisfiable configuration. `min_coverage_ratio` restored to 0.80;
-    cadence 600→900s to keep 3381 calls/day inside the ~5000/day Breeze
-    envelope. Root cause of the original emptiness recorded honestly: the
+    paced call budget (`min(enrich wall-clock, history wall-clock,
+    daily-envelope)` = 20 underlyings at 6 worst-case enrich calls/symbol) and
+    the eligible floor is always `ceil(0.80 × cap)` = 16 — not a config key;
+    its presence is rejected. `validate_scan_capacity()` runs at boot AND per
+    cycle (config is re-read from disk each cycle) and refuses an
+    unsatisfiable configuration. Runtime obeys the model: enrichment and
+    history get separate deadlines (70/30 split), history calls are paced via
+    `breeze_pacing.py`, and the scheduler's cadence fallback shares the
+    model's 900s constant. `min_coverage_ratio` restored to 0.80; 3360
+    calls/day inside the ~5000/day Breeze envelope. (Hardened 2026-08-08
+    evening after an adversarial code review found the first cut was a model
+    the runtime didn't obey — unenforced budget split, unpaced history calls,
+    divergent cadence fallbacks, boot-only validation, understated
+    calls/symbol, and a still-tunable eligible floor.) Root cause of the original emptiness recorded honestly: the
     0.80-of-20 gate was never too strict — a 20s budget could not finish
     40 symbols × 5 paced calls × 700ms (~140s), so every scan truncated and
     nothing raised. Tests: `test_scan_capacity.py` (9, incl. a regression

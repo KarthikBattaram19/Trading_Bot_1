@@ -30,17 +30,33 @@ scan, from the paced call budget rather than a hand-set `max_symbols`:
 
 ```
 enrichment window = generation_budget_sec (120s) × enrichment_budget_frac (0.70) = 84s
-wall-clock cap    = 84s / (5 calls × 0.7s)                                       = 24
-daily cap         = breeze_daily_call_budget (3500) / (21 cycles × 7 calls)      = 23
-max_symbols       = min(24, 23)                                                  = 23
-min_eligible      = ceil(min_coverage_ratio 0.80 × 23)                           = 19
-→ 23 × 7 × 21 = 3381 Breeze calls/day, inside the ~5000/day vendor envelope
+history window    = the remaining 30%                                            = 36s
+enrichment cap    = 84s / (6 worst-case calls × 0.7s)                            = 20
+history cap       = 36s / (2 calls × 0.7s)                                       = 25
+daily cap         = breeze_daily_call_budget (3500) / (21 cycles × 8 calls)      = 20
+max_symbols       = min(20, 25, 20)                                              = 20
+min_eligible      = ceil(min_coverage_ratio 0.80 × 20)                          = 16
+→ 20 × 8 × 21 = 3360 Breeze calls/day, inside the ~5000/day vendor envelope
 ```
 
-`validate_scan_capacity()` runs in the FastAPI lifespan: a configuration where
-those numbers cannot all hold **refuses to boot** with the offending arithmetic
-in the message. A silently-truncated scan that publishes nothing is exactly the
+Every call this model counts is actually paced at `min_interval_ms`
+(enrichment via the enricher's limiter, candle history via
+`backend/services/breeze_pacing.py`), and the runtime enforces the 70/30 split
+with separate deadlines — slow Breeze responses cannot silently eat the
+history window.
+
+`validate_scan_capacity()` runs in the FastAPI lifespan **and at the top of
+every cycle** (the config file is re-read from disk each cycle): a
+configuration where those numbers cannot all hold refuses to boot, and a
+post-boot edit fails the next cycle loudly instead of taking effect
+unvalidated. A silently-truncated scan that publishes nothing is exactly the
 failure mode this replaced.
+
+**Not covered by the budget:** on-demand generations
+(`GET /api/v1/recommendations?refresh=true`, manual approvals forcing a fresh
+cycle) spend real Breeze calls outside the 3500 slice — ~160 per hit. Prefer
+reading the cached response and `analysis_notes`; runtime call accounting is
+an open BACKLOG item.
 
 ## Morning checklist (~08:45 IST)
 
@@ -83,7 +99,7 @@ failure mode this replaced.
 | `bootstrap_min_confidence` 0.70 | A floor that loosens *because* nothing has traded yet inverts the purpose of a floor. 0.80 applies from the first cycle. |
 | `MIN_RECOMMENDATION_CONFIDENCE` env var | An out-of-band threshold change with no audit trail, reachable from a dashboard at 12:00 on a slow day. |
 | `max_symbols` (hand-set 15, previously 40) | Now derived from the call budget, so it cannot silently contradict it. |
-| `min_coverage_ratio` 0.60, `min_eligible_symbols` 6 | Restored to 0.80 / derived. The old 0.80-of-20 gate was unreachable because the *budget* was wrong, not because the gate was strict. |
+| `min_coverage_ratio` 0.60, `min_eligible_symbols` 6 | Ratio restored to 0.80. `min_eligible_symbols` is not a config key at all any more — the floor is always `ceil(ratio × derived cap)` and the key's presence is rejected at boot, so it cannot become a quiet loosening lever again. The old 0.80-of-20 gate was unreachable because the *budget* was wrong, not because the gate was strict. |
 
 ## Genuine failure levers (operational, not gate-loosening)
 

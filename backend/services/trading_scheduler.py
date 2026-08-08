@@ -29,6 +29,7 @@ from typing import Any
 
 from backend.services.market_session import CONFIG_PATH, now_ist, session_phase
 from backend.services.recommendation_cycle import run_recommendation_cycle
+from backend.services.scan_capacity import DEFAULT_RECOMMENDATION_CADENCE_SEC
 from backend.services.trade_executor import has_open_paper_position, is_one_trade_locked
 
 logger = logging.getLogger(__name__)
@@ -44,13 +45,18 @@ def _load_scheduler_config() -> dict[str, Any]:
     defaults = {
         "enabled": True,
         "tick_sec": 30.0,
-        "recommendation_cadence_sec": 600.0,
+        # Shared with scan_capacity._cycles_per_day: if the fallbacks diverged,
+        # boot validation would certify a daily call budget for a cadence the
+        # scheduler doesn't actually run.
+        "recommendation_cadence_sec": DEFAULT_RECOMMENDATION_CADENCE_SEC,
         "flatten_retry_max": 30,
     }
     try:
         with open(CONFIG_PATH, encoding="utf-8") as f:
             section = json.load(f).get("scheduler", {})
-    except (OSError, ValueError):
+    except (OSError, ValueError) as exc:
+        # Falling back to defaults changes trading cadence — never do it mutely.
+        logger.error("scheduler config unreadable, using defaults: %s", exc)
         section = {}
     return {**defaults, **{k: v for k, v in section.items() if k in defaults}}
 

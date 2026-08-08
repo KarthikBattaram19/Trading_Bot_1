@@ -25,6 +25,7 @@ from backend.integrations.icici_direct.market_data import (
     IciciDirectMarketDataAdapter,
     get_market_data_adapter,
 )
+from backend.services.breeze_pacing import AsyncRateLimiter
 from backend.services.atm_liquidity_history import (
     DEFAULT_STORE_PATH as ATM_HISTORY_STORE_PATH,
     AtmLiquidityHistoryStore,
@@ -113,23 +114,6 @@ class LiveMarks:
 class _CacheEntry:
     marks: LiveMarks
     stored_at: float
-
-
-class AsyncRateLimiter:
-    """Global minimum spacing between Breeze REST calls."""
-
-    def __init__(self, min_interval_ms: float = 700.0) -> None:
-        self._min_interval = max(0.05, float(min_interval_ms) / 1000.0)
-        self._lock = asyncio.Lock()
-        self._next_at = 0.0
-
-    async def acquire(self) -> None:
-        async with self._lock:
-            now = time.monotonic()
-            wait = self._next_at - now
-            if wait > 0:
-                await asyncio.sleep(wait)
-            self._next_at = time.monotonic() + self._min_interval
 
 
 def _parse_float(value: Any) -> float | None:
