@@ -109,6 +109,14 @@ reading JSON. Never run anything that mutates repo or broker state.
 `session_traded: false` with a `no_session_reason` and omit the metric objects —
 never write a row of zeros, it would corrupt the trend series.
 
+**One row per `session_date` — merge, never append a duplicate.** If a row for
+today already exists (a re-run the same day), rewrite the file with that row
+replaced: keep the new run's `run_at`/`head_sha`/`test_result`/`changes` and
+fold the earlier run's distinct facts into `no_session_reason` (or the metric
+objects) so no measurement is lost.
+`test_metrics_session_dates_are_unique_and_ordered` enforces this; a second
+same-date append breaks the suite (happened 2026-08-08).
+
 Metric families:
 - **Performance:** session and cumulative P&L, equity, win rate, avg win/loss,
   profit factor, max drawdown, P&L by strategy and underlying.
