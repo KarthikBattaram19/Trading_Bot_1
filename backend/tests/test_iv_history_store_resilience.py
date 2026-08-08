@@ -56,6 +56,11 @@ def test_corrupt_file_is_quarantined(tmp_path: Path) -> None:
 
 
 def test_quarantine_overwrites_existing_target(tmp_path: Path) -> None:
+    # os.replace() is what provides the overwrite here (it replaces an
+    # existing destination atomically on both Windows and POSIX) — there is
+    # no separate unlink-then-replace step in the implementation, and none
+    # should be re-added; this test still needs to hold with just the
+    # replace call doing the work.
     store, path = _store(tmp_path)
     quarantine = path.with_name(path.name + ".corrupt")
     quarantine.write_text("stale-previous-quarantine", encoding="utf-8")
@@ -65,6 +70,42 @@ def test_quarantine_overwrites_existing_target(tmp_path: Path) -> None:
 
     assert data == {}
     assert quarantine.read_text(encoding="utf-8") == CORRUPT_BYTES
+
+
+def test_transient_os_error_on_read_does_not_quarantine_valid_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An OSError while opening the store (Windows sharing violation,
+    EMFILE, a momentary I/O hiccup, ...) says nothing about whether the
+    file's *contents* are valid. Only json.JSONDecodeError should trigger
+    quarantine; OSError must degrade to {} for this call only and leave
+    the file exactly as it was for the next read/write."""
+    store, path = _store(tmp_path)
+    valid_payload = '{"NIFTY|2026-08-08": [{"ts": "2026-08-08T10:00:00+05:30", "iv": 0.20}]}'
+    path.write_text(valid_payload, encoding="utf-8")
+
+    real_open = open
+
+    def _flaky_open(file, *args, **kwargs):  # noqa: ANN001 - matches builtins.open signature
+        if Path(file) == path:
+            raise OSError(13, "Permission denied (simulated transient error)")
+        return real_open(file, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", _flaky_open)
+
+    data = store._read()
+
+    assert data == {}
+
+    monkeypatch.undo()  # restore real open before inspecting/using the file again
+    quarantine = path.with_name(path.name + ".corrupt")
+    assert not quarantine.exists(), "a transient OSError must not quarantine a valid file"
+    assert path.exists(), "the original store file must survive a transient read error"
+    assert path.read_text(encoding="utf-8") == valid_payload, "original bytes must be untouched"
+
+    # And a normal read afterward (once the transient error has passed)
+    # must see the untouched, still-valid data.
+    assert store._read() == json.loads(valid_payload)
 
 
 def test_append_succeeds_against_previously_corrupt_store(tmp_path: Path) -> None:

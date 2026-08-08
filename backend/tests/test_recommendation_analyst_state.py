@@ -241,3 +241,22 @@ def test_ledger_schema_accepts_a_well_formed_record() -> None:
         "notes": ["n"],
     }
     jsonschema.validate(instance=record, schema=schema)
+
+
+def test_ledger_schema_rejects_non_iso_last_updated() -> None:
+    """`last_updated`'s pattern is otherwise untested — the accepts-a-well-formed-record
+    test above uses a valid `+05:30` offset either way, so it would pass even if the
+    pattern constraint were deleted. This pins the rejection side."""
+    schema = _load_json(LEDGER_SCHEMA_PATH)
+    record = {
+        "id": "rec-2026-08-08-guard-check",
+        "proposed_date": "2026-08-08",
+        "stage": "fill",
+        "problem": "x",
+        "proposed_change": "y",
+        "expected_impact": {"metric": "performance.win_rate", "direction": "up"},
+        "status": "proposed",
+        "last_updated": "tomorrow",
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=record, schema=schema)

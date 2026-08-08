@@ -33,7 +33,10 @@ class IvHistoryStore:
         try:
             with open(self.store_path, encoding="utf-8") as f:
                 data = json.load(f)
-        except (json.JSONDecodeError, OSError):
+        except json.JSONDecodeError:
+            # The file itself is bad JSON — quarantine it so the next
+            # _write starts clean and the corrupt bytes survive for
+            # diagnosis.
             logger.warning(
                 "iv_history_store: corrupt store at %s, quarantining and continuing with empty cache",
                 self.store_path,
@@ -41,13 +44,26 @@ class IvHistoryStore:
             )
             self._quarantine_corrupt_file()
             return {}
+        except OSError:
+            # Transient I/O failure (Windows sharing violation, EMFILE,
+            # momentary disk hiccup, ...) says nothing about whether the
+            # file's contents are valid. Degrade for this call only —
+            # do NOT quarantine, or a passing glitch on a perfectly good
+            # store would rename it away and the next _write would wipe
+            # every symbol's history down to just the new sample.
+            logger.warning(
+                "iv_history_store: transient read error on %s, returning empty cache for this call only",
+                self.store_path,
+                exc_info=True,
+            )
+            return {}
         return data if isinstance(data, dict) else {}
 
     def _quarantine_corrupt_file(self) -> None:
         quarantine = self._quarantine_path()
         try:
-            if quarantine.exists():
-                quarantine.unlink()
+            # os.replace() already overwrites an existing destination on
+            # both Windows and POSIX — no need to unlink it first.
             os.replace(self.store_path, quarantine)
         except OSError:
             logger.warning(
@@ -85,16 +101,14 @@ class IvHistoryStore:
         # to replace the *same* dst at the same instant can transiently see
         # PermissionError (WinError 5) while the OS resolves the rename —
         # not corruption, just contention. Retry briefly before giving up.
-        last_exc: OSError | None = None
         for attempt in range(attempts):
             try:
                 os.replace(tmp_path, self.store_path)
                 return
-            except PermissionError as exc:
-                last_exc = exc
+            except PermissionError:
+                if attempt == attempts - 1:
+                    raise
                 time.sleep(0.01 * (attempt + 1))
-        assert last_exc is not None
-        raise last_exc
 
     def append(
         self,
