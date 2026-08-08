@@ -27,6 +27,8 @@ from backend.routers import (
     scheduler,
 )
 from backend.services.ledger_reconciliation import reconcile_open_trades
+from backend.services.scan_capacity import validate_scan_capacity
+from backend.services.strategy_selection import load_trading_config
 from backend.services.trading_scheduler import get_trading_scheduler
 
 load_project_env()
@@ -36,6 +38,10 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Fail loudly on a gate configuration no cycle could ever satisfy. A bot
+    # that boots and then publishes nothing all day is the worse outcome.
+    capacity = validate_scan_capacity(load_trading_config())
+    logger.info("scan capacity: %s", capacity.note())
     # Release any one-trade lock orphaned by a restart (ledger is in-memory).
     try:
         reconcile_open_trades()

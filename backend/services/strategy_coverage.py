@@ -7,6 +7,7 @@ from typing import Any
 
 from backend.models.recommendations import StrategyType
 from backend.services.quant_snapshot import QuantSnapshot
+from backend.services.scan_capacity import scan_capacity
 
 
 @dataclass
@@ -90,9 +91,12 @@ def evaluate_strategy_coverage(
     scanned: int,
     cfg: dict[str, Any],
 ) -> StrategyCoverageReport:
-    section = cfg.get("strategy_coverage") or {}
-    min_ratio = float(section.get("min_coverage_ratio", 0.80))
-    min_eligible = int(section.get("min_eligible_symbols", 50))
+    # The absolute floor is derived from the call budget (see scan_capacity), not
+    # a hardcoded fallback: the old `section.get("min_eligible_symbols", 50)`
+    # default silently disagreed with the shipped config value of 20.
+    capacity = scan_capacity(cfg)
+    min_ratio = capacity.min_coverage_ratio
+    min_eligible = capacity.min_eligible_symbols
     scanned_n = max(0, int(scanned))
 
     by_strategy: dict[StrategyType, StrategyCoverageRow] = {}

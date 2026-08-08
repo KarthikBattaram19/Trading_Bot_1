@@ -328,7 +328,7 @@ deprioritized behind any open P0/P1 item.
     env, default on). During `entry` phase (09:20–14:30 IST per new
     `session_schedule` config + `backend/services/market_session.py`) it runs
     `run_recommendation_cycle(force_refresh=True)` every
-    `scheduler.recommendation_cadence_sec` (600s) unless one-trade-locked,
+    `scheduler.recommendation_cadence_sec` (900s) unless one-trade-locked,
     ensures the paper_sim γ–θ automation loop is running, blocks new entries
     14:30–15:15, and during `flatten` (15:15–15:30) closes every open
     position via `PaperEngine.close_position` (the learning-fed path) with
@@ -351,9 +351,31 @@ deprioritized behind any open P0/P1 item.
     also fixed pre-existing schema drift for `gamma_theta_breakeven` and
     `strategies.gamma_scalping.entry_signal`). Full suite 355 passed.
     **Still open:** durable decision/packet log (un-acted packets still
-    expire with the response cache — TTL now 900s, not 90s), NSE holiday
+    expire with the response cache), NSE holiday
     calendar (weekday-only check), paper_sim ledger persistence (P0-2c),
-    vega IV z-score stop (§3.11's other half). See `Docs/MONDAY_RUNBOOK.md`.
+    vega IV z-score stop (§3.11's other half). See `Docs/DAILY_RUNBOOK.md`.
+  - **Superseded in part 2026-08-08 — forced-trade scaffolding removed.** The
+    owner called off the "one trade on Monday 2026-08-10" mandate: forcing a
+    trade was distorting the engine it was supposed to validate, and giving
+    the `recommendation-engine-analyst` a loosened baseline to grade against.
+    The scheduler, `market_session.py`, `recommendation_cycle.py`,
+    `ledger_reconciliation.py` and the EOD flatten (real capability) all stay.
+    Removed: `bootstrap_min_confidence` 0.70 and the whole
+    `backend/services/confidence_floor.py` module (0.80 now applies from the
+    first cycle), the `MIN_RECOMMENDATION_CONFIDENCE` env lever, and the
+    hand-set `max_symbols` / `min_eligible_symbols`. Replaced by
+    `backend/services/scan_capacity.py`: the scan cap is **derived** from the
+    paced call budget (`min(wall-clock, daily-envelope)` = 23 underlyings) and
+    `min_eligible_symbols = ceil(0.80 × cap)` = 19, with
+    `validate_scan_capacity()` in the FastAPI lifespan refusing to boot on an
+    unsatisfiable configuration. `min_coverage_ratio` restored to 0.80;
+    cadence 600→900s to keep 3381 calls/day inside the ~5000/day Breeze
+    envelope. Root cause of the original emptiness recorded honestly: the
+    0.80-of-20 gate was never too strict — a 20s budget could not finish
+    40 symbols × 5 paced calls × 700ms (~140s), so every scan truncated and
+    nothing raised. Tests: `test_scan_capacity.py` (9, incl. a regression
+    that the old 40-in-20s config now fails boot),
+    `test_trading_parameters_config.py` rewritten. Full suite 404 passed.
 
 ## Other — deferred behind open P0/P1
 

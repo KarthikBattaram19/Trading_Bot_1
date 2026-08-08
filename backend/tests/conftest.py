@@ -52,8 +52,7 @@ def _reset_process_singletons(tmp_path, monkeypatch: pytest.MonkeyPatch):
     trading ledger. Every current test that legitimately touches
     `LearningService` already passes its own `tmp_path`-backed `store_path`
     explicitly (confirmed by auditing test_learning_seed.py,
-    test_learning_store_resilience.py, test_confidence_floor.py,
-    test_decisions.py, test_ledger_reconciliation.py, test_paper_sim.py,
+    test_learning_store_resilience.py, test_decisions.py, test_ledger_reconciliation.py, test_paper_sim.py,
     test_scheduler_full_day.py, test_trade_executor.py — none read
     `STORE_PATH` or the bundled real file directly), so this redirect changes
     nothing for them; it only removes the trap for tests that (like

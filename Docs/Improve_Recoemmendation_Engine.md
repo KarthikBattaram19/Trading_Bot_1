@@ -437,6 +437,15 @@ real default at all. Only `test_fno_universe.py:136` and one case in
   discrepancy by requiring the config key), and add one test that loads the real
   `trading_parameters.defaults.json` unmodified and asserts coverage behavior
   against the actual shipped default.
+- **Resolution 2026-08-08:** the magic number is gone rather than aligned.
+  `strategy_coverage.py` no longer has a `min_eligible_symbols` fallback at all —
+  it calls `scan_capacity(cfg)` (`backend/services/scan_capacity.py`), which
+  derives the floor as `ceil(min_coverage_ratio × derived_scan_cap)`. A config
+  section that is emptied therefore yields the *derived* floor, not a stricter
+  magic constant, and there is no second place for the number to drift.
+  `backend/tests/test_scan_capacity.py::test_shipped_defaults_are_satisfiable`
+  loads the unmodified `trading_parameters.defaults.json` and asserts the real
+  shipped behaviour, which no test previously did.
 
 ### 3.9 `max_symbols=40` truncation has no visible liquidity/importance ranking beyond a short manual priority list — ✅ PARTIALLY FIXED 2026-08-06
 `recommendation_engine.py:301-319` — only 12 symbols (indices + a handful of large
@@ -469,6 +478,16 @@ gate.
   suite (319 tests, was 301) passes. **Not addressed by this fix:** `max_symbols`
   itself is still 40 — this only improves which 40 get picked, it doesn't raise
   the cap (that's a separate, still-open call against Breeze's rate envelope).
+- **Resolution 2026-08-08 (the "separate, still-open call" above):** `max_symbols`
+  no longer exists as a config key. `backend/services/scan_capacity.py` derives
+  the cap as `min(wall-clock capacity, daily-envelope capacity)` — 23 underlyings
+  on shipped defaults — explicitly *against* Breeze's ~100/min and ~5000/day
+  envelope (3381 calls/day at a 900s cadence), and `validate_scan_capacity()`
+  refuses to boot if the arithmetic does not hold. This also names the root cause
+  of §3.1's empty recommendations: 40 symbols × ~5 paced calls × 700ms ≈ 140s
+  never fitted the old 20s budget, so every scan truncated below the coverage
+  gate and nothing raised. The ranking work above still decides *which* symbols
+  fill the derived cap.
 
 ### 3.10 The "gamma_scalping" four-leg structure is a double long-straddle, not the vega-neutral calendar spread `Trading_Strategies.md` Table GS-4 requires — ✅ FIXED 2026-08-06
 `backend/paper_sim/structure_builder.py:128-256` (`_append_opposite_option_at_strike` +

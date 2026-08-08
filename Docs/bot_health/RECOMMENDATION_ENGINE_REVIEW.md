@@ -276,6 +276,11 @@ and (b) make `effective_min_confidence` catch the exception and **silently** fai
 closed from the 0.70 bootstrap floor to the 0.80 config floor
 (`confidence_floor.py:37-41`) — the engine gets stricter with no visible signal.
 
+> **Update 2026-08-08:** clause (b) is moot — `confidence_floor.py` was deleted
+> with the rest of the forced-trade scaffolding. The floor is a single config
+> value (0.80) that never depends on the learning store, so an unreadable store
+> can no longer move a trading threshold. Clause (a) stands.
+
 Not yet observed failing; proposed on a mechanism a sibling store has already
 demonstrated. The fix is deliberately asymmetric to F-1: a regenerable cache
 should degrade to empty, a financial ledger must never silently do so.
@@ -344,6 +349,17 @@ because the gate was loosened, that is evidence the loop works end to end — it
 is not evidence the gate was too tight.** Those two conclusions must not be
 merged.
 
+> **Resolved 2026-08-08.** The owner called off the Monday mandate and the
+> scaffolding was removed. F-5's specific confusion is designed out rather than
+> documented around: `min_eligible_symbols` is no longer a config number that
+> can drift out of step with the cap. It is derived —
+> `ceil(min_coverage_ratio × derived_cap)` = `ceil(0.80 × 23)` = **19** — so the
+> two tests can never disagree about which binds, and the scan cap itself is
+> derived from the paced Breeze call budget
+> (`backend/services/scan_capacity.py`), validated at boot. `min_coverage_ratio`
+> is back to 0.80. The finding's underlying point held: the real defect was that
+> four numbers could contradict each other silently.
+
 ### F-6 — The confidence floor gates on a score, not a probability — **MEDIUM**
 
 Confidence is `min(0.95, score + 0.05)` (`recommendation_engine.py:979`), then
@@ -353,6 +369,12 @@ artifact to load — so every recommendation is `uncalibrated`/`heuristic`. The
 chance of winning". The name invites a probability reading nothing supports,
 and the outcome map can only be fitted from real closed outcomes, of which
 there are 0 — the system cannot bootstrap out of this on its own.
+
+> **Update 2026-08-08:** the bootstrap floor is gone; read the finding as
+> "0.80 floor ⇒ score ≥ 0.75 after penalty". The defect is unchanged and still
+> open — a score threshold wearing a probability's name — and removing the
+> scaffold did not address it. It is now the sharpest open question in the
+> ranking stage.
 
 ### F-7 — Empty earnings calendar disables one third of the strategy matrix — **LOW/MEDIUM**
 
