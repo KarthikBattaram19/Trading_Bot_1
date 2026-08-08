@@ -665,6 +665,35 @@
         "fit_min_observations": {
           "type": "integer",
           "minimum": 20
+        },
+        "symbol_overrides": {
+          "type": "object",
+          "description": "Per-underlying weight overrides calibrated by backend/scripts/calibrate_garch_weights.py (evidence: Docs/bot_health/garch_weight_calibration.md). Symbols not listed use the global weights above.",
+          "propertyNames": {
+            "pattern": "^[A-Z0-9&-]+$"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["gamma_weight", "alpha_weight", "beta_weight"],
+            "additionalProperties": false,
+            "properties": {
+              "gamma_weight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "alpha_weight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "beta_weight": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            }
+          }
         }
       }
     },

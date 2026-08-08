@@ -135,3 +135,102 @@ def test_signal_field_defaults():
     f = SignalField(value=None, usable=False, reason="missing")
     assert f.usable is False
     assert f.reason == "missing"
+
+
+_OVERRIDE_CFG = {
+    "garch_forecast": {
+        "gamma_weight": 0.05,
+        "alpha_weight": 0.05,
+        "beta_weight": 0.9,
+        "annualization_factor": 252,
+        "min_observations": 20,
+        "symbol_overrides": {
+            "SBIN": {
+                "gamma_weight": 0.03,
+                "alpha_weight": 0.15,
+                "beta_weight": 0.82,
+            }
+        },
+    },
+    "iv_zscore": {"min_observations": 5, "entry_z_threshold": -2.0},
+}
+
+
+def _no_override_cfg():
+    import copy
+
+    cfg = copy.deepcopy(_OVERRIDE_CFG)
+    cfg["garch_forecast"].pop("symbol_overrides")
+    return cfg
+
+
+def _varied_history(n: int = 40) -> list[float]:
+    # Alternating-size moves so different (gamma, alpha, beta) give different forecasts.
+    out = [100.0]
+    for i in range(n - 1):
+        out.append(out[-1] * (1.0 + (0.02 if i % 7 == 0 else 0.002) * (1 if i % 2 else -1)))
+    return out
+
+
+def test_symbol_override_weights_change_forecast():
+    history = _varied_history()
+    with_override = build_quant_snapshot(
+        marks=_marks(),
+        price_history_daily=history,
+        iv_series_intraday=[],
+        days_to_earnings=None,
+        cfg=_OVERRIDE_CFG,
+        symbol="SBIN",
+    )
+    without_override = build_quant_snapshot(
+        marks=_marks(),
+        price_history_daily=history,
+        iv_series_intraday=[],
+        days_to_earnings=None,
+        cfg=_no_override_cfg(),
+        symbol="SBIN",
+    )
+    assert with_override.garch_forecast.usable is True
+    assert without_override.garch_forecast.usable is True
+    assert with_override.garch_forecast.value != without_override.garch_forecast.value
+
+
+def test_symbol_without_override_uses_global_weights():
+    history = _varied_history()
+    other_symbol = build_quant_snapshot(
+        marks=_marks(symbol="INFY"),
+        price_history_daily=history,
+        iv_series_intraday=[],
+        days_to_earnings=None,
+        cfg=_OVERRIDE_CFG,
+        symbol="INFY",
+    )
+    global_only = build_quant_snapshot(
+        marks=_marks(symbol="INFY"),
+        price_history_daily=history,
+        iv_series_intraday=[],
+        days_to_earnings=None,
+        cfg=_no_override_cfg(),
+        symbol="INFY",
+    )
+    assert other_symbol.garch_forecast.value == global_only.garch_forecast.value
+
+
+def test_symbol_override_resolution_falls_back_to_marks_symbol():
+    # No explicit symbol arg: the override must still be found via marks.symbol.
+    history = _varied_history()
+    via_marks = build_quant_snapshot(
+        marks=_marks(),  # symbol="SBIN"
+        price_history_daily=history,
+        iv_series_intraday=[],
+        days_to_earnings=None,
+        cfg=_OVERRIDE_CFG,
+    )
+    global_only = build_quant_snapshot(
+        marks=_marks(),
+        price_history_daily=history,
+        iv_series_intraday=[],
+        days_to_earnings=None,
+        cfg=_no_override_cfg(),
+    )
+    assert via_marks.garch_forecast.value != global_only.garch_forecast.value

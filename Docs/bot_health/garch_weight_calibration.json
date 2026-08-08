@@ -1,0 +1,331 @@
+{
+  "generated_at": "2026-08-08T17:20:11.791708+00:00",
+  "window": 250,
+  "min_events": 100,
+  "min_win_rate": 0.55,
+  "default_weights": {
+    "gamma_weight": 0.05,
+    "alpha_weight": 0.05,
+    "beta_weight": 0.9
+  },
+  "per_symbol": [
+    {
+      "symbol": "BANKNIFTY",
+      "n_events": 358,
+      "default": {
+        "gamma": 0.05,
+        "alpha": 0.05,
+        "beta": 0.9,
+        "n_events": 358,
+        "mean_qlike": -8.438073149778102,
+        "win_rate_vs_default": null
+      },
+      "top_candidates": [
+        {
+          "gamma": 0.03,
+          "alpha": 0.12,
+          "beta": 0.85,
+          "n_events": 358,
+          "mean_qlike": -8.49616010557334,
+          "win_rate_vs_default": 0.6145251396648045
+        },
+        {
+          "gamma": 0.05,
+          "alpha": 0.15,
+          "beta": 0.8,
+          "n_events": 358,
+          "mean_qlike": -8.489996774632237,
+          "win_rate_vs_default": 0.6229050279329609
+        },
+        {
+          "gamma": 0.05,
+          "alpha": 0.1,
+          "beta": 0.85,
+          "n_events": 358,
+          "mean_qlike": -8.484458027198684,
+          "win_rate_vs_default": 0.6229050279329609
+        },
+        {
+          "gamma": 0.04,
+          "alpha": 0.08,
+          "beta": 0.88,
+          "n_events": 358,
+          "mean_qlike": -8.479734529663682,
+          "win_rate_vs_default": 0.6201117318435754
+        },
+        {
+          "gamma": 0.08,
+          "alpha": 0.12,
+          "beta": 0.8,
+          "n_events": 358,
+          "mean_qlike": -8.475034482277145,
+          "win_rate_vs_default": 0.6229050279329609
+        }
+      ],
+      "accepted": {
+        "gamma": 0.03,
+        "alpha": 0.12,
+        "beta": 0.85,
+        "n_events": 358,
+        "mean_qlike": -8.49616010557334,
+        "win_rate_vs_default": 0.6145251396648045
+      },
+      "reject_reason": null
+    },
+    {
+      "symbol": "HDFCBANK",
+      "n_events": 358,
+      "default": {
+        "gamma": 0.05,
+        "alpha": 0.05,
+        "beta": 0.9,
+        "n_events": 358,
+        "mean_qlike": -7.909085639190562,
+        "win_rate_vs_default": null
+      },
+      "top_candidates": [
+        {
+          "gamma": 0.04,
+          "alpha": 0.08,
+          "beta": 0.88,
+          "n_events": 358,
+          "mean_qlike": -7.926400152771027,
+          "win_rate_vs_default": 0.6005586592178771
+        },
+        {
+          "gamma": 0.05,
+          "alpha": 0.1,
+          "beta": 0.85,
+          "n_events": 358,
+          "mean_qlike": -7.922382561137434,
+          "win_rate_vs_default": 0.6061452513966481
+        },
+        {
+          "gamma": 0.03,
+          "alpha": 0.12,
+          "beta": 0.85,
+          "n_events": 358,
+          "mean_qlike": -7.91831831096491,
+          "win_rate_vs_default": 0.6061452513966481
+        },
+        {
+          "gamma": 0.07,
+          "alpha": 0.08,
+          "beta": 0.85,
+          "n_events": 358,
+          "mean_qlike": -7.914176398548174,
+          "win_rate_vs_default": 0.5810055865921788
+        },
+        {
+          "gamma": 0.08,
+          "alpha": 0.12,
+          "beta": 0.8,
+          "n_events": 358,
+          "mean_qlike": -7.912563835702101,
+          "win_rate_vs_default": 0.5893854748603352
+        }
+      ],
+      "accepted": {
+        "gamma": 0.04,
+        "alpha": 0.08,
+        "beta": 0.88,
+        "n_events": 358,
+        "mean_qlike": -7.926400152771027,
+        "win_rate_vs_default": 0.6005586592178771
+      },
+      "reject_reason": null
+    },
+    {
+      "symbol": "INFY",
+      "n_events": 358,
+      "default": {
+        "gamma": 0.05,
+        "alpha": 0.05,
+        "beta": 0.9,
+        "n_events": 358,
+        "mean_qlike": -6.959279560337138,
+        "win_rate_vs_default": null
+      },
+      "top_candidates": [
+        {
+          "gamma": 0.05,
+          "alpha": 0.03,
+          "beta": 0.92,
+          "n_events": 358,
+          "mean_qlike": -6.971039464984232,
+          "win_rate_vs_default": 0.49441340782122906
+        },
+        {
+          "gamma": 0.07,
+          "alpha": 0.03,
+          "beta": 0.9,
+          "n_events": 358,
+          "mean_qlike": -6.965378778172306,
+          "win_rate_vs_default": 0.5111731843575419
+        },
+        {
+          "gamma": 0.09,
+          "alpha": 0.03,
+          "beta": 0.88,
+          "n_events": 358,
+          "mean_qlike": -6.961203623827138,
+          "win_rate_vs_default": 0.5167597765363129
+        },
+        {
+          "gamma": 0.05,
+          "alpha": 0.05,
+          "beta": 0.9,
+          "n_events": 358,
+          "mean_qlike": -6.959279560337138,
+          "win_rate_vs_default": 0.0
+        },
+        {
+          "gamma": 0.12,
+          "alpha": 0.03,
+          "beta": 0.85,
+          "n_events": 358,
+          "mean_qlike": -6.957164125990769,
+          "win_rate_vs_default": 0.5167597765363129
+        }
+      ],
+      "accepted": null,
+      "reject_reason": "win_rate_below_guard"
+    },
+    {
+      "symbol": "NIFTY",
+      "n_events": 356,
+      "default": {
+        "gamma": 0.05,
+        "alpha": 0.05,
+        "beta": 0.9,
+        "n_events": 356,
+        "mean_qlike": -8.648800518750038,
+        "win_rate_vs_default": null
+      },
+      "top_candidates": [
+        {
+          "gamma": 0.04,
+          "alpha": 0.08,
+          "beta": 0.88,
+          "n_events": 356,
+          "mean_qlike": -8.667976575800036,
+          "win_rate_vs_default": 0.6095505617977528
+        },
+        {
+          "gamma": 0.05,
+          "alpha": 0.1,
+          "beta": 0.85,
+          "n_events": 356,
+          "mean_qlike": -8.664899504345392,
+          "win_rate_vs_default": 0.6235955056179775
+        },
+        {
+          "gamma": 0.03,
+          "alpha": 0.12,
+          "beta": 0.85,
+          "n_events": 356,
+          "mean_qlike": -8.662871258767984,
+          "win_rate_vs_default": 0.598314606741573
+        },
+        {
+          "gamma": 0.08,
+          "alpha": 0.12,
+          "beta": 0.8,
+          "n_events": 356,
+          "mean_qlike": -8.656224817043748,
+          "win_rate_vs_default": 0.6179775280898876
+        },
+        {
+          "gamma": 0.07,
+          "alpha": 0.08,
+          "beta": 0.85,
+          "n_events": 356,
+          "mean_qlike": -8.656078619917873,
+          "win_rate_vs_default": 0.6151685393258427
+        }
+      ],
+      "accepted": {
+        "gamma": 0.04,
+        "alpha": 0.08,
+        "beta": 0.88,
+        "n_events": 356,
+        "mean_qlike": -8.667976575800036,
+        "win_rate_vs_default": 0.6095505617977528
+      },
+      "reject_reason": null
+    },
+    {
+      "symbol": "RELIANCE",
+      "n_events": 358,
+      "default": {
+        "gamma": 0.05,
+        "alpha": 0.05,
+        "beta": 0.9,
+        "n_events": 358,
+        "mean_qlike": -7.652207402668,
+        "win_rate_vs_default": null
+      },
+      "top_candidates": [
+        {
+          "gamma": 0.05,
+          "alpha": 0.05,
+          "beta": 0.9,
+          "n_events": 358,
+          "mean_qlike": -7.652207402668,
+          "win_rate_vs_default": 0.0
+        },
+        {
+          "gamma": 0.07,
+          "alpha": 0.05,
+          "beta": 0.88,
+          "n_events": 358,
+          "mean_qlike": -7.6510801095839645,
+          "win_rate_vs_default": 0.4301675977653631
+        },
+        {
+          "gamma": 0.05,
+          "alpha": 0.03,
+          "beta": 0.92,
+          "n_events": 358,
+          "mean_qlike": -7.650382166911018,
+          "win_rate_vs_default": 0.441340782122905
+        },
+        {
+          "gamma": 0.07,
+          "alpha": 0.03,
+          "beta": 0.9,
+          "n_events": 358,
+          "mean_qlike": -7.648425952213246,
+          "win_rate_vs_default": 0.4273743016759777
+        },
+        {
+          "gamma": 0.1,
+          "alpha": 0.05,
+          "beta": 0.85,
+          "n_events": 358,
+          "mean_qlike": -7.647947406654321,
+          "win_rate_vs_default": 0.4245810055865922
+        }
+      ],
+      "accepted": null,
+      "reject_reason": "default_at_least_as_good"
+    }
+  ],
+  "recommended_symbol_overrides": {
+    "BANKNIFTY": {
+      "gamma_weight": 0.03,
+      "alpha_weight": 0.12,
+      "beta_weight": 0.85
+    },
+    "HDFCBANK": {
+      "gamma_weight": 0.04,
+      "alpha_weight": 0.08,
+      "beta_weight": 0.88
+    },
+    "NIFTY": {
+      "gamma_weight": 0.04,
+      "alpha_weight": 0.08,
+      "beta_weight": 0.88
+    }
+  }
+}
