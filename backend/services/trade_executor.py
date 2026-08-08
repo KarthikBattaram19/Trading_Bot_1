@@ -7,6 +7,7 @@ until a paper broker submit succeeds or all candidates are exhausted.
 
 from __future__ import annotations
 
+import asyncio
 import os
 
 from backend.analytics.confidence_calibration import is_seed_outcome
@@ -37,6 +38,33 @@ def get_active_trade_id() -> str | None:
 
 def is_one_trade_locked() -> bool:
     return get_active_trade_id() is not None
+
+
+# Serializes the check (`is_one_trade_locked`) -> submit (`_submit_via_paper_sim`,
+# which awaits) -> register (`register_open_trade`) critical section below.
+# Without this, two concurrent callers (a scheduler tick and a request-triggered
+# autonomous run — see backend/services/trading_scheduler.py and
+# backend/services/recommendation_cycle.py::autonomous_execution_for) can both
+# observe the lock as free before either has registered its trade, and both
+# open a position — defeating the one-trade-at-a-time invariant
+# (Docs/architecture.md §20.4.11). Held across the whole candidate loop (not
+# just per-candidate) so a second caller waits for this caller's entire
+# execution attempt — success or exhaustion — rather than racing in between
+# individual candidate attempts.
+_execution_lock = asyncio.Lock()
+
+
+def reset_execution_lock_for_tests() -> None:
+    """
+    `asyncio.Lock` binds to the first event loop that contends on it, so a
+    module-level lock reused across pytest-asyncio tests that run on
+    different event loops raises `RuntimeError: ... is bound to a different
+    event loop`. Production is single-loop under uvicorn so this never bites
+    there — call this from an autouse test fixture to re-initialise the lock
+    per test instead.
+    """
+    global _execution_lock
+    _execution_lock = asyncio.Lock()
 
 
 def _all_gates_pass(rec: InstrumentRecommendation) -> bool:
@@ -192,61 +220,71 @@ async def execute_autonomous_from_recommendations(
     sorted_recs = sorted(recommendations, key=lambda r: r.rank)
     attempts: list[TradeAttemptResult] = []
 
-    for rec in sorted_recs:
-        pre_error = _pre_submit_checks(rec)
-        if pre_error:
+    # INVARIANT for anyone adding an await inside this block: it must be
+    # bounded by a timeout. The scheduler's single `_loop` task
+    # (backend/services/trading_scheduler.py) blocks on `_execution_lock`
+    # like any other caller, so a stall anywhere in here delays every
+    # scheduler tick behind it — including the 15:15–15:30 IST flatten
+    # window that closes every open position. An unbounded await here is a
+    # flatten hazard, not just a slow request.
+    async with _execution_lock:
+        for rec in sorted_recs:
+            pre_error = _pre_submit_checks(rec)
+            if pre_error:
+                attempts.append(
+                    TradeAttemptResult(
+                        rank=rec.rank,
+                        underlying_symbol=rec.underlying_symbol,
+                        success=False,
+                        error=pre_error,
+                    )
+                )
+                continue
+
+            success, trade_id, broker_error = await _submit_via_paper_sim(
+                rec, simulate_first_rank_failure=simulate_first_rank_failure
+            )
+            if success and trade_id:
+                # Persist to the open-trades ledger — this is also what locks
+                # the one-trade scope (see get_active_trade_id above) and feeds
+                # continual learning's outcome recording. Still inside
+                # _execution_lock, so no concurrent caller can have slipped
+                # past _pre_submit_checks in between.
+                get_learning_service().register_open_trade(trade_id, rec)
+                attempts.append(
+                    TradeAttemptResult(
+                        rank=rec.rank,
+                        underlying_symbol=rec.underlying_symbol,
+                        success=True,
+                        trade_id=trade_id,
+                        order_status="filled",
+                    )
+                )
+                failed_ranks = [a.rank for a in attempts if not a.success]
+                if failed_ranks:
+                    msg = (
+                        f"Opened trade on rank #{rec.rank} ({rec.underlying_symbol}) "
+                        f"after rank(s) {failed_ranks} failed"
+                    )
+                else:
+                    msg = f"Opened trade on rank #{rec.rank} ({rec.underlying_symbol})"
+                return AutonomousExecutionResult(
+                    executed=True,
+                    selected_rank=rec.rank,
+                    trade_id=trade_id,
+                    underlying_symbol=rec.underlying_symbol,
+                    attempts=attempts,
+                    message=msg,
+                )
+
             attempts.append(
                 TradeAttemptResult(
                     rank=rec.rank,
                     underlying_symbol=rec.underlying_symbol,
                     success=False,
-                    error=pre_error,
+                    error=broker_error or "Broker submit failed",
                 )
             )
-            continue
-
-        success, trade_id, broker_error = await _submit_via_paper_sim(
-            rec, simulate_first_rank_failure=simulate_first_rank_failure
-        )
-        if success and trade_id:
-            # Persist to the open-trades ledger — this is also what locks
-            # the one-trade scope (see get_active_trade_id above) and feeds
-            # continual learning's outcome recording.
-            get_learning_service().register_open_trade(trade_id, rec)
-            attempts.append(
-                TradeAttemptResult(
-                    rank=rec.rank,
-                    underlying_symbol=rec.underlying_symbol,
-                    success=True,
-                    trade_id=trade_id,
-                    order_status="filled",
-                )
-            )
-            failed_ranks = [a.rank for a in attempts if not a.success]
-            if failed_ranks:
-                msg = (
-                    f"Opened trade on rank #{rec.rank} ({rec.underlying_symbol}) "
-                    f"after rank(s) {failed_ranks} failed"
-                )
-            else:
-                msg = f"Opened trade on rank #{rec.rank} ({rec.underlying_symbol})"
-            return AutonomousExecutionResult(
-                executed=True,
-                selected_rank=rec.rank,
-                trade_id=trade_id,
-                underlying_symbol=rec.underlying_symbol,
-                attempts=attempts,
-                message=msg,
-            )
-
-        attempts.append(
-            TradeAttemptResult(
-                rank=rec.rank,
-                underlying_symbol=rec.underlying_symbol,
-                success=False,
-                error=broker_error or "Broker submit failed",
-            )
-        )
 
     return AutonomousExecutionResult(
         executed=False,

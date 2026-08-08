@@ -11,10 +11,13 @@ stricter config floor.
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 from backend.services.learning_service import get_learning_service
+
+logger = logging.getLogger(__name__)
 
 ENV_OVERRIDE = "MIN_RECOMMENDATION_CONFIDENCE"
 _CLAMP_LOW = 0.5
@@ -37,7 +40,15 @@ def effective_min_confidence(cfg: dict[str, Any]) -> tuple[float, str]:
     try:
         if get_learning_service().real_closed_trade_count() == 0:
             return bootstrap_floor, "bootstrap"
-    except Exception:  # noqa: BLE001 — unreadable store fails closed to strict floor
+    except Exception as exc:  # noqa: BLE001 — unreadable store fails closed to strict floor
+        logger.error(
+            "confidence_floor: learning store unreadable, failing closed to config "
+            "floor %.2f instead of possibly bootstrap %.2f: %s",
+            config_floor,
+            bootstrap_floor,
+            exc,
+            exc_info=True,
+        )
         return config_floor, "config"
 
     return config_floor, "config"
