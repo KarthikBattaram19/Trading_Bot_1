@@ -180,8 +180,22 @@ async def resolve_atm_ce_leg(
     )
 
 
-def _pre_submit_checks(rec: InstrumentRecommendation) -> str | None:
-    """Return error message if candidate cannot be submitted, else None."""
+def _pre_submit_checks(rec: InstrumentRecommendation, *, paper_position_open: bool) -> str | None:
+    """
+    Return error message if candidate cannot be submitted, else None.
+
+    `paper_position_open` must be freshly evaluated by the caller for *each*
+    candidate — `PaperEngine.submit_order` is not atomic: it opens the
+    ledger position (`engine.py` `ledger.open_position`) before attempting
+    `complete_multi_leg_structure`, which can raise `PaperLedgerError` (bad
+    contract, lotsize, pre-trade gate, stale marks, investment cap). When
+    that happens the caller in `_submit_via_paper_sim` sees a failure and
+    moves on to the next candidate, but the just-opened, never-registered
+    position is still sitting open in the ledger. A single evaluation taken
+    once before the loop would carry a stale `False` into that next
+    candidate and let it stack a second open position on top. Re-checking
+    per candidate is what actually catches this.
+    """
     if rec.strategy.selected_strategy == StrategyType.blocked:
         return "Strategy blocked by cross-strategy matrix"
     if not _all_gates_pass(rec):
@@ -189,6 +203,11 @@ def _pre_submit_checks(rec: InstrumentRecommendation) -> str | None:
         return f"Parameter gates failed: {', '.join(failed)}"
     if is_one_trade_locked():
         return "One-trade scope locked — another discretionary entry is open"
+    if paper_position_open:
+        return (
+            "An open paper_sim position already exists — close it (or let "
+            "an earlier candidate's partial open resolve) before opening another"
+        )
     return None
 
 
@@ -308,7 +327,15 @@ async def execute_autonomous_from_recommendations(
             )
 
         for rec in sorted_recs:
-            pre_error = _pre_submit_checks(rec)
+            # Re-checked fresh on every candidate, not hoisted above the loop:
+            # `PaperEngine.submit_order` is not atomic — it opens the ledger
+            # position before attempting `complete_multi_leg_structure`,
+            # which can raise `PaperLedgerError` and abort the candidate
+            # while leaving that position open and unregistered (see
+            # `_pre_submit_checks` docstring). A value computed once before
+            # the loop would go stale exactly then and let the next
+            # candidate stack a second open position on top of it.
+            pre_error = _pre_submit_checks(rec, paper_position_open=has_open_paper_position())
             if pre_error:
                 attempts.append(
                     TradeAttemptResult(

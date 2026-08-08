@@ -15,7 +15,7 @@ from backend.models.recommendations import (
     TradeEconomicsInsight,
 )
 from backend.paper_sim.engine import PaperEngine
-from backend.paper_sim.models import PaperSide
+from backend.paper_sim.models import PaperOrderRequest, PaperSide
 from backend.services import trade_executor
 from backend.services.learning_service import LearningService
 
@@ -344,6 +344,124 @@ async def test_execution_lock_acquire_times_out_instead_of_hanging(monkeypatch):
     holder_task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await holder_task
+
+
+async def test_blocked_when_unregistered_paper_position_open(_isolated_learning_service):
+    """
+    The blind spot this fix closes: a position opened directly via
+    POST /api/v1/paper-sim/orders (bypassing the autonomous executor) is
+    never registered with LearningService.register_open_trade, so
+    is_one_trade_locked() alone can't see it. execute_autonomous_from_recommendations
+    must still refuse to open a second trade on top of it.
+    """
+    engine = _isolated_learning_service
+    rec = _make_recommendation(1)
+    rec = rec.model_copy(update={"parameters": rec.parameters.model_copy(update={"und_price": 22010.0})})
+
+    leg = await trade_executor.resolve_atm_ce_leg(rec, engine=engine)
+    request = PaperOrderRequest(
+        strategy_tag=rec.strategy.selected_strategy.value,
+        underlying=rec.underlying_symbol,
+        legs=[leg],
+        auto_complete_multi_leg=True,
+    )
+    await engine.submit_order(request)  # opened directly, never registered
+
+    assert trade_executor.is_one_trade_locked() is False  # the blind spot
+    assert trade_executor.has_open_paper_position() is True
+
+    result = await trade_executor.execute_autonomous_from_recommendations([rec])
+
+    assert result.executed is False
+    error = result.attempts[0].error or ""
+    assert "paper" in error.lower() and "position" in error.lower()
+    assert "One-trade scope locked" not in error
+    # Guards against the leak class where a stale/hoisted paper_position_open
+    # value lets a later candidate pile a second position on top instead of
+    # being rejected — exactly one position must remain open.
+    assert len(engine.positions(status="open")) == 1
+
+
+async def test_partial_open_from_multi_leg_completion_failure_blocks_next_candidate(
+    _isolated_learning_service,
+):
+    """
+    Regression for the hoisting bug: `PaperEngine.submit_order` is not
+    atomic — it opens the ledger position *before* attempting
+    `complete_multi_leg_structure`, which can raise `PaperLedgerError`
+    (bad contract, lotsize, pre-trade gate, stale marks, investment cap).
+    When rank 1's multi-leg completion fails that way, its position is
+    still open and unregistered when rank 2 is evaluated. A
+    `paper_position_open` value computed once before the candidate loop
+    would still read `False` at that point (rank 1 hadn't opened anything
+    when it was hoisted) and let rank 2 stack a second open position on
+    top — defeating the one-trade-at-a-time invariant. Per-candidate
+    evaluation must catch it: rank 2 gets rejected with the paper-position
+    message, and exactly one position (rank 1's partial open) remains.
+    """
+    engine = _isolated_learning_service
+    rec1 = _make_recommendation(1)
+    rec1 = rec1.model_copy(update={"parameters": rec1.parameters.model_copy(update={"und_price": 22010.0})})
+    rec2 = _make_recommendation(2)
+    rec2 = rec2.model_copy(update={"parameters": rec2.parameters.model_copy(update={"und_price": 22010.0})})
+
+    call_count = 0
+    real_complete = engine.complete_multi_leg_structure
+
+    async def _fail_first_completion(position_id):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise trade_executor.PaperLedgerError("simulated multi-leg completion failure")
+        return await real_complete(position_id)
+
+    import types
+
+    engine.complete_multi_leg_structure = types.MethodType(
+        lambda self, position_id: _fail_first_completion(position_id), engine
+    )
+
+    result = await trade_executor.execute_autonomous_from_recommendations([rec1, rec2])
+
+    assert result.executed is False
+    assert result.attempts[0].success is False
+    assert "paper_sim reject" in (result.attempts[0].error or "")
+    assert result.attempts[1].success is False
+    error2 = result.attempts[1].error or ""
+    assert "paper" in error2.lower() and "position" in error2.lower()
+
+    open_positions = engine.positions(status="open")
+    assert len(open_positions) == 1, (
+        f"expected exactly one leaked open position from rank 1's partial "
+        f"open, got {len(open_positions)}: {[p.position_id for p in open_positions]}"
+    )
+
+
+async def test_unregistered_paper_position_unblocks_after_close(_isolated_learning_service):
+    """Once the unregistered direct position is closed, autonomous execution
+    is permitted again — the new check must not stick open forever."""
+    engine = _isolated_learning_service
+    rec = _make_recommendation(1)
+    rec = rec.model_copy(update={"parameters": rec.parameters.model_copy(update={"und_price": 22010.0})})
+
+    leg = await trade_executor.resolve_atm_ce_leg(rec, engine=engine)
+    request = PaperOrderRequest(
+        strategy_tag=rec.strategy.selected_strategy.value,
+        underlying=rec.underlying_symbol,
+        legs=[leg],
+        auto_complete_multi_leg=True,
+    )
+    direct_result = await engine.submit_order(request)
+    direct_position_id = direct_result["position"]["position_id"]
+
+    blocked = await trade_executor.execute_autonomous_from_recommendations([rec])
+    assert blocked.executed is False
+
+    await engine.close_position(direct_position_id)
+    assert trade_executor.has_open_paper_position() is False
+
+    result = await trade_executor.execute_autonomous_from_recommendations([rec])
+    assert result.executed is True
 
 
 async def test_seeded_demo_open_trade_does_not_lock(tmp_path, monkeypatch):
