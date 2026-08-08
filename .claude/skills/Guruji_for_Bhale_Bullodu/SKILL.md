@@ -167,6 +167,7 @@ bar is met.
 | What did we last review up to? | `Docs/bot_health/STATE.md` |
 | What does a full report look like? | `Docs/bot_health/SAMPLE_REPORT.md` (format reference) |
 | Is the bot's trade history real yet? | `backend/data/learning_store.json` — check for `"seed": true` |
+| How is the recommendation engine performing? | The `recommendation-engine-analyst` agent — `Docs/bot_health/RECOMMENDATION_ENGINE_REVIEW.md`. Don't duplicate its quant/P&L analysis here. |
 
 ## Common mistakes
 

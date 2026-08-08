@@ -88,6 +88,19 @@ Authoritative source: [Breeze API Reference](https://api.icicidirect.com/breezea
 - Primary region is **`asia-south1` (Mumbai)** — for Indian markets (NSE/BSE/NFO), ICICI Direct/Breeze, IST. Never use `us-west1` or other US regions for this project's cloud inventory.
 - When provisioning infra, create/update `infra/cloud-inventory.yaml` with all services co-located in `asia-south1` (Cloud Run, Artifact Registry, Cloud SQL, Memorystore, Filestore, VPC connector). Keep `Docs/architecture.md` §17.8 and `Docs/context.md` aligned.
 
+## Recommendation engine review
+
+The `recommendation-engine-analyst` agent (`.claude/agents/`) owns depth on the
+signal → strategy → gating → `paper_sim` fill → learning path: metrics, P&L,
+and whether past recommendations actually helped. It runs on demand (a daily
+16:00 IST routine is planned but not yet created), is read-only with respect to
+trading code, and keeps its state in
+`Docs/bot_health/{RECOMMENDATION_ENGINE_REVIEW.md,DAILY_JOURNAL.md,recommendation_metrics.jsonl,recommendation_ledger.jsonl,dashboard.html}`.
+
+Use it for "how is the engine performing / why isn't it trading well". Use
+`Guruji_for_Bhale_Bullodu` for repo-wide health (P0–P2 backlog, CI, safety
+invariants). They are complements — don't run one expecting the other's output.
+
 ## Priority backlog — must-fix before claiming performance
 
 Full source of truth: `.cursor/rules/must-fix-before-claiming-performance.mdc`, checked each run by the `Guruji_for_Bhale_Bullodu` skill (`.claude/skills/Guruji_for_Bhale_Bullodu/`) against `Docs/bot_health/BACKLOG.md`.
