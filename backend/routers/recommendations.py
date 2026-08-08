@@ -3,9 +3,8 @@ from __future__ import annotations
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from backend.services.recommendation_cycle import run_recommendation_cycle
+from backend.services.recommendation_cycle import autonomous_execution_for, run_recommendation_cycle
 from backend.services.recommendation_engine import generate_recommendations
-from backend.services.trade_executor import execute_autonomous_from_recommendations
 
 router = APIRouter(prefix="/api/v1/recommendations", tags=["recommendations"])
 
@@ -32,7 +31,14 @@ async def execute_autonomous_trade():
 
     Prefer GET /recommendations?refresh=true for the recommendations screen —
     it regenerates recommendations and executes in one cycle.
+
+    Routed through `autonomous_execution_for` (same gate as a fresh
+    GET /recommendations?refresh=true cycle) so this endpoint can't open a
+    trade when SUPERVISION_MODE isn't "fully_autonomous" — including blank,
+    unset, or a typo, which fail closed to "approval required" rather than
+    executing. Mirrors that function's own contract: a normal 200 result
+    with `executed: false`, not an HTTP error.
     """
     recs = await generate_recommendations(force_refresh=True)
-    result = await execute_autonomous_from_recommendations(recs.recommendations)
+    result = await autonomous_execution_for(recs.recommendations)
     return JSONResponse(content=result.model_dump(mode="json"))
