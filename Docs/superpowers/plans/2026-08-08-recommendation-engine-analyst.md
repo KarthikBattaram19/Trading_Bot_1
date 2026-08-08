@@ -140,6 +140,79 @@ def test_metrics_session_dates_are_unique_and_ordered() -> None:
     dates = [r["session_date"] for _, r in _iter_jsonl(METRICS_PATH)]
     assert len(dates) == len(set(dates)), "duplicate session_date rows corrupt trend charts"
     assert dates == sorted(dates), "metrics history must be append-only in date order"
+
+
+def test_schema_rejects_extra_key_in_nested_change_entry() -> None:
+    """An otherwise-valid changes[] entry with one extra key must be rejected.
+
+    The fixture keeps every required key so the only thing that can fail it is
+    additionalProperties: false — a fixture that dropped 'sha' would fail on
+    'required' instead and pass even with the guard reverted.
+    """
+    schema = _load_json(METRICS_SCHEMA_PATH)
+    record = {
+        "session_date": "2026-08-10",
+        "run_at": "2026-08-10T16:00:00+05:30",
+        "head_sha": "abc1234",
+        "session_traded": True,
+        "real_closed_trades": 0,
+        "changes": [
+            {"sha": "abc1234", "subject": "x", "stage": "fill", "shas": "typo"}
+        ],
+    }
+    with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+        jsonschema.validate(instance=record, schema=schema)
+
+
+def test_schema_rejects_extra_key_in_calibration_bucket() -> None:
+    """Same guard, calibration_buckets[] side — previously untested entirely."""
+    schema = _load_json(METRICS_SCHEMA_PATH)
+    record = {
+        "session_date": "2026-08-10",
+        "run_at": "2026-08-10T16:00:00+05:30",
+        "head_sha": "abc1234",
+        "session_traded": True,
+        "real_closed_trades": 0,
+        "stability": {
+            "calibration_buckets": [
+                {"bucket": "0.7-0.8", "predicted": 0.75, "realized": 0.5, "n": 2, "oops": 1}
+            ]
+        },
+    }
+    with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+        jsonschema.validate(instance=record, schema=schema)
+
+
+def test_schema_rejects_non_iso_run_at() -> None:
+    schema = _load_json(METRICS_SCHEMA_PATH)
+    record = {
+        "session_date": "2026-08-10",
+        "run_at": "tomorrow",
+        "head_sha": "abc1234",
+        "session_traded": True,
+        "real_closed_trades": 0,
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=record, schema=schema)
+
+
+def test_schema_accepts_a_well_formed_row() -> None:
+    """Guards against over-tightening: a valid row must still pass."""
+    schema = _load_json(METRICS_SCHEMA_PATH)
+    record = {
+        "session_date": "2026-08-10",
+        "run_at": "2026-08-10T16:00:00+05:30",
+        "head_sha": "abc1234",
+        "session_traded": True,
+        "real_closed_trades": 0,
+        "changes": [{"sha": "abc1234", "subject": "x", "stage": "fill", "files": ["a.py"]}],
+        "stability": {
+            "calibration_buckets": [
+                {"bucket": "0.7-0.8", "predicted": 0.75, "realized": 0.5, "n": 2}
+            ]
+        },
+    }
+    jsonschema.validate(instance=record, schema=schema)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -160,7 +233,7 @@ Create `backend/schemas/recommendation_metrics.schema.json`:
   "additionalProperties": false,
   "properties": {
     "session_date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
-    "run_at": { "type": "string" },
+    "run_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}([.]\\d+)?[+-]\\d{2}:\\d{2}$" },
     "head_sha": { "type": "string", "minLength": 7 },
     "session_traded": {
       "type": "boolean",
@@ -230,6 +303,7 @@ Create `backend/schemas/recommendation_metrics.schema.json`:
           "items": {
             "type": "object",
             "required": ["bucket", "predicted", "realized", "n"],
+            "additionalProperties": false,
             "properties": {
               "bucket": { "type": "string" },
               "predicted": { "type": "number" },
@@ -248,6 +322,7 @@ Create `backend/schemas/recommendation_metrics.schema.json`:
       "items": {
         "type": "object",
         "required": ["sha", "subject", "stage"],
+        "additionalProperties": false,
         "properties": {
           "sha": { "type": "string", "minLength": 7 },
           "subject": { "type": "string" },
@@ -373,6 +448,46 @@ def test_verdicts_state_their_sample_size() -> None:
             assert isinstance(effect.get("sample_size"), int), (
                 f"{LEDGER_PATH.name}:{lineno} claims '{record['status']}' with no sample_size"
             )
+
+
+def test_ledger_schema_rejects_extra_key_in_expected_impact() -> None:
+    schema = _load_json(LEDGER_SCHEMA_PATH)
+    record = {
+        "id": "rec-2026-08-08-guard-check",
+        "proposed_date": "2026-08-08",
+        "stage": "fill",
+        "problem": "x",
+        "proposed_change": "y",
+        "expected_impact": {"metric": "performance.win_rate", "direction": "up", "oops": 1},
+        "status": "proposed",
+    }
+    with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+        jsonschema.validate(instance=record, schema=schema)
+
+
+def test_ledger_schema_accepts_a_well_formed_record() -> None:
+    """Guards against over-tightening: a full valid record must still pass."""
+    schema = _load_json(LEDGER_SCHEMA_PATH)
+    record = {
+        "id": "rec-2026-08-08-spot-code-fallback",
+        "proposed_date": "2026-08-08",
+        "stage": "feature_assembly",
+        "problem": "spot LTP sends display symbol",
+        "evidence": ["backend/services/universe_enrichment.py:609"],
+        "proposed_change": "pass resolved stock_code",
+        "expected_impact": {"metric": "reliability.enrichment_usable", "direction": "up", "rationale": "z"},
+        "effort": "low",
+        "status": "validated",
+        "implemented_date": "2026-08-09",
+        "implemented_sha": "abc1234",
+        "match_confidence": "high",
+        "baseline_metrics": {"reliability": {"enrichment_usable": 6}},
+        "observed_effect": {"metric_before": 6, "metric_after": 12, "sample_size": 40, "sessions_observed": 3},
+        "verdict": "did what it should",
+        "last_updated": "2026-08-09T16:00:00+05:30",
+        "notes": ["n"],
+    }
+    jsonschema.validate(instance=record, schema=schema)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -418,6 +533,7 @@ Create `backend/schemas/recommendation_ledger.schema.json`:
     "expected_impact": {
       "type": "object",
       "required": ["metric", "direction"],
+      "additionalProperties": false,
       "properties": {
         "metric": { "type": "string", "description": "dotted path into a metrics row, e.g. reliability.enrichment_usable" },
         "direction": { "enum": ["up", "down"] },
@@ -450,6 +566,7 @@ Create `backend/schemas/recommendation_ledger.schema.json`:
     "observed_effect": {
       "type": ["object", "null"],
       "required": ["metric_before", "metric_after", "sample_size"],
+      "additionalProperties": false,
       "properties": {
         "metric_before": { "type": ["number", "null"] },
         "metric_after": { "type": ["number", "null"] },
@@ -558,8 +675,9 @@ Create `Docs/bot_health/DAILY_JOURNAL.md`:
 Append-only record of what the bot did and what changed, newest entry first.
 Written by the `recommendation-engine-analyst` agent after each session.
 
-Entry format — the agent inserts a new `## <YYYY-MM-DD>` section directly below
-this paragraph, pushing older entries down:
+Entry format — the agent inserts each new `## <YYYY-MM-DD>` section directly
+below the `<!-- ENTRIES BELOW -->` marker at the bottom of this preamble, so the
+newest entry is always first and this format spec always stays above them:
 
 - **Session summary** — cycles run, recommendations published, trades
   opened/closed, session P&L.

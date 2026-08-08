@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Recommendation engine daily metrics row",
+  "type": "object",
+  "required": ["session_date", "run_at", "head_sha", "session_traded", "real_closed_trades"],
+  "additionalProperties": false,
+  "properties": {
+    "session_date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "run_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}([.]\\d+)?[+-]\\d{2}:\\d{2}$" },
+    "head_sha": { "type": "string", "minLength": 7 },
+    "session_traded": {
+      "type": "boolean",
+      "description": "false on non-trading days; downstream trend charts skip these rows"
+    },
+    "no_session_reason": { "type": ["string", "null"] },
+    "real_closed_trades": { "type": "integer", "minimum": 0 },
+    "test_result": { "type": ["string", "null"] },
+    "performance": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_pnl_inr": { "type": ["number", "null"] },
+        "cumulative_pnl_inr": { "type": ["number", "null"] },
+        "equity_inr": { "type": ["number", "null"] },
+        "win_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "avg_win_inr": { "type": ["number", "null"] },
+        "avg_loss_inr": { "type": ["number", "null"] },
+        "profit_factor": { "type": ["number", "null"] },
+        "max_drawdown_inr": { "type": ["number", "null"] },
+        "pnl_by_strategy": { "type": "object", "additionalProperties": { "type": "number" } },
+        "pnl_by_underlying": { "type": "object", "additionalProperties": { "type": "number" } }
+      }
+    },
+    "reliability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cycles_attempted": { "type": "integer", "minimum": 0 },
+        "cycles_completed": { "type": "integer", "minimum": 0 },
+        "coverage_aborts": { "type": "integer", "minimum": 0 },
+        "coverage_abort_reasons": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "enrichment_attempted": { "type": "integer", "minimum": 0 },
+        "enrichment_usable": { "type": "integer", "minimum": 0 },
+        "spot_fetch_failures": { "type": "integer", "minimum": 0 },
+        "chain_fetch_failures": { "type": "integer", "minimum": 0 },
+        "flatten_complete": { "type": ["boolean", "null"] },
+        "stage_funnel": {
+          "type": "object",
+          "description": "candidates surviving each pipeline stage, in canonical order",
+          "propertyNames": {
+            "enum": [
+              "signals",
+              "feature_assembly",
+              "strategy_selection",
+              "ranking_gating",
+              "execution_gates",
+              "fill",
+              "feedback"
+            ]
+          },
+          "additionalProperties": { "type": "integer", "minimum": 0 }
+        }
+      }
+    },
+    "stability": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "pnl_variance": { "type": ["number", "null"] },
+        "calibration_error": {
+          "type": ["number", "null"],
+          "description": "mean |predicted confidence - realized win rate| across buckets"
+        },
+        "calibration_buckets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["bucket", "predicted", "realized", "n"],
+            "additionalProperties": false,
+            "properties": {
+              "bucket": { "type": "string" },
+              "predicted": { "type": "number" },
+              "realized": { "type": "number" },
+              "n": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "strategy_mix": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "config_drift": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "description": "in-scope commits landed since the previous run",
+      "items": {
+        "type": "object",
+        "required": ["sha", "subject", "stage"],
+        "additionalProperties": false,
+        "properties": {
+          "sha": { "type": "string", "minLength": 7 },
+          "subject": { "type": "string" },
+          "stage": {
+            "enum": [
+              "signals",
+              "feature_assembly",
+              "strategy_selection",
+              "ranking_gating",
+              "execution_gates",
+              "fill",
+              "feedback"
+            ]
+          },
+          "files": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,899 @@
+<title>Recommendation Engine — Analyst Dashboard</title>
+
+<style>
+  :root {
+    --ground:      #E9ECF0;
+    --surface:     #FCFCFD;
+    --surface-alt: #F3F5F8;
+    --ink:         #14181E;
+    --ink-2:       #3D4753;
+    --muted:       #626D7B;
+    --line:        #D3D9E1;
+    --line-soft:   #E3E7ED;
+    --accent:      #3B5BA5;
+    --accent-soft: #E6EBF6;
+    --critical:    #B23A2C;
+    --high:        #A56A14;
+    --medium:      #5B6673;
+    --ok:          #2E8060;
+    --absent:      #98A3B0;
+    --hatch:       repeating-linear-gradient(135deg,
+                     transparent 0 5px, rgba(98,109,123,.20) 5px 6px);
+    --serif: Georgia, "Iowan Old Style", "Palatino Linotype", serif;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --mono: ui-monospace, "Cascadia Mono", "SF Mono", Consolas, "Liberation Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground:      #0F131A;
+      --surface:     #171C24;
+      --surface-alt: #1D242E;
+      --ink:         #E4E8EE;
+      --ink-2:       #BAC3CF;
+      --muted:       #8A95A4;
+      --line:        #2C343F;
+      --line-soft:   #232B35;
+      --accent:      #94B4F0;
+      --accent-soft: #1E2941;
+      --critical:    #EE7A63;
+      --high:        #D9B451;
+      --medium:      #97A3B2;
+      --ok:          #5FCE9B;
+      --absent:      #6B7684;
+      --hatch:       repeating-linear-gradient(135deg,
+                       transparent 0 5px, rgba(148,161,178,.20) 5px 6px);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --ground:      #0F131A;
+    --surface:     #171C24;
+    --surface-alt: #1D242E;
+    --ink:         #E4E8EE;
+    --ink-2:       #BAC3CF;
+    --muted:       #8A95A4;
+    --line:        #2C343F;
+    --line-soft:   #232B35;
+    --accent:      #94B4F0;
+    --accent-soft: #1E2941;
+    --critical:    #EE7A63;
+    --high:        #D9B451;
+    --medium:      #97A3B2;
+    --ok:          #5FCE9B;
+    --absent:      #6B7684;
+    --hatch:       repeating-linear-gradient(135deg,
+                     transparent 0 5px, rgba(148,161,178,.20) 5px 6px);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.62;
+    margin: 0;
+    padding: 28px 20px 72px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page { max-width: 1060px; margin: 0 auto; display: flex; flex-direction: column; gap: 34px; }
+
+  h1, h2, h3 { font-family: var(--serif); font-weight: 600; text-wrap: balance; margin: 0; }
+  h1 { font-size: 30px; line-height: 1.22; letter-spacing: -.01em; }
+  h2 { font-size: 21px; line-height: 1.3; }
+  h3 { font-size: 16px; line-height: 1.35; }
+  p  { margin: 0; }
+
+  .eyebrow {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: .13em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    padding: 20px 22px;
+  }
+
+  section { display: flex; flex-direction: column; gap: 14px; }
+  .sec-head { display: flex; flex-direction: column; gap: 3px; border-bottom: 1px solid var(--line); padding-bottom: 9px; }
+  .note { color: var(--muted); font-size: 13.5px; }
+
+  /* ── masthead ─────────────────────────────────────────── */
+  .masthead { display: flex; flex-direction: column; gap: 14px; }
+  .meta {
+    display: flex; flex-wrap: wrap; gap: 6px 20px;
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  }
+  .meta b { color: var(--ink-2); font-weight: 500; }
+
+  .alarm {
+    border: 1px solid var(--critical);
+    border-radius: 3px;
+    background: var(--surface);
+    padding: 16px 18px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  .alarm.corrected { border-color: var(--accent); }
+  .alarm-top { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+  .alarm-tag {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--critical); font-weight: 700;
+  }
+  .alarm.corrected .alarm-tag { color: var(--accent); }
+
+  /* ── absent-data language ─────────────────────────────── */
+  .legend-strip {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px;
+    font-size: 12.5px; color: var(--muted);
+    padding: 9px 14px; background: var(--surface-alt);
+    border: 1px solid var(--line-soft); border-radius: 3px;
+  }
+  .swatch-hatch {
+    display: inline-block; width: 26px; height: 12px; vertical-align: -1px;
+    background-image: var(--hatch); border: 1px solid var(--line);
+  }
+
+  /* ── headline tiles ───────────────────────────────────── */
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+  .tile { background: var(--surface); padding: 15px 16px 14px; display: flex; flex-direction: column; gap: 5px; min-height: 116px; }
+  .tile-label { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+  .tile-value { font-family: var(--mono); font-size: 25px; font-variant-numeric: tabular-nums; letter-spacing: -.02em; line-height: 1.1; color: var(--ink); }
+  .tile-value.is-absent { font-size: 14px; color: var(--absent); padding: 5px 8px; background-image: var(--hatch); border: 1px dashed var(--line); border-radius: 2px; align-self: flex-start; }
+  .tile-delta { font-size: 11.5px; color: var(--muted); margin-top: auto; }
+
+  /* ── pipeline ─────────────────────────────────────────── */
+  .pipeline { display: flex; flex-direction: column; }
+  .stage { display: grid; grid-template-columns: 128px 1fr; gap: 0; }
+  .stage-gutter { position: relative; padding: 18px 16px 18px 0; display: flex; flex-direction: column; align-items: flex-end; gap: 7px; }
+  .stage-gutter::after {
+    content: ""; position: absolute; right: 0; top: 0; bottom: 0;
+    width: 1px; background: var(--line);
+  }
+  .stage:first-child .stage-gutter::after { top: 26px; }
+  .stage:last-child .stage-gutter::after { bottom: calc(100% - 26px); }
+  .stage-dot {
+    position: absolute; right: -4.5px; top: 22px; width: 9px; height: 9px;
+    border-radius: 50%; background: var(--surface); border: 1.5px solid var(--absent);
+  }
+  .stage-dot.blocked { border-color: var(--critical); background: var(--critical); }
+  .stage-dot.risk { border-color: var(--high); background: var(--high); }
+  .stage-name { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); text-align: right; }
+  .stage-count {
+    font-family: var(--mono); font-size: 11px; color: var(--absent);
+    background-image: var(--hatch); border: 1px dashed var(--line);
+    border-radius: 2px; padding: 1px 6px;
+  }
+  .stage-body { padding: 18px 0 20px 22px; display: flex; flex-direction: column; gap: 9px; }
+  .stage:not(:last-child) .stage-body { border-bottom: 1px solid var(--line-soft); }
+  .stage-body p { font-size: 13.8px; color: var(--ink-2); }
+  .stage-body .drop { font-size: 13px; color: var(--muted); }
+  .stage-body .drop b { font-family: var(--mono); font-size: 11.5px; color: var(--ink-2); font-weight: 500; }
+
+  .chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-family: var(--mono); font-size: 10.5px; letter-spacing: .02em;
+    border: 1px solid var(--line); border-radius: 2px; padding: 2px 7px;
+    color: var(--ink-2); background: var(--surface-alt);
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .chip::before { content: ""; width: 6px; height: 6px; border-radius: 1px; background: var(--medium); flex: none; }
+  .chip.critical::before { background: var(--critical); }
+  .chip.high::before     { background: var(--high); }
+  .chip.medium::before   { background: var(--medium); }
+  .chip.ok::before       { background: var(--ok); }
+
+  /* ── tables ───────────────────────────────────────────── */
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px; background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.2px; min-width: 620px; }
+  th, td { text-align: left; padding: 9px 13px; border-bottom: 1px solid var(--line-soft); vertical-align: top; }
+  thead th { font-family: var(--mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 500; background: var(--surface-alt); border-bottom: 1px solid var(--line); }
+  tbody tr:last-child td { border-bottom: 0; }
+  td.mono, th.mono { font-family: var(--mono); font-size: 11.8px; font-variant-numeric: tabular-nums; }
+  td .rid { font-family: var(--mono); font-size: 11.3px; color: var(--accent); overflow-wrap: anywhere; }
+
+  .sev { font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; display: inline-flex; align-items: center; gap: 5px; }
+  .sev::before { content: ""; width: 7px; height: 7px; border-radius: 1px; flex: none; }
+  .sev.critical { color: var(--critical); } .sev.critical::before { background: var(--critical); }
+  .sev.high     { color: var(--high); }     .sev.high::before     { background: var(--high); }
+  .sev.medium   { color: var(--medium); }   .sev.medium::before   { background: var(--medium); }
+  .sev.ok       { color: var(--ok); }       .sev.ok::before       { background: var(--ok); }
+
+  /* ── empty-state panels ───────────────────────────────── */
+  .nodata {
+    border: 1px dashed var(--line); border-radius: 3px;
+    background-image: var(--hatch); background-color: var(--surface);
+    padding: 22px; display: flex; flex-direction: column; gap: 6px;
+    min-height: 108px; justify-content: center;
+  }
+  .nodata .nd-title { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+  .nodata .nd-why { font-size: 13px; color: var(--muted); max-width: 62ch; }
+  .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+  figcaption { font-size: 12.5px; color: var(--muted); max-width: 74ch; }
+  .fig-title { font-family: var(--mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--ink-2); }
+  svg { display: block; max-width: 100%; height: auto; }
+
+  .kv { display: grid; grid-template-columns: auto 1fr; gap: 5px 16px; font-size: 13.4px; }
+  .kv dt { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+  .kv dd { margin: 0; color: var(--ink-2); }
+
+  blockquote { margin: 0; padding: 2px 0 2px 16px; border-left: 2px solid var(--line); color: var(--ink-2); font-size: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+  code { font-family: var(--mono); font-size: .88em; background: var(--surface-alt); border: 1px solid var(--line-soft); border-radius: 2px; padding: .5px 4px; overflow-wrap: anywhere; }
+
+  a { color: var(--accent); }
+  a:focus-visible, :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  ol.watch { margin: 10px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 13.8px; color: var(--ink-2); }
+  .caution {
+    margin-top: 7px; padding: 9px 12px; border: 1px dashed var(--critical);
+    border-radius: 3px; font-size: 12.8px; color: var(--ink-2);
+    background: var(--surface-alt);
+  }
+
+  @media (max-width: 620px) {
+    .stage { grid-template-columns: 1fr; }
+    .stage-gutter { align-items: flex-start; flex-direction: row; padding: 14px 0 0; }
+    .stage-gutter::after, .stage-dot { display: none; }
+    .stage-body { padding-left: 0; }
+  }
+</style>
+
+<div class="page">
+
+  <!-- ───────────────────────── masthead ───────────────────────── -->
+  <header class="masthead">
+    <p class="eyebrow">Recommendation engine · analyst review · run 001</p>
+    <h1>Nothing has traded yet. Production is ready — the blocker I found is local.</h1>
+    <div class="meta">
+      <span>commit <b>c25caa5</b></span>
+      <span>reviewed <b>2026-08-08 15:03 IST</b></span>
+      <span>prod probed <b>15:18 IST</b></span>
+      <span>market <b>closed (Sat)</b></span>
+      <span>real closed trades <b>0</b></span>
+      <span>baseline <b>none — first run</b></span>
+    </div>
+
+    <div class="alarm">
+      <div class="alarm-top">
+        <span class="alarm-tag">Critical · local &amp; CI</span>
+        <span class="eyebrow">stage: feature_assembly</span>
+      </div>
+      <p><code>backend/data/iv_history.json</code> is corrupt at line 24789 — two ISO
+      timestamps concatenated, the signature of concurrent truncate-then-write.
+      <code>IvHistoryStore._read</code> has no <code>try/except</code> around
+      <code>json.load</code>, and <code>_build_universe</code> reaches the store twice per
+      symbol: <code>append</code> at line 436 (guarded by IV&nbsp;&gt;&nbsp;0) and
+      <code>series</code> at line <b>442, which is unconditional</b>. So the cycle dies on
+      the <b>first symbol with live marks</b>, not merely the first with positive IV.</p>
+      <p><code>generate_recommendations</code> does not wrap it, and
+      <code>_last_generation_at</code> is stamped <em>before</em> the failing call — so the
+      scheduler retries only once per 600&nbsp;s. Five tests fail from this one root cause,
+      and no local cycle can run.</p>
+    </div>
+
+    <div class="alarm corrected">
+      <div class="alarm-top">
+        <span class="alarm-tag">Correction · production probe, 15:18 IST</span>
+      </div>
+      <p>My first pass called Monday's attempt impossible and left production an
+      "unquantified risk" <em>without having checked</em>. Having run the read-only
+      endpoints, the evidence moved <b>against</b> that claim on two strong legs: the
+      corrupt file <b>cannot have shipped in the image</b> — <code>backend/data/</code> is
+      gitignored and <code>git ls-files backend/data</code> returns nothing — and
+      <b>this process has never run the writer</b> (<code>generations: 0</code> after 1923
+      ticks; <code>IvHistoryStore</code> is reached only inside a generation). Supporting:
+      no volume declared in the deploy config, and <code>uvicorn</code> runs with no
+      <code>--workers</code>.</p>
+      <p><b>Calibrated honestly:</b> probably absent and provably not from the repo, but
+      <b>not established</b> — a volume carrying the file from an <em>earlier</em>
+      deployment is not excluded by this process's <code>generations: 0</code>, and a
+      Railway volume attached via the dashboard UI would not appear in
+      <code>railway.toml</code>, which I cannot see. Production is also already
+      <code>fully_autonomous</code>, scheduler healthy, lock free, no breakers.
+      <b>Monday's binding risks are the Breeze session token and the coverage gates — not
+      the corruption.</b></p>
+    </div>
+  </header>
+
+  <div class="legend-strip">
+    <span><span class="swatch-hatch"></span> &nbsp;hatched = <b>no data exists</b>, not zero</span>
+    <span>Absent values are never plotted as 0 — a fabricated flat line would corrupt every future trend.</span>
+  </div>
+
+  <!-- ───────────────────────── 1 · headline ───────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">01 — Headline</p>
+      <h2>Session at a glance</h2>
+      <p class="note">No previous session exists, so no tile carries a delta. That is the
+      honest state of a first run, not a rendering gap. Trade counts and P&amp;L are now
+      confirmed against production, not only the local seed store.</p>
+    </div>
+
+    <div class="tiles">
+      <div class="tile">
+        <span class="tile-label">Session P&amp;L</span>
+        <span class="tile-value is-absent">no session</span>
+        <span class="tile-delta">Δ — no prior session</span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Cumulative P&amp;L</span>
+        <span class="tile-value is-absent">never traded</span>
+        <span class="tile-delta">prod realized_pnl 0.0</span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Real closed trades</span>
+        <span class="tile-value">0</span>
+        <span class="tile-delta">confirmed on prod · 4 seeds excluded</span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Win rate</span>
+        <span class="tile-value is-absent">undefined</span>
+        <span class="tile-delta">0 closes — no denominator</span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Cycles completed</span>
+        <span class="tile-value">0</span>
+        <span class="tile-delta">prod generations 0 / 1923 ticks</span>
+      </div>
+      <div class="tile">
+        <span class="tile-label">Test suite</span>
+        <span class="tile-value">5<span style="color:var(--muted);font-size:15px"> / 372</span></span>
+        <span class="tile-delta"><span class="sev critical">failing</span> &nbsp;all one root cause</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 1b · production ───────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">01b — Production probe</p>
+      <h2>What the deployed backend actually reports</h2>
+      <p class="note">Read-only endpoints, 2026-08-08 ~15:18 IST, all HTTP 200.</p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead><tr><th>Endpoint</th><th>Reports</th><th>Reading</th></tr></thead>
+        <tbody>
+          <tr>
+            <td class="mono">/api/v1/bot/status</td>
+            <td class="mono">supervision_mode: <b>fully_autonomous</b><br>scheduler_mode: active<br>one_trade_locked: false<br>circuit_breakers_active: []</td>
+            <td><span class="sev ok">ready</span> The owner has already set autonomous mode. My original concern about the <code>supervised</code> default does not apply in production.</td>
+          </tr>
+          <tr>
+            <td class="mono">/api/v1/scheduler/status</td>
+            <td class="mono">state: running · phase: closed<br>ticks: 1923 · <b>generations: 0</b><br>last_error: null<br>started 2026-08-07T17:46:56Z</td>
+            <td><span class="sev medium">untested</span> The entry path has <em>never</em> executed in production — Monday is its first-ever run. <code>generations: 0</code> is also load-bearing evidence: this process has never reached <code>IvHistoryStore</code> at all.</td>
+          </tr>
+          <tr>
+            <td class="mono">/api/v1/learning/dashboard</td>
+            <td class="mono">closed_trade_count: 0<br>open_trade_count: 0<br>win_rate: null<br>3 fixtures excluded</td>
+            <td><span class="sev ok">corroborates</span> Zero real trades confirmed independently of the local store; production excludes its seed fixtures too.</td>
+          </tr>
+          <tr>
+            <td class="mono">/api/v1/paper-sim/account</td>
+            <td class="mono">equity ₹1,000,000<br>realized_pnl: 0.0<br>open_positions: 0</td>
+            <td><span class="sev ok">corroborates</span> Confirms zero trading — and <b>nothing about filesystem persistence</b>. I initially read its <code>updated_at</code> as evidence of a fresh data dir; <code>PaperLedger.__init__</code> stamps that unconditionally and <code>paper_sim</code> has no disk state, so it holds on every boot. Leg struck.</td>
+          </tr>
+          <tr>
+            <td class="mono">/api/v1/decisions<br>/api/v1/paper-sim/positions<br>/api/v1/risk/snapshot</td>
+            <td class="mono">[] · [] · all greeks 0</td>
+            <td><span class="sev ok">clean</span> No pending decisions, no positions, no breaches.</td>
+          </tr>
+          <tr>
+            <td class="mono">GET /api/v1/recommendations</td>
+            <td class="mono">not called</td>
+            <td><span class="sev high">withheld</span> The only endpoint reaching <code>IvHistoryStore</code> — but it calls <code>autonomous_execution_for</code> unconditionally and a cold cache runs the full cycle regardless of <code>force_refresh</code>. Prod is <code>fully_autonomous</code>: it could open a paper position, and it <em>writes to the file under investigation</em>. Probing a fault by corrupting its own evidence is not a probe.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 2 · pipeline ───────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">02 — Pipeline walkthrough</p>
+      <h2>Where a candidate would flow, and where it stops</h2>
+      <p class="note">Seven stages in execution order, modelled from the code at
+      <code>c25caa5</code> rather than from docstrings. Every funnel count is absent —
+      no cycle has ever run, locally or in production — so the useful reading is
+      <em>which stage would drop a candidate</em>.</p>
+    </div>
+
+    <div class="panel pipeline">
+
+      <div class="stage">
+        <div class="stage-gutter">
+          <span class="stage-dot"></span>
+          <span class="stage-name">signals</span>
+          <span class="stage-count">in —</span>
+        </div>
+        <div class="stage-body">
+          <p>GARCH(1,1) forecast from daily log returns and an intraday ATM IV z-score.
+          MLE fitting is <b>off</b>, so fixed 0.05 / 0.05 / 0.90 weights are always used.</p>
+          <p class="drop">Drops on: <b>&lt;21 daily closes</b> or a flat series →
+          <code>garch_distorted</code>; <b>&lt;5 intraday IV samples</b> → z-score unusable.</p>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-gutter">
+          <span class="stage-dot blocked"></span>
+          <span class="stage-name">feature_assembly</span>
+          <span class="stage-count">in —</span>
+        </div>
+        <div class="stage-body">
+          <p>Live Breeze enrichment capped at <code>max_symbols = 15</code> inside a shared
+          90&nbsp;s budget; daily closes fetched live per symbol; ATM IV appended to the
+          session store; earnings calendar joined; all of it assembled into a
+          <code>QuantSnapshot</code> with explicit usability flags.</p>
+          <p class="drop">Drops on: no live marks; budget exhaustion returning an empty
+          series; any Breeze exception returning <code>[]</code>. <b>Where a corrupt IV
+          store kills the cycle outright — on the first symbol with live marks.</b></p>
+          <div class="chip-row">
+            <span class="chip critical">F-1 iv_history corruption — local/CI blocker</span>
+            <span class="chip high">F-3 budget exhaustion looks like missing data</span>
+            <span class="chip high">F-4 vega ineligible first ~50 min</span>
+            <span class="chip medium">F-7 earnings calendar is empty</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-gutter">
+          <span class="stage-dot risk"></span>
+          <span class="stage-name">strategy_selection</span>
+          <span class="stage-count">in —</span>
+        </div>
+        <div class="stage-body">
+          <p>Three eligibility predicates, all requiring live marks plus usable spot and IV.
+          A strategy publishes only at <code>coverage ≥ 0.60</code> <em>and</em>
+          <code>eligible ≥ 6</code>. Since <code>scanned = 15</code> (the enrichment cap,
+          not the 213-name universe), the real bar is <b>9 of 15</b>. At the current
+          <code>max_symbols</code> the ratio binds harder than the count — the two swap
+          below <code>max_symbols = 10</code>, where the count of 6 would bind.</p>
+          <p class="drop">Drops on: <b>STRATEGY_COVERAGE_ABORT</b> — the strategy leaves
+          <code>available_strategies</code> entirely.</p>
+          <div class="chip-row">
+            <span class="chip medium">F-5 min_eligible_symbols = 6 is inert at max_symbols 15</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-gutter">
+          <span class="stage-dot"></span>
+          <span class="stage-name">ranking_gating</span>
+          <span class="stage-count">in —</span>
+        </div>
+        <div class="stage-body">
+          <p>Gate evaluation (options-only is hard-locked), weighted scoring, a
+          failure-memory penalty, then calibration. No calibration artifact exists, so
+          every recommendation is <code>uncalibrated / heuristic</code>. Survivors are
+          filtered by the effective confidence floor and cut to the top 3.</p>
+          <p class="drop">Drops on: <b>score ≤ 0</b>; <b>confidence &lt; 0.70</b> (bootstrap
+          floor while real closes = 0); rank outside the top 3.</p>
+          <div class="chip-row">
+            <span class="chip medium">F-6 the floor gates a score, not a probability</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-gutter">
+          <span class="stage-dot"></span>
+          <span class="stage-name">execution_gates</span>
+          <span class="stage-count">in —</span>
+        </div>
+        <div class="stage-body">
+          <p>Fires only when <code>SUPERVISION_MODE = fully_autonomous</code>; every other
+          value — including blank and typos — fails closed to "approval required".
+          <b>Production is already set to <code>fully_autonomous</code>.</b> The one-trade
+          lock is ledger-derived from <code>learning_store.json</code>, so it survives a
+          restart. Then gates, the 2 % spread cap, and rank 1 → 2 → 3 fallback.</p>
+          <p class="drop">Drops on: supervision mode; one-trade lock; a failed gate;
+          spread &gt; 2 %.</p>
+          <div class="chip-row">
+            <span class="chip ok">F-8 supervision confirmed fully_autonomous in prod</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-gutter">
+          <span class="stage-dot"></span>
+          <span class="stage-name">fill</span>
+          <span class="stage-count">in —</span>
+        </div>
+        <div class="stage-body">
+          <p><code>PaperEngine.submit_order</code> is the sole fill source for the
+          autonomous path — nearest-strike ATM CE, one lot, nearest expiry at DTE ≥ 10,
+          expanded into the full structure by the structure builder. Holds <b>no disk
+          state</b>: the ledger is in-memory and re-initialised on every boot.</p>
+          <p class="drop">Drops on: no resolvable ATM contract; <code>PaperLedgerError</code>;
+          <code>StaleMarksError</code>.</p>
+        </div>
+      </div>
+
+      <div class="stage">
+        <div class="stage-gutter">
+          <span class="stage-dot"></span>
+          <span class="stage-name">feedback</span>
+          <span class="stage-count">in —</span>
+        </div>
+        <div class="stage-body">
+          <p><code>close_position</code> calls <code>record_ledger_close</code>, writing the
+          realized outcome and releasing the one-trade lock. The
+          recommend → approve → paper_sim → learning loop <b>is genuinely closed in
+          code</b>; what is missing is any traffic through it.</p>
+          <p class="drop">Drops on: a position with no recommendation lineage; a seed
+          fixture (excluded by design).</p>
+          <div class="chip-row">
+            <span class="chip high">F-2 same corruption defect sits on the trade ledger</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ───────────────────────── Monday projection ───────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">02b — Monday 2026-08-10</p>
+      <h2>The conditional failure mode, where the corrupt store is present</h2>
+      <p class="note">This is what the entry window produces <em>in an environment that
+      holds the corrupt file</em> — confirmed for local, and now judged unlikely for
+      production. It is drawn because it is the shape to recognise if Monday's telemetry
+      shows <code>generations</code> pinned at 0 while <code>ticks</code> climbs.</p>
+    </div>
+
+    <div class="panel">
+      <figure>
+        <span class="fig-title">Session phases and cycle attempts (projected from config, not observed)</span>
+        <svg viewBox="0 0 1000 196" role="img"
+             aria-label="Session timeline from 09:15 to 15:30 IST. The entry window from 09:20 to 14:30 contains about 31 recommendation cycle attempts at 600-second cadence, every one of which fails with a JSON decode error where the corrupt store is present. No entry from 14:30 to 15:15, flatten from 15:15 to 15:30 with nothing to flatten.">
+          <defs>
+            <pattern id="fail-hatch" width="6" height="6" patternTransform="rotate(135)" patternUnits="userSpaceOnUse">
+              <line x1="0" y1="0" x2="0" y2="6" stroke="var(--critical)" stroke-width="1.4" opacity=".38"/>
+            </pattern>
+          </defs>
+
+          <!-- phase band -->
+          <rect x="8"   y="46" width="26"  height="34" fill="var(--surface-alt)" stroke="var(--line)"/>
+          <rect x="34"  y="46" width="770" height="34" fill="url(#fail-hatch)" stroke="var(--critical)"/>
+          <rect x="804" y="46" width="120" height="34" fill="var(--surface-alt)" stroke="var(--line)"/>
+          <rect x="924" y="46" width="68"  height="34" fill="var(--surface-alt)" stroke="var(--line)"/>
+
+          <!-- 31 attempt ticks across the entry window -->
+          <g stroke="var(--critical)" stroke-width="1.6" opacity=".85">
+            <line x1="46"  y1="40" x2="46"  y2="86"/><line x1="70"  y1="40" x2="70"  y2="86"/>
+            <line x1="94"  y1="40" x2="94"  y2="86"/><line x1="118" y1="40" x2="118" y2="86"/>
+            <line x1="142" y1="40" x2="142" y2="86"/><line x1="166" y1="40" x2="166" y2="86"/>
+            <line x1="190" y1="40" x2="190" y2="86"/><line x1="214" y1="40" x2="214" y2="86"/>
+            <line x1="238" y1="40" x2="238" y2="86"/><line x1="262" y1="40" x2="262" y2="86"/>
+            <line x1="286" y1="40" x2="286" y2="86"/><line x1="310" y1="40" x2="310" y2="86"/>
+            <line x1="334" y1="40" x2="334" y2="86"/><line x1="358" y1="40" x2="358" y2="86"/>
+            <line x1="382" y1="40" x2="382" y2="86"/><line x1="406" y1="40" x2="406" y2="86"/>
+            <line x1="430" y1="40" x2="430" y2="86"/><line x1="454" y1="40" x2="454" y2="86"/>
+            <line x1="478" y1="40" x2="478" y2="86"/><line x1="502" y1="40" x2="502" y2="86"/>
+            <line x1="526" y1="40" x2="526" y2="86"/><line x1="550" y1="40" x2="550" y2="86"/>
+            <line x1="574" y1="40" x2="574" y2="86"/><line x1="598" y1="40" x2="598" y2="86"/>
+            <line x1="622" y1="40" x2="622" y2="86"/><line x1="646" y1="40" x2="646" y2="86"/>
+            <line x1="670" y1="40" x2="670" y2="86"/><line x1="694" y1="40" x2="694" y2="86"/>
+            <line x1="718" y1="40" x2="718" y2="86"/><line x1="742" y1="40" x2="742" y2="86"/>
+            <line x1="766" y1="40" x2="766" y2="86"/>
+          </g>
+
+          <!-- phase labels -->
+          <g font-family="ui-monospace, monospace" font-size="10.5" fill="var(--muted)">
+            <text x="8"   y="106">09:15</text>
+            <text x="34"  y="106">09:20</text>
+            <text x="768" y="106">14:30</text>
+            <text x="888" y="106">15:15</text>
+            <text x="948" y="106">15:30</text>
+          </g>
+          <g font-family="ui-monospace, monospace" font-size="10" letter-spacing=".08em" fill="var(--ink-2)">
+            <text x="34"  y="34">PRE_OPEN</text>
+            <text x="200" y="34" fill="var(--critical)">ENTRY — 31 CYCLE ATTEMPTS, 0 RECOMMENDATIONS</text>
+            <text x="806" y="34">NO_ENTRY</text>
+            <text x="926" y="34">FLATTEN</text>
+          </g>
+
+          <!-- footnotes: explicit per-line tspans so nothing overruns the viewBox -->
+          <text x="8" y="132" font-family="ui-monospace, monospace" font-size="10.5" fill="var(--muted)">
+            <tspan x="8" dy="0">Each tick = one 600 s cadence attempt.</tspan>
+            <tspan x="8" dy="15" fill="var(--critical)">All fail identically — _last_generation_at is stamped before the failing call,</tspan>
+            <tspan x="8" dy="15">so the cadence still advances and the retry rate never increases.</tspan>
+            <tspan x="8" dy="15">Flatten has nothing to flatten: no position was ever opened.</tspan>
+          </text>
+        </svg>
+        <figcaption>Projected, not observed. Tick count derives from the 09:20–14:30
+        window at <code>recommendation_cadence_sec = 600</code>. <b>The failure mode is
+        conditional:</b> this shape needs Breeze to return live marks. With no session
+        token, <code>live is None</code> for every symbol, the IV store is never touched,
+        and the run ends in a coverage abort instead. Both branches reach zero trades —
+        so "no path to a trade" holds either way, but the mode does not.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 3 · impact ───────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">03 — Impact</p>
+      <h2>The ledger, as a timeline</h2>
+    </div>
+
+    <div class="panel" style="display:flex;flex-direction:column;gap:14px">
+      <div>
+        <p class="eyebrow" style="color:var(--critical)">Regressions — reported first, always</p>
+        <p class="note" style="margin-top:4px"><b>None.</b> Not "none found" as reassurance:
+        zero recommendations have been implemented, so nothing has had the opportunity to
+        regress. This section stays prominent so a future regression cannot be quietly
+        buried below a wall of passes.</p>
+      </div>
+      <div class="nodata">
+        <span class="nd-title">No before / after series can be plotted</span>
+        <span class="nd-why">Impact measurement needs a metrics row frozen before an
+        implementation and at least one after. Exactly one row exists, it is a
+        non-trading day, and no recommendation has an <code>implemented_sha</code>.
+        All seven records sit at <code>proposed</code>.</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 4 · optimization ───────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">04 — Optimization</p>
+      <h2>Open recommendations, re-ranked after the production probe</h2>
+      <p class="note">Every record targets a named metric with a stated direction, so each
+      can later be judged wrong. Severity is shown with a label as well as a colour.
+      The top two changed once F-1's production exposure dropped.</p>
+    </div>
+
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Monday rank</th><th>Recommendation</th><th>Stage</th><th>Target metric</th>
+            <th class="mono">Effort</th><th>Severity</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="mono">1</td>
+            <td><span class="rid">rec-2026-08-08-iv-zscore-session-warmup</span><br>
+              Cross-session IV baseline. The only <em>deterministic</em> coverage abort — it
+              depends on neither Breeze nor timing.</td>
+            <td class="mono">feature_assembly</td>
+            <td class="mono">reliability.coverage_aborts ↓</td>
+            <td class="mono">medium</td>
+            <td><span class="sev high">top-2 Monday</span></td>
+          </tr>
+          <tr>
+            <td class="mono">2</td>
+            <td><span class="rid">rec-2026-08-08-candle-budget-silent-empty</span><br>
+              Typed failure reasons + a candle sub-budget. Both GARCH strategies ride on
+              candles that are last in line for the shared 90 s budget.</td>
+            <td class="mono">feature_assembly</td>
+            <td class="mono">reliability.coverage_aborts ↓</td>
+            <td class="mono">medium</td>
+            <td><span class="sev high">top-2 Monday</span></td>
+          </tr>
+          <tr>
+            <td class="mono">3</td>
+            <td><span class="rid">rec-2026-08-08-iv-history-store-resilience</span><br>
+              Guard the read, make the write atomic, prune the store. Still the cheapest
+              fix on the list and the one unblocking local &amp; CI.</td>
+            <td class="mono">feature_assembly</td>
+            <td class="mono">reliability.cycles_completed ↑</td>
+            <td class="mono">low</td>
+            <td><span class="sev critical">critical local</span> <span class="sev medium">medium prod</span></td>
+          </tr>
+          <tr>
+            <td class="mono">4</td>
+            <td><span class="rid">rec-2026-08-08-learning-store-atomic-write</span><br>
+              Same atomic write on the trade ledger — but fail loud, never to <code>{}</code>.</td>
+            <td class="mono">feedback</td>
+            <td class="mono">reliability.cycles_completed ↑</td>
+            <td class="mono">low</td>
+            <td><span class="sev high">high</span></td>
+          </tr>
+          <tr>
+            <td class="mono">5</td>
+            <td><span class="rid">rec-2026-08-08-empty-earnings-calendar</span><br>
+              Populate the calendar; restore gamma's non-GARCH path.</td>
+            <td class="mono">feature_assembly</td>
+            <td class="mono">reliability.coverage_aborts ↓</td>
+            <td class="mono">low</td>
+            <td><span class="sev medium">low / med</span></td>
+          </tr>
+          <tr>
+            <td class="mono">6</td>
+            <td><span class="rid">rec-2026-08-08-min-eligible-symbols-is-inert</span><br>
+              Emit the threshold that actually bound. Observability, not tuning.</td>
+            <td class="mono">strategy_selection</td>
+            <td class="mono">reliability.coverage_abort_reasons ↑</td>
+            <td class="mono">low</td>
+            <td><span class="sev medium">medium</span></td>
+          </tr>
+          <tr>
+            <td class="mono">7</td>
+            <td><span class="rid">rec-2026-08-08-confidence-floor-is-not-a-probability</span><br>
+              Label heuristic confidence as such at the point of decision.</td>
+            <td class="mono">ranking_gating</td>
+            <td class="mono">stability.calibration_error ↓</td>
+            <td class="mono">medium</td>
+            <td><span class="sev medium">medium</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="panel">
+      <p class="eyebrow">What to watch on Monday</p>
+      <ol class="watch">
+        <li><b>The Breeze session token.</b> No token → no live marks → no GARCH → all
+        three strategies abort. Nothing downstream matters. The largest external risk,
+        and one I cannot verify ahead of the session.</li>
+        <li><b>Coverage at the 9-of-15 bar.</b> The most likely place a technically
+        healthy production run still produces nothing.</li>
+        <li><b><code>generations</code> still 0 while <code>ticks</code> climbs, plus
+        <code>last_actions</code> containing <code>tick_error</code>.</b> This is the
+        detection signal for "F-1 <em>is</em> on production after all".
+        <code>generations</code> increments only <em>after</em> the awaited cycle returns,
+        so a cycle that keeps dying leaves it pinned at 0 while <code>ticks</code> marches
+        on — a divergence that is durable and cannot be overwritten.
+          <div class="caution"><b>Do not use <code>last_error</code>, and do not
+          reintroduce it.</b> I originally recorded it as the tripwire and it does not
+          work: <code>_loop</code> sets <code>self._last_error = None</code> after every
+          successful tick, and with <code>tick_sec = 30</code> against a 600 s cadence, 19
+          of 20 ticks are <code>within_cadence</code> skips that count as successes and
+          wipe it. It reads <code>null</code> ~95 % of the entry window even when every
+          generation is failing — and for the same reason the scheduler does
+          <em>not</em> sit in <code>degraded</code>.</div>
+        </li>
+        <li><b>Whether <code>executed</code> ever turns true</b>, once
+        <code>generations</code> does start climbing.</li>
+      </ol>
+    </div>
+
+    <div class="grid-2">
+      <div class="nodata">
+        <span class="nd-title">Largest funnel drop-off — unknown</span>
+        <span class="nd-why">The funnel has never been instrumented with live traffic, in
+        either environment. The drop-off is <em>predicted</em> at
+        <code>feature_assembly</code> from the call chain, but predicting is not measuring,
+        and this panel stays empty until a cycle actually completes.</span>
+      </div>
+      <div class="panel">
+        <p class="eyebrow">Parameters still on test-scaffold values</p>
+        <dl class="kv" style="margin-top:10px">
+          <dt>max_symbols</dt><dd>15 — also silently sets the coverage denominator</dd>
+          <dt>generation_budget_sec</dt><dd>90 — shared by enrichment <em>and</em> candles</dd>
+          <dt>min_coverage_ratio</dt><dd>0.60 — the binding gate at 9 of 15</dd>
+          <dt>min_eligible_symbols</dt><dd>6 — inert at this cap; binds below max_symbols 10</dd>
+          <dt>response_cache_ttl_sec</dt><dd>900 — staleness window on a served packet</dd>
+        </dl>
+        <p class="note" style="margin-top:12px">Scaffolding to probe whether a paper trade
+        lands on 2026-08-10 — open questions each run, not settled or owner-approved
+        values. <b>The trap, stated before there is a result to rationalise: if a trade
+        lands because a gate was loosened, that shows the loop works end to end. It does
+        not show the gate was too tight.</b></p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 5 · progress ───────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">05 — Progress</p>
+      <h2>Trends, and the honest absence of them</h2>
+    </div>
+
+    <div class="panel">
+      <figure>
+        <span class="fig-title">Recommendation outcomes to date</span>
+        <svg viewBox="0 0 700 118" role="img"
+             aria-label="Recommendation outcomes: 0 validated, 0 regressed, 7 open.">
+          <g font-family="ui-monospace, monospace" font-size="11" fill="var(--muted)">
+            <text x="0" y="26">validated</text>
+            <text x="0" y="62">regressed</text>
+            <text x="0" y="98">open</text>
+          </g>
+          <!-- zero-length bars shown as an explicit end-cap, not an empty axis -->
+          <line x1="96" y1="14" x2="96" y2="30" stroke="var(--line)" stroke-width="2"/>
+          <line x1="96" y1="50" x2="96" y2="66" stroke="var(--line)" stroke-width="2"/>
+          <rect x="96" y="82" width="392" height="16" rx="4" fill="var(--accent)"/>
+          <g font-family="ui-monospace, monospace" font-size="12" font-weight="600"
+             fill="var(--ink)" style="font-variant-numeric:tabular-nums">
+            <text x="106" y="26" fill="var(--muted)">0</text>
+            <text x="106" y="62" fill="var(--muted)">0</text>
+            <text x="500" y="95">7</text>
+          </g>
+        </svg>
+        <figcaption>Three counts kept as headline numbers on purpose: a ledger where
+        everything quietly passes should look suspicious at a glance. Today every record
+        is open, which is what a first run should look like — an audit that validated its
+        own recommendations on day one would be the warning sign.</figcaption>
+      </figure>
+    </div>
+
+    <div class="grid-2">
+      <div class="nodata">
+        <span class="nd-title">Equity curve — 0 points</span>
+        <span class="nd-why">No real trade has ever closed, confirmed on production. One
+        point is not a curve and zero points is not a chart; commit markers would sit on
+        an axis with nothing behind them.</span>
+      </div>
+      <div class="nodata">
+        <span class="nd-title">Win rate &amp; profit factor — undefined</span>
+        <span class="nd-why">Both need closed outcomes. Production returns
+        <code>win_rate: null</code> for exactly this reason, and the four local records
+        are seed fixtures excluded by rule.</span>
+      </div>
+      <div class="nodata">
+        <span class="nd-title">Calibration vs the diagonal — not computable</span>
+        <span class="nd-why">No calibration artifact exists and there are no realized
+        outcomes to bucket against predicted confidence. Plotting a diagonal with no
+        points would imply a calibration that has never been measured.</span>
+      </div>
+      <div class="nodata">
+        <span class="nd-title">Reliability trends — 1 row, non-trading</span>
+        <span class="nd-why">The single metrics row has <code>session_traded: false</code>
+        and its metric objects deliberately omitted. The first genuine comparison becomes
+        possible after 2026-08-10.</span>
+      </div>
+    </div>
+
+    <div class="panel">
+      <p class="eyebrow">Maturity</p>
+      <p style="margin-top:8px">Real closed trades: <b>0</b>, confirmed on production. The
+      gate is roughly 30 real closed trades per module before P&amp;L is even directional.
+      The volatility edge is <b>not validated</b> and no out-of-sample walk-forward
+      evidence for SH-4 expectancy has been produced. Nothing on this page says the
+      strategy makes money — it assesses only whether the machinery can run at all.</p>
+    </div>
+  </section>
+
+  <!-- ───────────────────────── 6 · journal ───────────────────────── -->
+  <section>
+    <div class="sec-head">
+      <p class="eyebrow">06 — Journal</p>
+      <h2>2026-08-08 — latest entry</h2>
+    </div>
+    <div class="panel">
+      <blockquote>
+        <p>First analyst run. Market closed (Saturday). Cycles run: 0. Recommendations
+        published: 0. Trades opened: 0, closed: 0. Session P&amp;L: none — not zero,
+        absent.</p>
+        <p>Change attribution skipped entirely: first run, no baseline, and inventing a
+        baseline commit to diff against would be worse than reporting nothing. Attribution
+        begins next run, anchored at <code>c25caa5</code>.</p>
+        <p>Seven recommendations proposed, and three corrections to my own analysis: the
+        production severity was over-stated, one evidence leg proved nothing and was
+        struck, and my detection tripwire would not have fired. F-1 is a local and CI
+        blocker; Monday's binding risks are the Breeze token and the coverage gates.</p>
+      </blockquote>
+      <p class="note" style="margin-top:14px">Full entry:
+      <code>Docs/bot_health/DAILY_JOURNAL.md</code> · Full review:
+      <code>Docs/bot_health/RECOMMENDATION_ENGINE_REVIEW.md</code> · State:
+      <code>recommendation_metrics.jsonl</code>, <code>recommendation_ledger.jsonl</code></p>
+    </div>
+  </section>
+
+</div>
