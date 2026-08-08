@@ -75,3 +75,50 @@ def test_metrics_session_dates_are_unique_and_ordered() -> None:
     dates = [r["session_date"] for _, r in _iter_jsonl(METRICS_PATH)]
     assert len(dates) == len(set(dates)), "duplicate session_date rows corrupt trend charts"
     assert dates == sorted(dates), "metrics history must be append-only in date order"
+
+
+def test_schema_rejects_typo_in_nested_change_entry() -> None:
+    """A typo'd key inside changes[] must not validate silently."""
+    schema = _load_json(METRICS_SCHEMA_PATH)
+    record = {
+        "session_date": "2026-08-10",
+        "run_at": "2026-08-10T16:00:00+05:30",
+        "head_sha": "abc1234",
+        "session_traded": True,
+        "real_closed_trades": 0,
+        "changes": [{"shas": "abc1234", "subject": "x", "stage": "fill"}],
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=record, schema=schema)
+
+
+def test_schema_rejects_non_iso_run_at() -> None:
+    schema = _load_json(METRICS_SCHEMA_PATH)
+    record = {
+        "session_date": "2026-08-10",
+        "run_at": "tomorrow",
+        "head_sha": "abc1234",
+        "session_traded": True,
+        "real_closed_trades": 0,
+    }
+    with pytest.raises(jsonschema.ValidationError):
+        jsonschema.validate(instance=record, schema=schema)
+
+
+def test_schema_accepts_a_well_formed_row() -> None:
+    """Guards against over-tightening: a valid row must still pass."""
+    schema = _load_json(METRICS_SCHEMA_PATH)
+    record = {
+        "session_date": "2026-08-10",
+        "run_at": "2026-08-10T16:00:00+05:30",
+        "head_sha": "abc1234",
+        "session_traded": True,
+        "real_closed_trades": 0,
+        "changes": [{"sha": "abc1234", "subject": "x", "stage": "fill", "files": ["a.py"]}],
+        "stability": {
+            "calibration_buckets": [
+                {"bucket": "0.7-0.8", "predicted": 0.75, "realized": 0.5, "n": 2}
+            ]
+        },
+    }
+    jsonschema.validate(instance=record, schema=schema)

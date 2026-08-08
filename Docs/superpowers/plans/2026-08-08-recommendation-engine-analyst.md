@@ -160,7 +160,7 @@ Create `backend/schemas/recommendation_metrics.schema.json`:
   "additionalProperties": false,
   "properties": {
     "session_date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
-    "run_at": { "type": "string" },
+    "run_at": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}([.]\\d+)?[+-]\\d{2}:\\d{2}$" },
     "head_sha": { "type": "string", "minLength": 7 },
     "session_traded": {
       "type": "boolean",
@@ -230,6 +230,7 @@ Create `backend/schemas/recommendation_metrics.schema.json`:
           "items": {
             "type": "object",
             "required": ["bucket", "predicted", "realized", "n"],
+            "additionalProperties": false,
             "properties": {
               "bucket": { "type": "string" },
               "predicted": { "type": "number" },
@@ -248,6 +249,7 @@ Create `backend/schemas/recommendation_metrics.schema.json`:
       "items": {
         "type": "object",
         "required": ["sha", "subject", "stage"],
+        "additionalProperties": false,
         "properties": {
           "sha": { "type": "string", "minLength": 7 },
           "subject": { "type": "string" },
