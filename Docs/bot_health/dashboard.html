@@ -233,7 +233,12 @@
   a { color: var(--accent); }
   a:focus-visible, :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-  ol.watch { margin: 10px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 8px; font-size: 13.8px; color: var(--ink-2); }
+  ol.watch { margin: 10px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 10px; font-size: 13.8px; color: var(--ink-2); }
+  .caution {
+    margin-top: 7px; padding: 9px 12px; border: 1px dashed var(--critical);
+    border-radius: 3px; font-size: 12.8px; color: var(--ink-2);
+    background: var(--surface-alt);
+  }
 
   @media (max-width: 620px) {
     .stage { grid-template-columns: 1fr; }
@@ -281,17 +286,22 @@
         <span class="alarm-tag">Correction · production probe, 15:18 IST</span>
       </div>
       <p>My first pass called Monday's attempt impossible and left production an
-      "unquantified risk" <em>without having checked</em>. Having now run the read-only
-      endpoints, the evidence moved <b>against</b> that claim: production declares no
-      persistent volume, runs a single <code>uvicorn</code> process with no
-      <code>--workers</code>, initialised its paper_sim ledger at container boot, and
-      reports <code>generations: 0</code> after 1923 ticks. The corrupt file almost
-      certainly <b>does not exist there</b>.</p>
-      <p>Production is also already <code>fully_autonomous</code>, scheduler healthy,
-      lock free, no breakers. <b>Monday's binding risks are the Breeze session token and
-      the coverage gates — not the corruption.</b> The one thing that would flip this back:
-      a Railway volume attached via the dashboard UI, which would not appear in
-      <code>railway.toml</code> and which I cannot see.</p>
+      "unquantified risk" <em>without having checked</em>. Having run the read-only
+      endpoints, the evidence moved <b>against</b> that claim on two strong legs: the
+      corrupt file <b>cannot have shipped in the image</b> — <code>backend/data/</code> is
+      gitignored and <code>git ls-files backend/data</code> returns nothing — and
+      <b>this process has never run the writer</b> (<code>generations: 0</code> after 1923
+      ticks; <code>IvHistoryStore</code> is reached only inside a generation). Supporting:
+      no volume declared in the deploy config, and <code>uvicorn</code> runs with no
+      <code>--workers</code>.</p>
+      <p><b>Calibrated honestly:</b> probably absent and provably not from the repo, but
+      <b>not established</b> — a volume carrying the file from an <em>earlier</em>
+      deployment is not excluded by this process's <code>generations: 0</code>, and a
+      Railway volume attached via the dashboard UI would not appear in
+      <code>railway.toml</code>, which I cannot see. Production is also already
+      <code>fully_autonomous</code>, scheduler healthy, lock free, no breakers.
+      <b>Monday's binding risks are the Breeze session token and the coverage gates — not
+      the corruption.</b></p>
     </div>
   </header>
 
@@ -363,8 +373,8 @@
           </tr>
           <tr>
             <td class="mono">/api/v1/scheduler/status</td>
-            <td class="mono">state: running · phase: closed<br>ticks: 1923 · <b>generations: 0</b><br>last_error: <b>null</b><br>started 2026-08-07T17:46:56Z</td>
-            <td><span class="sev medium">untested</span> The entry path has <em>never</em> executed in production. Monday is its first-ever run — and <code>last_error</code> is the first field to read afterwards.</td>
+            <td class="mono">state: running · phase: closed<br>ticks: 1923 · <b>generations: 0</b><br>last_error: null<br>started 2026-08-07T17:46:56Z</td>
+            <td><span class="sev medium">untested</span> The entry path has <em>never</em> executed in production — Monday is its first-ever run. <code>generations: 0</code> is also load-bearing evidence: this process has never reached <code>IvHistoryStore</code> at all.</td>
           </tr>
           <tr>
             <td class="mono">/api/v1/learning/dashboard</td>
@@ -373,8 +383,8 @@
           </tr>
           <tr>
             <td class="mono">/api/v1/paper-sim/account</td>
-            <td class="mono">equity ₹1,000,000<br>realized_pnl: 0.0<br>updated_at 17:46:56.710Z</td>
-            <td><span class="sev medium">evidence</span> Ledger initialised 2&nbsp;ms <em>before</em> scheduler start — consistent with a fresh, non-persistent data directory.</td>
+            <td class="mono">equity ₹1,000,000<br>realized_pnl: 0.0<br>open_positions: 0</td>
+            <td><span class="sev ok">corroborates</span> Confirms zero trading — and <b>nothing about filesystem persistence</b>. I initially read its <code>updated_at</code> as evidence of a fresh data dir; <code>PaperLedger.__init__</code> stamps that unconditionally and <code>paper_sim</code> has no disk state, so it holds on every boot. Leg struck.</td>
           </tr>
           <tr>
             <td class="mono">/api/v1/decisions<br>/api/v1/paper-sim/positions<br>/api/v1/risk/snapshot</td>
@@ -384,7 +394,7 @@
           <tr>
             <td class="mono">GET /api/v1/recommendations</td>
             <td class="mono">not called</td>
-            <td><span class="sev high">withheld</span> The only endpoint reaching <code>IvHistoryStore</code> — but it calls <code>autonomous_execution_for</code>, and prod is <code>fully_autonomous</code>. It could open a paper position, and it <em>writes to the file under investigation</em>. Probing a fault by corrupting its own evidence is not a probe.</td>
+            <td><span class="sev high">withheld</span> The only endpoint reaching <code>IvHistoryStore</code> — but it calls <code>autonomous_execution_for</code> unconditionally and a cold cache runs the full cycle regardless of <code>force_refresh</code>. Prod is <code>fully_autonomous</code>: it could open a paper position, and it <em>writes to the file under investigation</em>. Probing a fault by corrupting its own evidence is not a probe.</td>
           </tr>
         </tbody>
       </table>
@@ -510,7 +520,8 @@
         <div class="stage-body">
           <p><code>PaperEngine.submit_order</code> is the sole fill source for the
           autonomous path — nearest-strike ATM CE, one lot, nearest expiry at DTE ≥ 10,
-          expanded into the full structure by the structure builder.</p>
+          expanded into the full structure by the structure builder. Holds <b>no disk
+          state</b>: the ledger is in-memory and re-initialised on every boot.</p>
           <p class="drop">Drops on: no resolvable ATM contract; <code>PaperLedgerError</code>;
           <code>StaleMarksError</code>.</p>
         </div>
@@ -545,8 +556,8 @@
       <h2>The conditional failure mode, where the corrupt store is present</h2>
       <p class="note">This is what the entry window produces <em>in an environment that
       holds the corrupt file</em> — confirmed for local, and now judged unlikely for
-      production. It is drawn because it is the mode to recognise if
-      <code>last_error</code> shows a <code>JSONDecodeError</code> on Monday.</p>
+      production. It is drawn because it is the shape to recognise if Monday's telemetry
+      shows <code>generations</code> pinned at 0 while <code>ticks</code> climbs.</p>
     </div>
 
     <div class="panel">
@@ -733,21 +744,41 @@
       </table>
     </div>
 
+    <div class="panel">
+      <p class="eyebrow">What to watch on Monday</p>
+      <ol class="watch">
+        <li><b>The Breeze session token.</b> No token → no live marks → no GARCH → all
+        three strategies abort. Nothing downstream matters. The largest external risk,
+        and one I cannot verify ahead of the session.</li>
+        <li><b>Coverage at the 9-of-15 bar.</b> The most likely place a technically
+        healthy production run still produces nothing.</li>
+        <li><b><code>generations</code> still 0 while <code>ticks</code> climbs, plus
+        <code>last_actions</code> containing <code>tick_error</code>.</b> This is the
+        detection signal for "F-1 <em>is</em> on production after all".
+        <code>generations</code> increments only <em>after</em> the awaited cycle returns,
+        so a cycle that keeps dying leaves it pinned at 0 while <code>ticks</code> marches
+        on — a divergence that is durable and cannot be overwritten.
+          <div class="caution"><b>Do not use <code>last_error</code>, and do not
+          reintroduce it.</b> I originally recorded it as the tripwire and it does not
+          work: <code>_loop</code> sets <code>self._last_error = None</code> after every
+          successful tick, and with <code>tick_sec = 30</code> against a 600 s cadence, 19
+          of 20 ticks are <code>within_cadence</code> skips that count as successes and
+          wipe it. It reads <code>null</code> ~95 % of the entry window even when every
+          generation is failing — and for the same reason the scheduler does
+          <em>not</em> sit in <code>degraded</code>.</div>
+        </li>
+        <li><b>Whether <code>executed</code> ever turns true</b>, once
+        <code>generations</code> does start climbing.</li>
+      </ol>
+    </div>
+
     <div class="grid-2">
-      <div class="panel">
-        <p class="eyebrow">What to watch on Monday</p>
-        <ol class="watch">
-          <li><b>The Breeze session token.</b> No token → no live marks → no GARCH → all
-          three strategies abort. Nothing downstream matters. The largest external risk,
-          and one I cannot verify ahead of the session.</li>
-          <li><b>Coverage at the 9-of-15 bar.</b> The most likely place a technically
-          healthy production run still produces nothing.</li>
-          <li><b><code>scheduler/status → last_error</code>.</b> A <code>JSONDecodeError</code>
-          there means F-1 <em>is</em> on production and my downgrade was wrong. Read it
-          first.</li>
-          <li><b><code>generations</code> above 0</b> for the first time, and whether
-          <code>executed</code> ever turns true.</li>
-        </ol>
+      <div class="nodata">
+        <span class="nd-title">Largest funnel drop-off — unknown</span>
+        <span class="nd-why">The funnel has never been instrumented with live traffic, in
+        either environment. The drop-off is <em>predicted</em> at
+        <code>feature_assembly</code> from the call chain, but predicting is not measuring,
+        and this panel stays empty until a cycle actually completes.</span>
       </div>
       <div class="panel">
         <p class="eyebrow">Parameters still on test-scaffold values</p>
@@ -853,10 +884,10 @@
         <p>Change attribution skipped entirely: first run, no baseline, and inventing a
         baseline commit to diff against would be worse than reporting nothing. Attribution
         begins next run, anchored at <code>c25caa5</code>.</p>
-        <p>Seven recommendations proposed. I initially wrote that Monday's attempt "cannot
-        succeed" and left production an unquantified risk without having checked — the
-        probe moved that against my own claim. F-1 is a local and CI blocker; Monday's
-        binding risks are the Breeze token and the coverage gates.</p>
+        <p>Seven recommendations proposed, and three corrections to my own analysis: the
+        production severity was over-stated, one evidence leg proved nothing and was
+        struck, and my detection tripwire would not have fired. F-1 is a local and CI
+        blocker; Monday's binding risks are the Breeze token and the coverage gates.</p>
       </blockquote>
       <p class="note" style="margin-top:14px">Full entry:
       <code>Docs/bot_health/DAILY_JOURNAL.md</code> · Full review:

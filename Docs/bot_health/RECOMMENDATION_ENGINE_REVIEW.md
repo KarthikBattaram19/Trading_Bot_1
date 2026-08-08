@@ -34,10 +34,10 @@ guard — that part is confirmed and detailed in F-1. **But the production probe
 changed what that means for Monday, and it changed it in the direction that is
 less favourable to my own initial claim.** The corruption is a local and CI
 blocker. On production — which is where Monday actually happens — the corrupt
-file almost certainly does not exist, production is already
-`fully_autonomous`, the scheduler is healthy, and the binding risks for
-2026-08-10 are the **Breeze session token** and the **coverage gates**, not the
-corruption. See F-9.
+file is **probably absent and provably not from the repo**, though not
+conclusively excluded; production is already `fully_autonomous`, the scheduler
+is healthy, and the binding risks for 2026-08-10 are the **Breeze session
+token** and the **coverage gates**, not the corruption. See F-9.
 
 ## Pipeline map
 
@@ -121,7 +121,9 @@ pass, lock free) and a 2% spread cap, then rank-1 → rank-2 → rank-3 fallback
 `PaperEngine.submit_order` is the sole fill source for the autonomous path.
 `resolve_atm_ce_leg` picks the nearest-strike CE at the nearest expiry with
 DTE ≥ 10, one lot; `structure_builder` expands that into the full structure.
-Rejections surface as `PaperLedgerError` / `StaleMarksError`.
+Rejections surface as `PaperLedgerError` / `StaleMarksError`. Note for anyone
+reasoning about persistence: `backend/paper_sim/` holds **no disk state at all**
+— `PaperLedger` is entirely in-memory and re-initialised on every boot.
 
 ### `feedback` — `backend/services/learning_service.py`
 
@@ -170,10 +172,19 @@ The severity comes from the call chain, not the file:
    escapes into `_loop`'s broad handler (`trading_scheduler.py:118-121`).
 
 Consequence where the corrupt file is present: the cycle dies on the first
-live-marks symbol. The scheduler survives but records `tick_error` and goes
-`degraded`. Because the cadence timestamp was already stamped, it retries only
-once per 600 s — roughly **31 identical failures across the 09:20–14:30 window,
-zero recommendations, zero trades**.
+live-marks symbol. The scheduler survives, records a `tick_error` into
+`last_actions`, and keeps ticking. Because the cadence timestamp was already
+stamped, it retries only once per 600 s — roughly **31 identical failures across
+the 09:20–14:30 window, zero recommendations, zero trades**.
+
+**Correction to my earlier draft of this finding: it does _not_ park the
+scheduler in `degraded`.** `_loop` clears `self._last_error = None` after every
+successful tick (`trading_scheduler.py:115`), and with `tick_sec = 30` against a
+600 s cadence, 19 of every 20 ticks return
+`{"action": "skip", "reason": "within_cadence"}` — a success that wipes the
+error. `state` therefore flickers to `degraded` for roughly 30 s in every 10
+minutes and reads `running` the rest of the time. This is also why `last_error`
+is unusable as a detection signal — see "What to watch on Monday".
 
 **That projection is conditional on Breeze returning live marks.** If the
 session token is missing or rejected, `enrich_many` fails fast, `live is None`
@@ -204,37 +215,55 @@ introduced by this branch.
 >
 > I labelled the production exposure "unquantified risk" without having
 > attempted the read-only endpoint check my own process calls for. Having now
-> done it, the evidence says the corrupt file is very unlikely to exist on
-> Railway, and therefore **F-1 is a local/CI blocker, not the Monday blocker**:
+> done it, the evidence says the corrupt file is unlikely to exist on Railway,
+> and therefore **F-1 is a local/CI blocker, not the Monday blocker.**
 >
-> - `railway.toml` and `Procfile` declare **no persistent volume**, and
->   `Docs/RAILWAY_DEPLOY.md` never mentions one — so `backend/data/` is
->   container-local and rebuilt on deploy.
-> - `backend/scripts/start_remote.sh` runs `uvicorn` with **no `--workers`** —
->   a single process. Within one process `generate_recommendations` is
->   serialized by `_response_cache_lock`, so the concurrent-writer mechanism
->   that produced the local corruption has no obvious path on production.
-> - `/api/v1/paper-sim/account` reports `updated_at`
->   `2026-08-07T17:46:56.710824Z` against a scheduler `started_at` of
->   `2026-08-07T17:46:56.712753Z` — the ledger was initialised **at container
->   boot**, consistent with a fresh, non-persistent data directory.
-> - `/api/v1/scheduler/status` shows `generations: 0` after `ticks: 1923` and
->   `last_error: null`. The entry path has never executed on production, so
->   nothing has yet written to its IV store, and `_read` returns `{}` for a
->   file that does not exist.
+> The argument rests on two strong legs and one supporting one:
+>
+> 1. **The corrupt file cannot have shipped in the image.** `backend/data/` is
+>    gitignored (`.gitignore:70`) and `git ls-files backend/data` returns
+>    **nothing** — not one tracked file. Whatever is in that directory on
+>    Railway, it did not come from the repository.
+> 2. **This production process has never run the code that writes it.**
+>    `/api/v1/scheduler/status` shows `generations: 0` after `ticks: 1923`.
+>    `IvHistoryStore` is reached only from `_build_universe`, which runs only
+>    inside a generation. So this process never created the file either, and
+>    `_read` returns `{}` for a path that does not exist.
+> 3. *(supporting)* `railway.toml` and `Procfile` declare no persistent volume
+>    and `Docs/RAILWAY_DEPLOY.md` never mentions one; and
+>    `backend/scripts/start_remote.sh` runs `uvicorn` with **no `--workers`**,
+>    so within a single process `generate_recommendations` is serialized by
+>    `_response_cache_lock` and the concurrent-writer mechanism that produced
+>    the local corruption has no obvious path.
+>
+> **Struck from this list on re-review — it proved nothing.** I had also cited
+> `/api/v1/paper-sim/account` reporting `updated_at` 2 ms before the scheduler's
+> `started_at` as evidence of a fresh data directory. `PaperLedger.__init__`
+> stamps `self._updated_at = datetime.now(timezone.utc)` unconditionally
+> (`backend/paper_sim/ledger.py:32`) and `backend/paper_sim/` has **no disk
+> persistence at all**, so that relationship holds on every boot whether or not
+> a volume is mounted. I read a coincidence as a signal.
 >
 > **Revised severity: critical for local and CI (it is why 5 tests fail and why
 > no local cycle can run); medium for production.** The fix is unchanged and
 > still worth doing — it is low effort, removes a whole failure class, and
 > stops unbounded file growth — but it is **no longer the top Monday lever.**
 >
+> **Calibrating the confidence.** With the boot-timestamp leg struck, the honest
+> statement is narrower than "almost certainly not there": the file **cannot
+> have come from the image, and this process has never created it.** The one
+> remaining way it could exist is a mounted volume carrying it from an *earlier*
+> deployment that did run cycles — something the current `generations: 0` cannot
+> speak to. So: **probably absent, provably not from the repo, but not
+> established.**
+>
 > **The one thing that would flip this back:** Railway volumes can be attached
 > through the dashboard UI without appearing in `railway.toml`. I cannot see
-> that UI. If a volume *is* mounted at `backend/data/` and holds a corrupt
-> `iv_history.json`, production is blocked exactly as described above. Settling
-> this needs either a look at the Railway volume settings or one forced
-> recommendation cycle on production during market hours — the latter is a
-> state mutation I did not perform (see F-9).
+> that UI. If a volume *is* mounted at `backend/data/` and carries a corrupt
+> `iv_history.json` from an earlier deployment, production is blocked exactly as
+> described above. Settling this needs either a look at the Railway volume
+> settings or one forced recommendation cycle on production during market hours
+> — the latter is a state mutation I did not perform (see F-9).
 
 ### F-2 — The same defect class sits on the trade ledger — **HIGH**
 
@@ -256,9 +285,9 @@ Worth noting the house pattern already exists —
 `json.loads` correctly. These two stores are the exceptions, not a missing
 convention.
 
-> **Update 2026-08-08 15:18 IST.** The same single-process / no-volume evidence
-> in F-1's update applies here and lowers the production likelihood equally.
-> The asymmetric-fix reasoning is unaffected.
+> **Update 2026-08-08 15:18 IST.** The same no-volume / single-process /
+> not-in-the-image evidence recorded in F-1's update applies here and lowers the
+> production likelihood equally. The asymmetric-fix reasoning is unaffected.
 
 ### F-3 — Budget exhaustion is indistinguishable from missing data — **MEDIUM → now a top-2 Monday risk**
 
@@ -359,7 +388,7 @@ Ran the read-only endpoints my process specifies. All reachable, all HTTP 200.
 | `/api/v1/scheduler/status` | `state: running`, `phase: closed`, `ticks: 1923`, **`generations: 0`**, `last_generation_at: null`, `last_error: null`, started `2026-08-07T17:46:56Z` |
 | `/api/v1/learning/dashboard` | `closed_trade_count: 0`, `open_trade_count: 0`, `win_rate: null`, `failure_memory_count: 0`, "3 bundled demo fixture(s) stored but excluded from metrics" |
 | `/api/v1/paper-sim/positions` | `[]` |
-| `/api/v1/paper-sim/account` | equity ₹1,000,000 = starting capital, `realized_pnl: 0.0`, `open_positions: 0`, `mark_provider: icici_direct_data_only` |
+| `/api/v1/paper-sim/account` | equity ₹1,000,000 = starting capital, `realized_pnl: 0.0`, `open_positions: 0` — corroborates zero trading, but carries **no** information about filesystem persistence (see the struck leg in F-1's update) |
 | `/api/v1/decisions` | `[]` |
 | `/api/v1/risk/snapshot` | all greeks 0, `drawdown_pct: 0`, no breaches |
 
@@ -368,31 +397,35 @@ What this establishes:
 1. **Zero real trades is confirmed on production**, not just inferred from the
    local seed store. Production independently excludes the 3 bundled fixtures.
 2. **Production is configured and ready** — `fully_autonomous`, scheduler
-   running clean for 1923 ticks with `last_error: null`, lock free, no breakers.
+   running clean for 1923 ticks, lock free, no breakers.
 3. **The entry path has never run in production** (`generations: 0`, and the
    scheduler started Friday 23:16 IST, after close, followed by a weekend). So
    Monday will be its first-ever execution.
-4. **F-1's production exposure is low** — see the F-1 update for the volume,
-   worker-count and boot-timestamp evidence.
+4. **F-1's production exposure is low** — the corrupt file cannot have come from
+   the repo (`git ls-files backend/data` returns nothing) and this process has
+   never run the writer (`generations: 0`). See the F-1 update for the full
+   evidence list and the leg struck on re-review.
 
 What this does **not** establish, stated plainly rather than guessed:
 
 - Whether `backend/data/iv_history.json` exists on the Railway filesystem. None
   of the read-only endpoints touch that store. The only endpoint that would is
   `GET /api/v1/recommendations`, which calls `run_recommendation_cycle` →
-  `_build_universe` → `IvHistoryStore`, and which also invokes
-  `autonomous_execution_for`. With production on `fully_autonomous`, that is a
-  request that can *open a paper position* and that *writes to the very file
-  under investigation*. **I did not call it.** My hard rule is to run nothing
-  that mutates repo or broker state, and probing a fault by writing to the
-  suspected file would also destroy the evidence.
+  `_build_universe` → `IvHistoryStore`, and which then calls
+  `autonomous_execution_for` unconditionally (`recommendation_cycle.py:71`);
+  a cold cache runs the full cycle regardless of `force_refresh`. With
+  production on `fully_autonomous`, that is a request that can *open a paper
+  position* and that *writes to the very file under investigation*. **I did not
+  call it.** My hard rule is to run nothing that mutates repo or broker state,
+  and probing a fault by writing to the suspected file would also destroy the
+  evidence.
 - Whether Monday's Breeze session token will be valid.
 
 To settle the first point, one of: read the Railway volume settings in the
 dashboard; or have the owner run one forced cycle during market hours and
-capture `/api/v1/scheduler/status` (`last_error`) plus
-`/api/v1/recommendations`. Monday's 09:20 cycle will answer it either way, and
-run 002 should read `last_error` first.
+capture `/api/v1/scheduler/status`. Monday's 09:20 cycle will answer it either
+way — and run 002 should read **`generations` against `ticks`, plus
+`last_actions`**, not `last_error`, for the reason given below.
 
 ## Change ledger
 
@@ -426,11 +459,26 @@ Revised after the production probe, most-binding first:
    ride on GARCH, which rides on candles that are last in line for the shared
    90 s budget (F-3). This is the most likely place a technically healthy
    production run still produces nothing.
-3. **`/api/v1/scheduler/status` → `last_error`.** If it carries a
-   `JSONDecodeError`, F-1 *is* present on production after all and the F-1
-   update above is wrong — read this field before anything else.
-4. **`generations`** climbing above 0 for the first time, and whether
-   `executed` ever turns true.
+3. **`generations` still 0 while `ticks` climbs — plus `last_actions`
+   containing `tick_error`.** This is the detection signal for "F-1 *is* on
+   production after all". `generations` is incremented only *after* the awaited
+   cycle returns (`trading_scheduler.py:172-173`), so a cycle that keeps dying
+   leaves `generations` pinned at 0 while `ticks` marches on — a divergence that
+   is durable and cannot be overwritten. `last_actions` retains the last 20
+   records including `tick_error` entries carrying the exception string
+   (`trading_scheduler.py:121`, `:234`).
+
+   **Do not use `last_error` for this, and do not reintroduce it.** I originally
+   recorded `last_error` as the tripwire and it does not work: `_loop` sets
+   `self._last_error = None` after every successful tick
+   (`trading_scheduler.py:115`), `tick_sec` is 30 s and the generation cadence
+   is 600 s, so a failed entry tick populates the field for about 30 seconds
+   before the next `within_cadence` skip — itself a success — wipes it. Across
+   the entry window `last_error` reads `null` roughly 95 % of the time even when
+   every generation is failing. It is the only thing that was guarding a wrong
+   downgrade, and it would have guarded nothing.
+4. **Whether `executed` ever turns true**, once `generations` does start
+   climbing.
 
 ## Maturity statement
 
