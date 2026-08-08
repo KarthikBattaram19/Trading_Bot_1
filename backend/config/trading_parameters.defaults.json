@@ -116,7 +116,24 @@
     "min_observations": 20,
     "max_log_return_gap": 0.25,
     "enable_mle_fit": false,
-    "fit_min_observations": 60
+    "fit_min_observations": 60,
+    "symbol_overrides": {
+      "BANKNIFTY": {
+        "gamma_weight": 0.03,
+        "alpha_weight": 0.12,
+        "beta_weight": 0.85
+      },
+      "NIFTY": {
+        "gamma_weight": 0.04,
+        "alpha_weight": 0.08,
+        "beta_weight": 0.88
+      },
+      "HDFCBANK": {
+        "gamma_weight": 0.04,
+        "alpha_weight": 0.08,
+        "beta_weight": 0.88
+      }
+    }
   },
   "iv_zscore": {
     "min_observations": 5,

@@ -79,3 +79,13 @@ async def test_backfill_drops_unparseable_rows(tmp_path):
     results = await run_backfill(symbols=("NIFTY",), sleep_sec=0.0, adapter=adapter, store=store)
     assert results == {"NIFTY": 1}
     assert store.series(symbol="NIFTY") == [105.0]
+
+
+def test_fno_universe_symbols_uppercases_master_list():
+    from backend.scripts.backfill_daily_price_history import fno_universe_symbols
+
+    class _FakeMaster:
+        def list_fno_underlyings(self):
+            return ["nifty", "BANKNIFTY", "TataMotors"]
+
+    assert fno_universe_symbols(master=_FakeMaster()) == ("NIFTY", "BANKNIFTY", "TATAMOTORS")

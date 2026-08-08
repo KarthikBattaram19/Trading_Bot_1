@@ -366,6 +366,36 @@ failure signal — it just always resolves to the fixed-weight tier.
 report whether a given forecast used fitted or fixed weights — check these
 before treating "the model was fit" as true for a specific symbol/cycle.
 
+### Per-symbol weight overrides (2026-08-08)
+
+The "fixed" weights H1–H3 are the *global default*, not necessarily what a
+given underlying uses. `garch_forecast.symbol_overrides` in
+`backend/config/trading_parameters.defaults.json` maps underlying →
+calibrated `{gamma_weight, alpha_weight, beta_weight}`; `quant_snapshot`
+resolves the symbol's override first and falls back to H1–H3 for any symbol
+not listed. Overrides are produced offline by
+`python -m backend.scripts.calibrate_garch_weights`, which walk-forward
+scores a candidate grid by OOS QLIKE and recommends an override **only**
+when it beats the global default with a pairwise win rate > 55% over ≥ 100
+events (evidence: `Docs/bot_health/garch_weight_calibration.md`). Currently
+seeded: BANKNIFTY 0.03/0.12/0.85, NIFTY and HDFCBANK 0.04/0.08/0.88; INFY
+and RELIANCE stay on the global default (guard rejected).
+
+**Recalibration runbook** (quarterly, or when new symbols accumulate ≥ ~350
+trading days of history):
+
+1. `python -m backend.scripts.backfill_daily_price_history --all-fno --force`
+   (needs Breeze credentials; rate-limited within the vendor envelope)
+2. `python -m backend.scripts.calibrate_garch_weights`
+3. Review `Docs/bot_health/garch_weight_calibration.md`, apply the printed
+   `symbol_overrides` block to the defaults config, commit both together.
+   The script never edits config itself.
+
+This mechanism replaces neither tier of the MLE-fit path above — daily MLE
+re-fitting stays off (`enable_mle_fit: false`) per the 2026-08-04
+walk-forward evidence; per-symbol *fixed* overrides are the calibrated
+middle ground.
+
 ---
 
 ## Part I — Shared Execution & Retail Constraint Parameters

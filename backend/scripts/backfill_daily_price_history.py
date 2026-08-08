@@ -5,6 +5,8 @@ Usage (from repo root):
   python -m backend.scripts.backfill_daily_price_history
   python -m backend.scripts.backfill_daily_price_history --force
   python -m backend.scripts.backfill_daily_price_history --symbols NIFTY,SBIN --lookback-days 900
+  python -m backend.scripts.backfill_daily_price_history --all-fno   # full FNO universe
+                                                                     # (feeds calibrate_garch_weights.py)
 
 Requires .env: ICICI_DIRECT_API_KEY, ICICI_DIRECT_API_SECRET, ICICI_DIRECT_SESSION_TOKEN
 (same as backend/scripts/connect_icici_direct.py).
@@ -22,6 +24,15 @@ from typing import Any
 # Same pilot universe as Docs/superpowers/plans/2026-08-02-vega-reversion-evidence.md
 # (PILOT_UNDERLYINGS) for consistency across this repo's evidence-gathering work.
 PILOT_UNDERLYINGS: tuple[str, ...] = ("NIFTY", "BANKNIFTY", "RELIANCE", "HDFCBANK", "INFY")
+
+
+def fno_universe_symbols(master: Any | None = None) -> tuple[str, ...]:
+    """Full FNO underlying universe from the instrument master (for --all-fno)."""
+    if master is None:
+        from backend.integrations.icici_direct.instrument_master import get_instrument_master
+
+        master = get_instrument_master()
+    return tuple(s.upper() for s in master.list_fno_underlyings())
 
 
 def _parse_row(row: Any) -> dict[str, Any] | None:
@@ -112,23 +123,33 @@ async def run_backfill(
 
 async def _main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--symbols", default=None, help="Comma-separated symbols (default: pilot universe)")
+    source = parser.add_mutually_exclusive_group()
+    source.add_argument("--symbols", default=None, help="Comma-separated symbols (default: pilot universe)")
+    source.add_argument(
+        "--all-fno",
+        action="store_true",
+        help="Backfill every FNO underlying from the instrument master (rate-limited)",
+    )
     parser.add_argument("--lookback-days", type=int, default=900)
     parser.add_argument("--force", action="store_true", help="Refetch even if already stored")
     parser.add_argument("--sleep-sec", type=float, default=1.0)
     args = parser.parse_args()
-
-    symbols = (
-        tuple(s.strip().upper() for s in args.symbols.split(",") if s.strip())
-        if args.symbols
-        else PILOT_UNDERLYINGS
-    )
 
     from backend.config_env import load_project_env
     from backend.integrations.credential_vault import load_icici_direct_credentials
 
     load_project_env()
     load_icici_direct_credentials()
+
+    if args.all_fno:
+        from backend.integrations.icici_direct.market_data import get_market_data_adapter
+
+        await get_market_data_adapter().ensure_instruments()
+        symbols = fno_universe_symbols()
+    elif args.symbols:
+        symbols = tuple(s.strip().upper() for s in args.symbols.split(",") if s.strip())
+    else:
+        symbols = PILOT_UNDERLYINGS
 
     results = await run_backfill(
         symbols=symbols,

@@ -108,11 +108,15 @@ def build_quant_snapshot(
         garch_field = SignalField(None, False, "insufficient_or_flat_history")
         garch_distorted = True
     else:
+        # Per-underlying calibrated weights (Docs/bot_health/garch_weight_calibration.md);
+        # symbols without an override use the global weights.
+        symbol_key = (symbol or marks.symbol or "").upper()
+        override = (gcfg.get("symbol_overrides") or {}).get(symbol_key) or {}
         result = forecast_garch_11(
             log_returns_from_prices(history),
-            gamma=float(gcfg.get("gamma_weight", 0.05)),
-            alpha=float(gcfg.get("alpha_weight", 0.05)),
-            beta=float(gcfg.get("beta_weight", 0.9)),
+            gamma=float(override.get("gamma_weight", gcfg.get("gamma_weight", 0.05))),
+            alpha=float(override.get("alpha_weight", gcfg.get("alpha_weight", 0.05))),
+            beta=float(override.get("beta_weight", gcfg.get("beta_weight", 0.9))),
             annualization_factor=int(gcfg.get("annualization_factor", 252)),
             min_observations=min_obs,
             fit_weights=bool(gcfg.get("enable_mle_fit", False)),

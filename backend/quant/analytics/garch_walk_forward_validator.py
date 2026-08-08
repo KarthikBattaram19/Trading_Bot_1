@@ -139,6 +139,99 @@ def summarize_walk_forward(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateScore:
+    """OOS walk-forward score for one fixed (gamma, alpha, beta) candidate."""
+
+    gamma: float
+    alpha: float
+    beta: float
+    n_events: int
+    mean_qlike: float | None
+    win_rate_vs_default: float | None
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateGrid:
+    """All candidates' scores for one symbol, plus the default weights' own score."""
+
+    n_events: int
+    default: CandidateScore
+    candidates: list[CandidateScore]  # sorted best-first by mean_qlike
+
+
+def _candidate_qlikes(
+    returns: Sequence[float],
+    *,
+    weights: tuple[float, float, float],
+    window: int,
+) -> list[float | None]:
+    """Per-step OOS QLIKE for one fixed weight set; None where unusable."""
+    gamma, alpha, beta = weights
+    out: list[float | None] = []
+    for t in range(window, len(returns)):
+        trailing = returns[t - window : t]
+        res = forecast_garch_11(trailing, gamma=gamma, alpha=alpha, beta=beta)
+        sigma2 = res.forecast_sigma2 if res.usable else None
+        out.append(_qlike(sigma2, returns[t] ** 2))
+    return out
+
+
+def _score_from_qlikes(
+    weights: tuple[float, float, float],
+    qlikes: Sequence[float | None],
+    default_qlikes: Sequence[float | None] | None,
+) -> CandidateScore:
+    valid = [q for q in qlikes if q is not None]
+    win_rate: float | None = None
+    if default_qlikes is not None:
+        paired = [
+            (q, dq) for q, dq in zip(qlikes, default_qlikes) if q is not None and dq is not None
+        ]
+        if paired:
+            win_rate = sum(1 for q, dq in paired if q < dq) / len(paired)
+    return CandidateScore(
+        gamma=weights[0],
+        alpha=weights[1],
+        beta=weights[2],
+        n_events=len(valid),
+        mean_qlike=(sum(valid) / len(valid)) if valid else None,
+        win_rate_vs_default=win_rate,
+    )
+
+
+def score_weight_candidates(
+    log_returns: Sequence[float],
+    *,
+    candidates: Sequence[tuple[float, float, float]],
+    window: int = 250,
+    default_weights: tuple[float, float, float] = (0.05, 0.05, 0.90),
+) -> CandidateGrid:
+    """Walk-forward score each fixed (gamma, alpha, beta) candidate by OOS QLIKE.
+
+    Same rolling scheme as ``run_walk_forward``; each candidate is compared
+    pairwise per step against ``default_weights`` (strict wins only). This is
+    the shared scoring path for per-symbol weight calibration
+    (backend/scripts/calibrate_garch_weights.py).
+    """
+    returns = list(log_returns)
+    default_qlikes = _candidate_qlikes(returns, weights=default_weights, window=window)
+    scored = [
+        _score_from_qlikes(
+            cand,
+            _candidate_qlikes(returns, weights=cand, window=window),
+            default_qlikes,
+        )
+        for cand in candidates
+    ]
+    scored.sort(key=lambda s: math.inf if s.mean_qlike is None else s.mean_qlike)
+    return CandidateGrid(
+        n_events=max(len(returns) - window, 0),
+        default=_score_from_qlikes(default_weights, default_qlikes, None),
+        candidates=scored,
+    )
+
+
 def combine_summaries(summaries: Sequence[WalkForwardSummary]) -> WalkForwardSummary:
     """Pool per-symbol events into one combined-universe summary (symbol='ALL')."""
     n_events = sum(s.n_events for s in summaries)
