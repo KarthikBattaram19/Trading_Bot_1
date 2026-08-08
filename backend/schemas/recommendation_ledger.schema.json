@@ -1,0 +1,79 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Recommendation lifecycle record",
+  "type": "object",
+  "required": ["id", "proposed_date", "stage", "problem", "proposed_change", "expected_impact", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^rec-\\d{4}-\\d{2}-\\d{2}-[a-z0-9-]+$",
+      "description": "stable slug, e.g. rec-2026-08-08-spot-code-fallback"
+    },
+    "proposed_date": { "type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$" },
+    "stage": {
+      "enum": [
+        "signals",
+        "feature_assembly",
+        "strategy_selection",
+        "ranking_gating",
+        "execution_gates",
+        "fill",
+        "feedback"
+      ]
+    },
+    "problem": { "type": "string", "minLength": 1 },
+    "evidence": {
+      "type": "array",
+      "items": { "type": "string", "description": "file:line citation" }
+    },
+    "proposed_change": { "type": "string", "minLength": 1 },
+    "expected_impact": {
+      "type": "object",
+      "required": ["metric", "direction"],
+      "additionalProperties": false,
+      "properties": {
+        "metric": { "type": "string", "description": "dotted path into a metrics row, e.g. reliability.enrichment_usable" },
+        "direction": { "enum": ["up", "down"] },
+        "rationale": { "type": "string" }
+      }
+    },
+    "effort": { "enum": ["low", "medium", "high"] },
+    "status": {
+      "enum": [
+        "proposed",
+        "implemented",
+        "measured",
+        "validated",
+        "regressed",
+        "inconclusive",
+        "rejected",
+        "superseded"
+      ]
+    },
+    "implemented_date": { "type": ["string", "null"] },
+    "implemented_sha": { "type": ["string", "null"] },
+    "match_confidence": {
+      "enum": ["high", "medium", "low", null],
+      "description": "confidence that implemented_sha really implements this recommendation"
+    },
+    "baseline_metrics": {
+      "type": ["object", "null"],
+      "description": "metric snapshot frozen immediately before implementation"
+    },
+    "observed_effect": {
+      "type": ["object", "null"],
+      "required": ["metric_before", "metric_after", "sample_size"],
+      "additionalProperties": false,
+      "properties": {
+        "metric_before": { "type": ["number", "null"] },
+        "metric_after": { "type": ["number", "null"] },
+        "sample_size": { "type": "integer", "minimum": 0 },
+        "sessions_observed": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "verdict": { "type": ["string", "null"] },
+    "last_updated": { "type": "string" },
+    "notes": { "type": "array", "items": { "type": "string" } }
+  }
+}

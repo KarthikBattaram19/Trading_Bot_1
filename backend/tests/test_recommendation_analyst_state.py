@@ -148,3 +148,96 @@ def test_schema_accepts_a_well_formed_row() -> None:
         },
     }
     jsonschema.validate(instance=record, schema=schema)
+
+
+LEDGER_SCHEMA_PATH = _SCHEMAS / "recommendation_ledger.schema.json"
+LEDGER_PATH = _STATE / "recommendation_ledger.jsonl"
+
+"""Statuses that assert the change actually landed, so a SHA and a frozen
+pre-change baseline must exist. 'rejected'/'superseded' are excluded — those
+close a recommendation without ever implementing it."""
+LANDED_STATUSES = {"implemented", "measured", "validated", "regressed", "inconclusive"}
+
+
+def test_ledger_schema_is_itself_valid() -> None:
+    jsonschema.Draft202012Validator.check_schema(_load_json(LEDGER_SCHEMA_PATH))
+
+
+def test_ledger_schema_stage_enum_matches_canonical_stages() -> None:
+    schema = _load_json(LEDGER_SCHEMA_PATH)
+    assert schema["properties"]["stage"]["enum"] == PIPELINE_STAGES
+
+
+def test_every_ledger_line_validates() -> None:
+    schema = _load_json(LEDGER_SCHEMA_PATH)
+    for lineno, record in _iter_jsonl(LEDGER_PATH):
+        try:
+            jsonschema.validate(instance=record, schema=schema)
+        except jsonschema.ValidationError as exc:
+            pytest.fail(f"{LEDGER_PATH.name}:{lineno} failed schema: {exc.message}")
+
+
+def test_ledger_ids_are_unique() -> None:
+    ids = [r["id"] for _, r in _iter_jsonl(LEDGER_PATH)]
+    assert len(ids) == len(set(ids)), "each recommendation must appear once; update in place, do not re-append"
+
+
+def test_implemented_records_carry_sha_and_baseline() -> None:
+    """A record can only claim measurable impact if we froze the 'before' state."""
+    for lineno, record in _iter_jsonl(LEDGER_PATH):
+        if record["status"] in LANDED_STATUSES:
+            assert record.get("implemented_sha"), f"{LEDGER_PATH.name}:{lineno} implemented without a SHA"
+            assert record.get("baseline_metrics") is not None, (
+                f"{LEDGER_PATH.name}:{lineno} implemented without frozen baseline_metrics — "
+                "impact for this recommendation is unmeasurable"
+            )
+
+
+def test_verdicts_state_their_sample_size() -> None:
+    """Guards the spec's honesty constraint: no verdict without a stated n."""
+    for lineno, record in _iter_jsonl(LEDGER_PATH):
+        if record["status"] in {"validated", "regressed"}:
+            effect = record.get("observed_effect") or {}
+            assert isinstance(effect.get("sample_size"), int), (
+                f"{LEDGER_PATH.name}:{lineno} claims '{record['status']}' with no sample_size"
+            )
+
+
+def test_ledger_schema_rejects_extra_key_in_expected_impact() -> None:
+    schema = _load_json(LEDGER_SCHEMA_PATH)
+    record = {
+        "id": "rec-2026-08-08-guard-check",
+        "proposed_date": "2026-08-08",
+        "stage": "fill",
+        "problem": "x",
+        "proposed_change": "y",
+        "expected_impact": {"metric": "performance.win_rate", "direction": "up", "oops": 1},
+        "status": "proposed",
+    }
+    with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+        jsonschema.validate(instance=record, schema=schema)
+
+
+def test_ledger_schema_accepts_a_well_formed_record() -> None:
+    """Guards against over-tightening: a full valid record must still pass."""
+    schema = _load_json(LEDGER_SCHEMA_PATH)
+    record = {
+        "id": "rec-2026-08-08-spot-code-fallback",
+        "proposed_date": "2026-08-08",
+        "stage": "feature_assembly",
+        "problem": "spot LTP sends display symbol",
+        "evidence": ["backend/services/universe_enrichment.py:609"],
+        "proposed_change": "pass resolved stock_code",
+        "expected_impact": {"metric": "reliability.enrichment_usable", "direction": "up", "rationale": "z"},
+        "effort": "low",
+        "status": "validated",
+        "implemented_date": "2026-08-09",
+        "implemented_sha": "abc1234",
+        "match_confidence": "high",
+        "baseline_metrics": {"reliability": {"enrichment_usable": 6}},
+        "observed_effect": {"metric_before": 6, "metric_after": 12, "sample_size": 40, "sessions_observed": 3},
+        "verdict": "did what it should",
+        "last_updated": "2026-08-09T16:00:00+05:30",
+        "notes": ["n"],
+    }
+    jsonschema.validate(instance=record, schema=schema)

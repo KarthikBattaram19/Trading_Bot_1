@@ -448,6 +448,46 @@ def test_verdicts_state_their_sample_size() -> None:
             assert isinstance(effect.get("sample_size"), int), (
                 f"{LEDGER_PATH.name}:{lineno} claims '{record['status']}' with no sample_size"
             )
+
+
+def test_ledger_schema_rejects_extra_key_in_expected_impact() -> None:
+    schema = _load_json(LEDGER_SCHEMA_PATH)
+    record = {
+        "id": "rec-2026-08-08-guard-check",
+        "proposed_date": "2026-08-08",
+        "stage": "fill",
+        "problem": "x",
+        "proposed_change": "y",
+        "expected_impact": {"metric": "performance.win_rate", "direction": "up", "oops": 1},
+        "status": "proposed",
+    }
+    with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
+        jsonschema.validate(instance=record, schema=schema)
+
+
+def test_ledger_schema_accepts_a_well_formed_record() -> None:
+    """Guards against over-tightening: a full valid record must still pass."""
+    schema = _load_json(LEDGER_SCHEMA_PATH)
+    record = {
+        "id": "rec-2026-08-08-spot-code-fallback",
+        "proposed_date": "2026-08-08",
+        "stage": "feature_assembly",
+        "problem": "spot LTP sends display symbol",
+        "evidence": ["backend/services/universe_enrichment.py:609"],
+        "proposed_change": "pass resolved stock_code",
+        "expected_impact": {"metric": "reliability.enrichment_usable", "direction": "up", "rationale": "z"},
+        "effort": "low",
+        "status": "validated",
+        "implemented_date": "2026-08-09",
+        "implemented_sha": "abc1234",
+        "match_confidence": "high",
+        "baseline_metrics": {"reliability": {"enrichment_usable": 6}},
+        "observed_effect": {"metric_before": 6, "metric_after": 12, "sample_size": 40, "sessions_observed": 3},
+        "verdict": "did what it should",
+        "last_updated": "2026-08-09T16:00:00+05:30",
+        "notes": ["n"],
+    }
+    jsonschema.validate(instance=record, schema=schema)
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -493,6 +533,7 @@ Create `backend/schemas/recommendation_ledger.schema.json`:
     "expected_impact": {
       "type": "object",
       "required": ["metric", "direction"],
+      "additionalProperties": false,
       "properties": {
         "metric": { "type": "string", "description": "dotted path into a metrics row, e.g. reliability.enrichment_usable" },
         "direction": { "enum": ["up", "down"] },
@@ -525,6 +566,7 @@ Create `backend/schemas/recommendation_ledger.schema.json`:
     "observed_effect": {
       "type": ["object", "null"],
       "required": ["metric_before", "metric_after", "sample_size"],
+      "additionalProperties": false,
       "properties": {
         "metric_before": { "type": ["number", "null"] },
         "metric_after": { "type": ["number", "null"] },
