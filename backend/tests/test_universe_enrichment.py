@@ -429,14 +429,15 @@ async def test_build_universe_prefers_live_marks(monkeypatch):
         "backend.services.recommendation_engine.fetch_realized_vol_intraday",
         _fake_rv,
     )
-    # Relax coverage for tiny fixture universes
+    # Tiny fixture universe: lower min_scan_symbols so per-cycle validation
+    # accepts a 3-symbol world (the eligible floor itself is always derived).
     real_load = eng._load_config
 
     def _cfg():
         cfg = real_load()
         cfg["strategy_coverage"] = {
             "min_coverage_ratio": 0.5,
-            "min_eligible_symbols": 1,
+            "min_scan_symbols": 3,
             "abort_unavailable_strategies": True,
         }
         return cfg

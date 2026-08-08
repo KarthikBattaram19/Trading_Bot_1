@@ -32,7 +32,9 @@ def test_enrichment_budget_inputs() -> None:
     cfg = _load(CONFIG_PATH)["recommendation_universe_enrichment"]
     assert cfg["generation_budget_sec"] == 120
     assert cfg["enrichment_budget_frac"] == 0.70
-    assert cfg["breeze_calls_per_symbol"] == 5
+    # 6 = up to 2 spot-LTP fallbacks + 2 chain rights × 2 product_type retries;
+    # mirrors universe_enrichment._spot_ltp / _fetch_option_chain_sides.
+    assert cfg["breeze_calls_per_symbol"] == 6
     assert cfg["breeze_history_calls_per_symbol"] == 2
     assert cfg["breeze_daily_call_budget"] == 3500
     # No hand-tuned symbol cap: it is derived from these inputs.

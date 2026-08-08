@@ -70,8 +70,8 @@ Two rules follow:
 |---|---|
 | `signals` | `backend/quant/signals/{garch,iv_zscore}.py`, `backend/quant/{pricing,risk,costs,gamma,analytics}/` |
 | `feature_assembly` | `backend/services/{quant_snapshot,signals,universe_enrichment,atm_liquidity,atm_liquidity_history,iv_history_store,candle_history,earnings_calendar,market_news}.py` |
-| `strategy_selection` | `backend/services/{strategy_selection,strategy_coverage}.py` |
-| `ranking_gating` | `backend/services/{recommendation_engine,recommendation_cycle,confidence_calibrator,confidence_floor}.py` |
+| `strategy_selection` | `backend/services/{strategy_selection,strategy_coverage,scan_capacity}.py` |
+| `ranking_gating` | `backend/services/{recommendation_engine,recommendation_cycle,confidence_calibrator}.py` |
 | `execution_gates` | `backend/execution/{risk_gate,circuit_breakers,options_only,broker_router}.py`, `backend/services/trade_executor.py` |
 | `fill` | `backend/paper_sim/*.py` |
 | `feedback` | `backend/services/learning_service.py`, `backend/analytics/confidence_calibration.py` |

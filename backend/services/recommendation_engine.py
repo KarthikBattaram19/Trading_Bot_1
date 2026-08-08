@@ -47,7 +47,7 @@ from backend.services.earnings_calendar import EarningsCalendarStore, session_da
 from backend.services.feed_health import get_feed_sources
 from backend.services.iv_history_store import IvHistoryStore
 from backend.services.confidence_calibrator import ConfidenceCalibrator
-from backend.services.scan_capacity import scan_capacity
+from backend.services.scan_capacity import scan_capacity, validate_scan_capacity
 from backend.services.learning_service import get_learning_service
 from backend.services.market_news import get_market_news
 from backend.services.quant_snapshot import (
@@ -323,10 +323,17 @@ async def _build_universe() -> tuple[
     fetch_rv = bool(snap_cfg.get("fetch_intraday_rv", True))
     enrich_stats: EnrichmentStats | None = None
     live_by_symbol: dict[str, LiveMarks] = {}
+    # Derived, never hardcoded — and re-validated every cycle, because this
+    # config was just re-read from disk: a post-boot edit that breaks the gate
+    # arithmetic must fail this cycle loudly, not publish under it silently.
+    capacity = validate_scan_capacity(cfg)
+    max_symbols = capacity.max_symbols
     budget_sec = float(enrich_cfg.get("generation_budget_sec", 120.0))
-    # Derived, never hardcoded: a cap the paced call budget can actually finish.
-    max_symbols = max(1, scan_capacity(cfg).max_symbols)
-    deadline = time.monotonic() + max(5.0, budget_sec)
+    started = time.monotonic()
+    # Two deadlines enforce the split the capacity model assumes: enrichment
+    # may not eat into the history window even when Breeze runs slow.
+    enrich_deadline = started + capacity.enrichment_window_sec
+    deadline = started + max(5.0, budget_sec)
 
     # Prefer liquid index / bank names first so a budget cut still covers core names.
     priority = {
@@ -353,7 +360,7 @@ async def _build_universe() -> tuple[
             enricher = get_universe_enricher(cfg)
             live_by_symbol, enrich_stats = await enricher.enrich_many(
                 symbols,
-                deadline_monotonic=deadline,
+                deadline_monotonic=enrich_deadline,
                 max_symbols=max_symbols,
             )
         except Exception as exc:  # noqa: BLE001

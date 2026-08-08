@@ -91,9 +91,10 @@ def evaluate_strategy_coverage(
     scanned: int,
     cfg: dict[str, Any],
 ) -> StrategyCoverageReport:
-    # The absolute floor is derived from the call budget (see scan_capacity), not
-    # a hardcoded fallback: the old `section.get("min_eligible_symbols", 50)`
-    # default silently disagreed with the shipped config value of 20.
+    # The absolute floor is derived from the call budget (see scan_capacity);
+    # there is no config override and no hardcoded fallback — the old
+    # `section.get("min_eligible_symbols", 50)` default silently disagreed
+    # with the shipped config value of 20.
     capacity = scan_capacity(cfg)
     min_ratio = capacity.min_coverage_ratio
     min_eligible = capacity.min_eligible_symbols

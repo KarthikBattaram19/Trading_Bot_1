@@ -36,7 +36,7 @@
     "response_cache_ttl_sec": 1200,
     "generation_budget_sec": 120,
     "enrichment_budget_frac": 0.70,
-    "breeze_calls_per_symbol": 5,
+    "breeze_calls_per_symbol": 6,
     "breeze_history_calls_per_symbol": 2,
     "breeze_daily_call_budget": 3500,
     "max_concurrency": 4,

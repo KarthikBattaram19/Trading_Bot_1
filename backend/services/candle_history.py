@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from backend.quant.signals.garch import log_returns_from_prices
+from backend.services.breeze_pacing import history_pacer
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,8 @@ async def fetch_daily_closes(
     start = end - timedelta(days=max(lookback_days * 2, 90))
     code = stock_code or symbol
     try:
+        # Paced: scan_capacity counts this call in breeze_history_calls_per_symbol.
+        await history_pacer.acquire()
         rows = await adapter.get_candles(
             exchange="NSE",
             symboltoken=code,
@@ -91,6 +94,8 @@ async def fetch_realized_vol_intraday(
     as_of = as_of_date or datetime.utcnow().date().isoformat()
     code = stock_code or symbol
     try:
+        # Paced: scan_capacity counts this call in breeze_history_calls_per_symbol.
+        await history_pacer.acquire()
         rows = await adapter.get_candles(
             exchange="NSE",
             symboltoken=code,

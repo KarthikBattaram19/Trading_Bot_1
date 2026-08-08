@@ -353,10 +353,11 @@ merged.
 > scaffolding was removed. F-5's specific confusion is designed out rather than
 > documented around: `min_eligible_symbols` is no longer a config number that
 > can drift out of step with the cap. It is derived —
-> `ceil(min_coverage_ratio × derived_cap)` = `ceil(0.80 × 23)` = **19** — so the
-> two tests can never disagree about which binds, and the scan cap itself is
-> derived from the paced Breeze call budget
-> (`backend/services/scan_capacity.py`), validated at boot. `min_coverage_ratio`
+> `ceil(min_coverage_ratio × derived_cap)` = `ceil(0.80 × 20)` = **16** — the
+> key's presence in config is rejected outright, so the two tests can never
+> disagree about which binds, and the scan cap itself is derived from the paced
+> Breeze call budget (`backend/services/scan_capacity.py`), validated at boot
+> and per cycle. `min_coverage_ratio`
 > is back to 0.80. The finding's underlying point held: the real defect was that
 > four numbers could contradict each other silently.
 

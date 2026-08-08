@@ -131,9 +131,16 @@ async def test_recommendation_universe_uses_fno_master(monkeypatch):
 
     def _cfg():
         cfg = real_load()
+        # Tiny 4-symbol world: shrink the *inputs* so the derived cap (and the
+        # floor derived from it) fit — there is no min_eligible override.
+        # budget 30 × 0.7 = 21s enrich → 21/4.2 = cap 5; floor = ceil(0.5×5) = 3.
+        cfg["recommendation_universe_enrichment"] = {
+            **cfg["recommendation_universe_enrichment"],
+            "generation_budget_sec": 30,
+        }
         cfg["strategy_coverage"] = {
             "min_coverage_ratio": 0.5,
-            "min_eligible_symbols": 1,
+            "min_scan_symbols": 4,
             "abort_unavailable_strategies": True,
         }
         # Seed enough IV samples via repeated append in engine — inject series via store

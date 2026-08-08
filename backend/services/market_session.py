@@ -34,9 +34,14 @@ def is_trading_weekday(d: date) -> bool:
     return d.weekday() < 5
 
 
-def _parse_hhmm(value: str) -> time:
-    hh, mm = value.split(":")
+def parse_hhmm(value: str) -> time:
+    """Single HH:MM parser for the session schedule — also used by
+    scan_capacity so the two can never disagree on what a window means."""
+    hh, mm = str(value).split(":")
     return time(int(hh), int(mm))
+
+
+_parse_hhmm = parse_hhmm  # internal alias, kept for the call sites below
 
 
 def load_session_schedule() -> dict[str, str]:
