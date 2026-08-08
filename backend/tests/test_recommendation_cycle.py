@@ -63,6 +63,11 @@ async def test_fully_autonomous_mode_still_executes(monkeypatch):
     monkeypatch.setattr(
         recommendation_cycle, "execute_autonomous_from_recommendations", _fake_execute
     )
+    # `get_paper_engine()` is a process-global singleton not reset between
+    # tests, so an unrelated test elsewhere in the suite may leave an open
+    # position behind. Pin `has_open_paper_position()` explicitly so this
+    # test's outcome depends only on its own setup, not on suite ordering.
+    monkeypatch.setattr(recommendation_cycle, "has_open_paper_position", lambda: False)
     _patch_generate(monkeypatch, [object()])
 
     result = await recommendation_cycle.run_recommendation_cycle(force_refresh=True)
@@ -130,6 +135,60 @@ async def test_one_trade_lock_blocks_fully_autonomous_execution(monkeypatch):
     assert calls == []
     assert result.autonomous_execution.executed is False
     assert "lock" in result.autonomous_execution.message.lower()
+
+
+async def test_unregistered_open_paper_position_blocks_fully_autonomous_execution(
+    monkeypatch,
+):
+    """A position opened directly via POST /api/v1/paper-sim/orders (or a
+    leaked partial open from the executor's own rank-1 attempt) is never
+    registered with `LearningService.register_open_trade`, so
+    `is_one_trade_locked()` alone can't see it (see
+    `has_open_paper_position()` docstring in backend/services/trade_executor.py).
+    `autonomous_execution_for` must also check `has_open_paper_position()` and
+    short-circuit BEFORE calling the executor. This does NOT save Breeze rate
+    budget at this call site (`run_recommendation_cycle` already generated
+    recommendations before reaching here) — the value is skipping a doomed
+    executor call and returning an accurate operator-facing lock message
+    instead of "All ranked recommendations failed to open". The real
+    rate-budget saving is asserted separately in
+    test_trading_scheduler.py::test_entry_tick_skips_generation_when_paper_position_open,
+    since `trading_scheduler._entry_tick` checks this before calling
+    `run_recommendation_cycle` at all.
+
+    The message must still start with "One-trade scope locked" because
+    frontend/src/components/recommendations/autonomous-trade-executor.tsx
+    (lines 15-18) renders its lock banner only when
+    `message.includes("One-trade scope locked")` — a differently worded
+    message would silently drop the banner. It must NOT claim the position
+    was "opened outside the autonomous executor" — a leaked partial open from
+    the executor's own attempt trips this same condition, so that claim would
+    be inaccurate in that case (mirrors the same correction already made to
+    `_pre_submit_checks`'s message in trade_executor.py).
+    """
+    monkeypatch.setenv("SUPERVISION_MODE", "fully_autonomous")
+    calls: list[object] = []
+
+    async def _fake_execute(recs, **kwargs):
+        calls.append(recs)
+        raise AssertionError(
+            "must not execute while an unregistered paper position is open"
+        )
+
+    monkeypatch.setattr(
+        recommendation_cycle, "execute_autonomous_from_recommendations", _fake_execute
+    )
+    monkeypatch.setattr(recommendation_cycle, "is_one_trade_locked", lambda: False)
+    monkeypatch.setattr(recommendation_cycle, "has_open_paper_position", lambda: True)
+    _patch_generate(monkeypatch, [object()])
+
+    result = await recommendation_cycle.run_recommendation_cycle(force_refresh=True)
+
+    assert calls == []
+    assert result.autonomous_execution.executed is False
+    assert result.autonomous_execution.attempts == []
+    assert result.autonomous_execution.message.startswith("One-trade scope locked")
+    assert "opened outside the autonomous executor" not in result.autonomous_execution.message
 
 
 class _FakeRec:
@@ -212,6 +271,10 @@ async def test_execute_autonomous_endpoint_still_executes_fully_autonomous(monke
         recommendation_cycle, "execute_autonomous_from_recommendations", _fake_execute
     )
     monkeypatch.setattr(recommendation_cycle, "is_one_trade_locked", lambda: False)
+    # Pin the global-paper-engine check too — see comment in
+    # test_fully_autonomous_mode_still_executes for why this can't rely on
+    # ambient state left behind by other tests in the suite.
+    monkeypatch.setattr(recommendation_cycle, "has_open_paper_position", lambda: False)
     _patch_router_generate(monkeypatch, [_FakeRec()])
 
     result = await recommendations_router.execute_autonomous_trade()
