@@ -12,6 +12,10 @@ optionally queue adaptation when triggers fire (§12.3) under safety guards (§1
 from __future__ import annotations
 
 import json
+import logging
+import os
+import tempfile
+import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +37,8 @@ from backend.models.learning import (
 from backend.models.recommendations import InstrumentRecommendation
 
 STORE_PATH = Path(__file__).resolve().parents[1] / "data" / "learning_store.json"
+
+logger = logging.getLogger(__name__)
 
 # Bump when seed payload shape changes so existing paper stores can backfill.
 SEED_VERSION = 3
@@ -251,14 +257,9 @@ class LearningService:
         self._ensure_store()
 
     def _ensure_store(self) -> None:
-        self.store_path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.store_path.exists():
-            self._write(_build_seeded_store())
-            return
-        with open(self.store_path, encoding="utf-8") as f:
-            store = json.load(f)
-        if self._migrate_incomplete_seed(store):
-            self._write(store)
+        """Bootstrap the on-disk store if missing. Delegates to `_read()` so
+        there is exactly one guarded load path — see `_read` docstring."""
+        self._read()
 
     def _migrate_incomplete_seed(self, store: dict[str, Any]) -> bool:
         """
@@ -302,17 +303,78 @@ class LearningService:
         return changed
 
     def _read(self) -> dict[str, Any]:
-        self._ensure_store()
-        with open(self.store_path, encoding="utf-8") as f:
-            store = json.load(f)
+        """Load the ledger from disk. The single guarded read path — every
+        other read (including bootstrap via `_ensure_store`) routes through
+        here, so there is exactly one place that can raise on corruption.
+
+        Deliberately asymmetric to `IvHistoryStore._read`: this store is the
+        financial ledger (one-trade lock, open positions, closed outcomes,
+        realized P&L), not a regenerable cache. A corrupt file MUST fail
+        loud — never degrade to `{}` or a partial store, and never
+        quarantine-and-continue. A silently emptied ledger would tell the
+        bot it has no open position when it actually does, which is how a
+        second position gets opened against a live one. If this ever grows
+        exception handling, it must re-raise with a clearer message, not
+        swallow.
+        """
+        self.store_path.parent.mkdir(parents=True, exist_ok=True)
+        if not self.store_path.exists():
+            store = _build_seeded_store()
+            self._write(store)
+            return store
+        try:
+            with open(self.store_path, encoding="utf-8") as f:
+                store = json.load(f)
+        except json.JSONDecodeError:
+            logger.error(
+                "learning_service: corrupt ledger at %s — refusing to degrade to an "
+                "empty/partial store; this must be fixed by a human before trading resumes",
+                self.store_path,
+                exc_info=True,
+            )
+            raise
         if self._migrate_incomplete_seed(store):
             self._write(store)
         return store
 
     def _write(self, store: dict[str, Any]) -> None:
+        """Atomically persist the ledger (temp file in the same dir + fsync +
+        `os.replace` with a bounded retry), so a crash or overlapping writer
+        can never leave a half-written ledger on disk. Mirrors
+        `IvHistoryStore._write`; see that module for the rationale."""
         self.store_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.store_path, "w", encoding="utf-8") as f:
-            json.dump(store, f, indent=2, default=str)
+        fd, tmp_name = tempfile.mkstemp(
+            dir=str(self.store_path.parent),
+            prefix=self.store_path.name + ".",
+            suffix=".tmp",
+        )
+        tmp_path = Path(tmp_name)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(store, f, indent=2, default=str)
+                f.flush()
+                os.fsync(f.fileno())
+            self._replace_with_retry(tmp_path)
+        except BaseException:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+
+    def _replace_with_retry(self, tmp_path: Path, attempts: int = 8) -> None:
+        # os.replace(tmp, dst) is atomic, but on Windows two writers racing
+        # to replace the *same* dst at the same instant can transiently see
+        # PermissionError (WinError 5) while the OS resolves the rename —
+        # not corruption, just contention. Retry briefly before giving up.
+        for attempt in range(attempts):
+            try:
+                os.replace(tmp_path, self.store_path)
+                return
+            except PermissionError:
+                if attempt == attempts - 1:
+                    raise
+                time.sleep(0.01 * (attempt + 1))
 
     # ── Pre-trade retrieval (§12.6) ──────────────────────────────────────
 
