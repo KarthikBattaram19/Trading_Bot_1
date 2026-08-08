@@ -63,11 +63,6 @@ async def test_fully_autonomous_mode_still_executes(monkeypatch):
     monkeypatch.setattr(
         recommendation_cycle, "execute_autonomous_from_recommendations", _fake_execute
     )
-    # `get_paper_engine()` is a process-global singleton not reset between
-    # tests, so an unrelated test elsewhere in the suite may leave an open
-    # position behind. Pin `has_open_paper_position()` explicitly so this
-    # test's outcome depends only on its own setup, not on suite ordering.
-    monkeypatch.setattr(recommendation_cycle, "has_open_paper_position", lambda: False)
     _patch_generate(monkeypatch, [object()])
 
     result = await recommendation_cycle.run_recommendation_cycle(force_refresh=True)
@@ -271,10 +266,6 @@ async def test_execute_autonomous_endpoint_still_executes_fully_autonomous(monke
         recommendation_cycle, "execute_autonomous_from_recommendations", _fake_execute
     )
     monkeypatch.setattr(recommendation_cycle, "is_one_trade_locked", lambda: False)
-    # Pin the global-paper-engine check too — see comment in
-    # test_fully_autonomous_mode_still_executes for why this can't rely on
-    # ambient state left behind by other tests in the suite.
-    monkeypatch.setattr(recommendation_cycle, "has_open_paper_position", lambda: False)
     _patch_router_generate(monkeypatch, [_FakeRec()])
 
     result = await recommendations_router.execute_autonomous_trade()
