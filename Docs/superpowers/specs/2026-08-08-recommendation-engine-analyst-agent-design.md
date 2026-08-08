@@ -18,14 +18,41 @@ The existing `Guruji_for_Bhale_Bullodu` skill covers repo-wide health — P0–P
 backlog compliance, safety invariants, CI, doc drift. It deliberately does not
 go deep on quant/strategy quality. That depth is the gap this agent fills.
 
+Nor is there any measurement continuity. Changes land on the recommendation
+engine regularly, but nothing records what the numbers looked like before and
+after, so "did that help?" has never been answerable. Without that loop the bot
+cannot converge on consistency or profit — it can only accumulate changes.
+
+## Objective
+
+**Drive the bot toward being consistently profitable, reliable and stable — and
+prove it with measurement rather than assertion.**
+
+Every run serves that objective by answering three questions: what did the
+recommendation engine do today, what did it earn or lose, and what single change
+would most improve the next day. The agent is the feedback instrument that makes
+"is this getting better?" a question with a numeric answer.
+
+An explicit honesty constraint sits on top of this objective. "High profit" is a
+destination, not a claim the agent may make on the way there. Until there is
+out-of-sample walk-forward evidence and a materially-sized sample of real closed
+trades (per `.cursor/rules/must-fix-before-claiming-performance.mdc` and the
+~30-per-module threshold in `architecture.md` §21), the agent reports observed
+numbers and calls them provisional. An agent that flatters the bot is worse than
+no agent, because it removes the signal the owner is relying on.
+
 ## Goal
 
 A reusable, read-only subagent that on each invocation:
 
 1. Rebuilds an accurate picture of how the recommendation pipeline works today.
 2. Reads real paper-trade evidence to judge how it is actually performing.
-3. Reports gaps, constraints and ranked recommendations that make paper trading
+3. Quantifies performance, reliability and stability — including P&L — and
+   attributes movement in those metrics to specific changes made to the engine.
+4. Reports gaps, constraints and ranked recommendations that make paper trading
    more reliable and stable while improving its measured performance.
+5. Records the day's actions and changes durably, so the owner can verify later
+   what happened and why.
 
 ## Scope
 
@@ -93,49 +120,185 @@ performance numbers are reported as directional only, never as evidence of edge.
 The agent must never characterize the vol edge as validated absent OOS
 walk-forward evidence (per `.cursor/rules/must-fix-before-claiming-performance.mdc`).
 
-**5. Rank the recommendations.**
+**5. Compute the metric set and attribute movement to changes.**
+See "Metrics and change attribution" below.
+
+**6. Rank the recommendations.**
 Each recommendation carries: the observed problem with `file:line` evidence, the
 mechanism by which it degrades reliability/stability/performance, the proposed
 change, and an impact/effort read. Ordered by expected impact. Recommendations
 that would close an open P0 item outrank net-new features.
 
+**7. Append the day's journal entry.**
+See "Daily journal" below.
+
+## Metrics and change attribution
+
+The agent computes three metric families each run, plus P&L. Every metric is
+stored as a dated row so trends are computable, not re-derived from prose.
+
+**Performance (P&L)** — realized P&L for the session and cumulative; equity
+curve; win rate; average win vs average loss; profit factor; max drawdown;
+P&L split by strategy (SH-4 module) and by underlying.
+
+**Reliability — did the machine do its job?** Cycles attempted vs completed;
+`STRATEGY_COVERAGE_ABORT` count and reason mix; enrichment success ratio
+(symbols with usable marks / attempted); spot and option-chain fetch failure
+rates; gate-rejection funnel (candidates in → surviving each gate → submitted);
+scheduler tick health; flatten-window completion (did every open position
+actually close by 15:30?).
+
+**Stability — is behavior consistent day to day?** Variance of daily P&L;
+confidence calibration error (predicted confidence vs realized win rate, bucketed);
+strategy-mix churn (does the engine pick wildly different strategies on similar
+regimes?); recommendation churn within a session; parameter/config drift since
+the previous run.
+
+**Change attribution.** Each run reads `git log`/`git diff` since the previously
+reviewed SHA and builds a **change ledger**: every commit that touched an
+in-scope file, what it changed, and the metric deltas observed in the sessions
+after it landed. This is the "how is every change impacting the bot" view.
+
+This attribution is correlational and the agent must label it as such. With a
+handful of trades, a P&L move after a commit is far more likely to be noise than
+effect. The agent states the sample size next to every attribution claim and,
+below a usable sample, reports the change alongside the metric movement without
+asserting causation. Reliability and stability metrics (cycle completion,
+coverage aborts, fetch failure rates) reach a usable sample far sooner than P&L
+does — they are hundreds of events per day, not one trade — so early runs will
+legitimately have confident reliability attribution and only provisional P&L
+attribution. The agent should lean on that asymmetry rather than pretending both
+are equally well-evidenced.
+
 ## Output
 
-**Persisted:** `Docs/bot_health/RECOMMENDATION_ENGINE_REVIEW.md` — modeled on the
-`STATE.md` + `BACKLOG.md` pattern:
+**1. Persisted narrative:** `Docs/bot_health/RECOMMENDATION_ENGINE_REVIEW.md` —
+modeled on the `STATE.md` + `BACKLOG.md` pattern:
 
 - Header: last-reviewed HEAD SHA, run timestamp, real (non-seed) closed-trade
   count, test result.
-- **Pipeline map** — the current as-built stage description, rewritten each run
-  so it never goes stale.
+- **Pipeline map** — the current as-built stage description, plus a mermaid
+  diagram of the stages and their drop conditions, rewritten each run so it
+  never goes stale.
 - **Findings** — append-only, checked off with `resolved <date>, evidence:` when
   a later run confirms the fix. Resolved findings are never deleted.
+- **Change ledger** — commits since last review and the metric deltas after them.
 - **Trend notes** — how the numbers moved since the previous run.
 
-**Chat:** a summary — what changed since last review, the top findings, and one
-"next best action."
+**2. Metrics history:** `Docs/bot_health/recommendation_metrics.jsonl` — one JSON
+line per run holding the full metric set for that date. Append-only, git-tracked,
+and the single source the dashboard reads. Keeping it machine-readable and
+separate from the prose is what makes trends and change attribution computable
+across runs instead of re-parsed from narrative.
+
+**3. Visual dashboard:** a self-contained HTML page published as a private
+Artifact, regenerated each run from the JSONL history. Charts:
+
+- Equity curve and cumulative P&L over time, with commit markers on the dates
+  in-scope changes landed — the visual form of the change ledger.
+- Daily P&L bars, colored win/loss.
+- Gate-rejection funnel for the latest session (candidates → each gate → submitted).
+- Reliability trend lines: coverage ratio, enrichment success, cycle completion.
+- Confidence calibration plot: predicted confidence bucket vs realized win rate,
+  against the diagonal.
+- Strategy mix over time and P&L attribution by strategy.
+
+Charts must degrade honestly at low sample size — an equity curve with two
+points is drawn as two points, not smoothed into a trend line, and panels
+without enough data say so rather than rendering an empty axis.
+
+**4. Daily journal:** `Docs/bot_health/DAILY_JOURNAL.md` — append-only, newest
+entry at the top, one dated section per run recording what the bot did and what
+was changed, so the owner can verify later. Each entry:
+
+- Session summary: cycles run, recommendations published, trades opened/closed,
+  session P&L.
+- Every decision the bot made and why (strategy chosen, confidence, gates passed).
+- Every code/config change that landed that day in scope, with commit SHA.
+- What the agent recommended, and — carried forward from the previous entry —
+  whether the prior recommendation was acted on and what happened.
+
+That last item matters most: it closes the loop, so a recommendation the owner
+ignored or that failed to help is visible rather than quietly forgotten.
+
+**5. Chat summary:** what changed since last review, headline metrics, top
+findings, the dashboard URL, and one "next best action."
+
+## Scheduling
+
+The agent runs **on demand** (invoked directly, or by the Agent tool when a
+question matches its description) and **daily after market close**.
+
+The daily run is a Claude Code scheduled routine (created via the `schedule`
+skill) firing at **16:00 IST, Monday–Friday** — 30 minutes after the 15:30 flatten
+window, so the session's trades are closed and the ledger is settled. It runs the
+same process, updates all four outputs, and does not require the owner's machine
+to be on.
+
+An agent cannot literally invoke itself; the routine is the mechanism that makes
+the daily cadence real. Two consequences the implementation must handle:
+
+- **Non-trading days.** The scheduler is weekday-based and this repo has no NSE
+  holiday calendar (a known open item). On a day with no session the agent writes
+  a short "no session" journal entry and skips metric computation rather than
+  emitting a row of zeros that would corrupt the trend series.
+- **Cloud environment.** The routine runs without the owner's local `.env` or
+  live Breeze credentials. It reads committed state (`learning_store.json`, the
+  JSONL history, git) and the deployed backend's read-only endpoints — it must
+  not depend on a live broker session.
 
 ## Access
 
 Read-only with respect to all trading code. Granted tools: `Read`, `Grep`,
 `Glob`, `Bash` (for `git log`/`git diff`, `pytest`, and reading JSON ledgers),
-and `Write`. `Write` is granted solely so it can maintain
-`Docs/bot_health/RECOMMENDATION_ENGINE_REVIEW.md`; its system prompt states that
-writing to any other path is out of bounds. `Edit` is not granted, so it cannot
-modify an existing source file even by mistake. It proposes changes; a human or
-a follow-up task applies them.
+`Write`, and `Artifact` (to publish the dashboard).
+
+`Write` and `Edit` are scoped by its system prompt to exactly four paths:
+
+- `Docs/bot_health/RECOMMENDATION_ENGINE_REVIEW.md`
+- `Docs/bot_health/recommendation_metrics.jsonl`
+- `Docs/bot_health/DAILY_JOURNAL.md`
+- the dashboard HTML source file it publishes
+
+Writing anywhere else — any file under `backend/`, `frontend/`, or `.cursor/` —
+is out of bounds. It proposes changes to trading code; a human or a follow-up
+task applies them.
+
+The dashboard is published as a **private** Artifact. It contains the owner's
+trading performance data, so the agent never shares the URL beyond this repo's
+owner and never publishes anything that would present the bot's results as
+validated or externally endorsed.
 
 This mirrors Guruji's model and this repo's standing caution around trading
-logic: the agent that judges the engine is not the agent that edits it.
+logic: the agent that judges the engine is not the agent that edits it. That
+separation is deliberate and load-bearing — an agent that could both tune a
+threshold and grade the result would be marking its own homework, on a system
+where the grade is money.
 
-## Deliverable
+## Deliverables
 
-A single file: `.claude/agents/recommendation-engine-analyst.md`, with
-frontmatter (`name`, `description`, `tools`) and a system prompt encoding the
-process above. Its `description` triggers on questions about recommendation
-quality, strategy selection, confidence calibration, paper-trade performance, or
-"why isn't the engine trading well" — and explicitly defers repo-wide health
-questions to `Guruji_for_Bhale_Bullodu`.
+1. `.claude/agents/recommendation-engine-analyst.md` — the agent definition:
+   frontmatter (`name`, `description`, `tools`) plus a system prompt encoding
+   the objective, process, metric set, output contract and write-scope above.
+   Its `description` triggers on questions about recommendation quality,
+   strategy selection, confidence calibration, paper-trade performance, P&L, or
+   "why isn't the engine trading well" — and explicitly defers repo-wide health
+   questions to `Guruji_for_Bhale_Bullodu`.
+2. A scheduled routine firing 16:00 IST on weekdays that invokes it.
+3. Seeded output files: `RECOMMENDATION_ENGINE_REVIEW.md`,
+   `recommendation_metrics.jsonl`, `DAILY_JOURNAL.md` — created empty-but-valid
+   so the first scheduled run appends rather than bootstraps.
+
+## Risks
+
+- **Attribution noise.** With few trades, per-commit P&L attribution is mostly
+  noise. Mitigated by explicit sample-size labeling and by leaning on
+  reliability/stability metrics, which reach usable samples much sooner.
+- **Metric theater.** A daily dashboard can create the feeling of progress
+  without any. The journal's "was the prior recommendation acted on, and did it
+  help?" field is the countermeasure — it makes inaction visible.
+- **Schedule drift.** If the routine fails silently the trend series develops
+  gaps. Each run checks for missing dates since the last entry and notes them.
 
 ## Non-goals
 
@@ -143,3 +306,5 @@ questions to `Guruji_for_Bhale_Bullodu`.
 - Not an autonomous tuner — it does not adjust thresholds itself.
 - Not a backtester — it reads existing evidence; building walk-forward/OOS
   replay is the separate open P1 item.
+- Not a profitability guarantee. It measures and recommends; it cannot make an
+  edge exist where none is proven.
