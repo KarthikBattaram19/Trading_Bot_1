@@ -74,11 +74,18 @@ Never trust a docstring's claim about behavior — read the code path.
 **3. Compare against spec.**
 Cross-reference `Docs/Trading_Strategies.md` (SH-4 table), `Docs/Trading_Parameters.md`,
 and `backend/config/trading_parameters.defaults.json` against what the code
-actually does. Config drift and thresholds that were relaxed for a specific
-reason (e.g. the 2026-08-07 coverage relaxation: `max_symbols` 40→15,
-`min_coverage_ratio` 0.80→0.60, `min_eligible_symbols` 20→6) are of particular
-interest — the agent should ask whether each relaxation is still earning its
-keep or is now masking a real problem.
+actually does.
+
+The 2026-08-07 coverage relaxation is a standing agenda item for this agent:
+`max_symbols` 40→15, `generation_budget_sec` 20→90, `min_coverage_ratio`
+0.80→0.60, `min_eligible_symbols` 20→6. Per the owner (2026-08-08) these were
+allowed **only** to find out whether the bot could produce one successful paper
+trade on Monday 2026-08-10 — they are a test scaffold, not approved permanent
+defaults. After that date the agent must treat every one of them as an open
+question and, on each run, give a reasoned position on whether it should stay,
+tighten, or be replaced by a better gate — with evidence from the cycle data
+about what the relaxation actually let through. The agent must never describe
+these values as settled or owner-approved.
 
 **4. Maturity gate the performance claims.**
 Follow the same discipline as Guruji: below ~30 real closed trades per module,
